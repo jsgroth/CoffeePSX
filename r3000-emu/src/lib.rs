@@ -11,6 +11,8 @@ const RESET_VECTOR: u32 = 0xBFC0_0000;
 struct Registers {
     gpr: [u32; 32],
     pc: u32,
+    hi: u32,
+    lo: u32,
     delayed_branch: Option<u32>,
 }
 
@@ -19,6 +21,8 @@ impl Registers {
         Self {
             gpr: [0; 32],
             pc: RESET_VECTOR,
+            hi: 0,
+            lo: 0,
             delayed_branch: None,
         }
     }
