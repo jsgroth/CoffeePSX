@@ -313,14 +313,14 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
-        let shift = 8 * (address & 3);
-        let mask: u32 = 0xFFFF_FFFF << shift;
-
         let rt = parse_rt(opcode);
         let existing_value = self.registers.gpr[rt as usize];
 
-        let word = bus.read(address & !3, OpSize::Word) << shift;
-        let new_value = (existing_value & !mask) | word;
+        let memory_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let shift = 8 * ((address & 3) ^ 3);
+        let mask: u32 = 0xFFFF_FFFF << shift;
+
+        let new_value = (existing_value & !mask) | (memory_word << shift);
         self.registers.write_gpr(rt, new_value);
     }
 
@@ -329,14 +329,14 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
-        let shift = 8 * (3 - (address & 3));
-        let mask: u32 = 0xFFFF_FFFF >> shift;
-
         let rt = parse_rt(opcode);
         let existing_value = self.registers.gpr[rt as usize];
 
-        let word = bus.read(address & !3, OpSize::Word) >> shift;
-        let new_value = (existing_value & !mask) | word;
+        let memory_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let shift = 8 * (address & 3);
+        let mask = 0xFFFF_FFFF >> shift;
+
+        let new_value = (existing_value & !mask) | (memory_word >> shift);
         self.registers.write_gpr(rt, new_value);
     }
 
@@ -434,12 +434,32 @@ impl R3000 {
 
     // SWL: Store word left
     fn swl<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
-        todo!("SWL")
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+
+        let existing_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let register_word = self.registers.gpr[parse_rt(opcode) as usize];
+
+        let shift = 8 * ((address & 3) ^ 3);
+        let mask: u32 = 0xFFFF_FFFF >> shift;
+
+        let new_value = (existing_word & !mask) | (register_word >> shift);
+        bus.write(address & !3, new_value.swap_bytes(), OpSize::Word);
     }
 
     // SWR: Store word right
     fn swr<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
-        todo!("SWR")
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+
+        let existing_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let register_word = self.registers.gpr[parse_rt(opcode) as usize];
+
+        let shift = 8 * (address & 3);
+        let mask: u32 = 0xFFFF_FFFF << shift;
+
+        let new_value = (existing_word & !mask) | (register_word << shift);
+        bus.write(address & !3, new_value.swap_bytes(), OpSize::Word);
     }
 
     // SLL: Shift word left logical
