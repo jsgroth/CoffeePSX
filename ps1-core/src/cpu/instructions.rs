@@ -1,5 +1,5 @@
-use crate::bus::{BusInterface, OpSize};
-use crate::R3000;
+use crate::cpu::bus::{BusInterface, OpSize};
+use crate::cpu::R3000;
 
 trait U32Ext {
     fn bit(self, i: u8) -> bool;
@@ -40,7 +40,7 @@ macro_rules! impl_branch {
 }
 
 impl R3000 {
-    pub(super) fn execute_opcode<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    pub(crate) fn execute_opcode<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
         // First 6 bits of opcode identify operation
         match opcode >> 26 {
             // If highest 6 bits are all 0, the lowest 6 bits are used to specify the operation

@@ -1,5 +1,5 @@
-use r3000_emu::bus::{BusInterface, OpSize};
-use r3000_emu::R3000;
+use ps1_core::cpu::bus::{BusInterface, OpSize};
+use ps1_core::cpu::R3000;
 use std::error::Error;
 use std::{env, fs};
 
