@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "r3000-emu",
+    "ps1-core",
 ]
 resolver = "2"
 

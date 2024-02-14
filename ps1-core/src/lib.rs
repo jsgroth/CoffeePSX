@@ -48,6 +48,10 @@ impl R3000 {
         }
     }
 
+    pub fn set_pc(&mut self, pc: u32) {
+        self.registers.pc = pc;
+    }
+
     pub fn execute_instruction<B: BusInterface>(&mut self, bus: &mut B) {
         let opcode = bus.read(self.registers.pc, OpSize::Word);
         self.registers.pc = match self.registers.delayed_branch.take() {
