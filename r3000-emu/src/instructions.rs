@@ -1,4 +1,4 @@
-use crate::bus::BusInterface;
+use crate::bus::{BusInterface, OpSize};
 use crate::R3000;
 
 trait U32Ext {
@@ -45,14 +45,34 @@ impl R3000 {
         match opcode >> 26 {
             // If highest 6 bits are all 0, the lowest 6 bits are used to specify the operation
             0x00 => match opcode & 0x3F {
+                0x00 => self.sll(opcode),
+                0x02 => self.srl(opcode),
+                0x03 => self.sra(opcode),
+                0x04 => self.sllv(opcode),
+                0x06 => self.srlv(opcode),
+                0x07 => self.srav(opcode),
+                0x0C => todo!("SYSCALL opcode"),
                 0x0D => todo!("BREAK opcode"),
                 0x08 => self.jr(opcode),
                 0x09 => self.jalr(opcode),
+                0x10 => self.mfhi(opcode),
+                0x11 => self.mthi(opcode),
+                0x12 => self.mflo(opcode),
+                0x13 => self.mtlo(opcode),
+                0x18 => self.mult(opcode),
+                0x19 => self.multu(opcode),
                 0x1A => self.div(opcode),
                 0x1B => self.divu(opcode),
                 0x20 => self.add(opcode),
                 0x21 => self.addu(opcode),
+                0x22 => self.sub(opcode),
+                0x23 => self.subu(opcode),
                 0x24 => self.and(opcode),
+                0x25 => self.or(opcode),
+                0x26 => self.xor(opcode),
+                0x27 => self.nor(opcode),
+                0x2A => self.slt(opcode),
+                0x2B => self.sltu(opcode),
                 _ => todo!("opcode {opcode:08X}"),
             },
             // If highest 6 bits are $01, bits 16-20 are used to specify the operation
@@ -71,16 +91,36 @@ impl R3000 {
             0x07 => self.bgtz(opcode),
             0x08 => self.addi(opcode),
             0x09 => self.addiu(opcode),
+            0x0A => self.slti(opcode),
+            0x0B => self.sltiu(opcode),
             0x0C => self.andi(opcode),
+            0x0D => self.ori(opcode),
+            0x0E => self.xori(opcode),
             0x0F => self.lui(opcode),
             // If highest 6 bits are $10-$13, this is a coprocessor opcode and bits 21-25 specify
             // the operation
             0x10..=0x13 => match (opcode >> 21) & 0x1F {
+                0x00 => todo!("MFCz opcode {opcode:08X}"),
                 0x02 => todo!("CFCz opcode {opcode:08X}"),
+                0x04 => todo!("MTCz opcode {opcode:08X}"),
                 0x06 => todo!("CTCz opcode {opcode:08X}"),
                 0x10..=0x1F => todo!("COPz opcode {opcode:08X}"),
                 _ => todo!("coprocessor opcode {opcode:08X}"),
             },
+            0x20 => self.lb(opcode, bus),
+            0x21 => self.lh(opcode, bus),
+            0x22 => self.lwl(opcode, bus),
+            0x23 => self.lw(opcode, bus),
+            0x24 => self.lbu(opcode, bus),
+            0x25 => self.lhu(opcode, bus),
+            0x26 => self.lwr(opcode, bus),
+            0x28 => self.sb(opcode, bus),
+            0x29 => self.sh(opcode, bus),
+            0x2A => self.swl(opcode, bus),
+            0x2B => self.sw(opcode, bus),
+            0x2E => self.swr(opcode, bus),
+            0x30..=0x33 => todo!("LWCz opcode {opcode:08X}"),
+            0x38..=0x3B => todo!("SWCz opcode {opcode:08X}"),
             _ => todo!("opcode {opcode:08X}"),
         }
     }
@@ -220,10 +260,293 @@ impl R3000 {
             .write_gpr(parse_rd(opcode), self.registers.pc.wrapping_add(4));
     }
 
+    // LB: Load byte
+    fn lb<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let byte = bus.read(address, OpSize::Byte);
+        self.registers
+            .write_gpr(parse_rt(opcode), byte as i8 as u32);
+    }
+
+    // LBU: Load byte unsigned
+    fn lbu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let byte = bus.read(address, OpSize::Byte);
+        self.registers.write_gpr(parse_rt(opcode), byte);
+    }
+
+    // LH: Load halfword
+    fn lh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let halfword = bus.read(address, OpSize::HalfWord);
+        self.registers
+            .write_gpr(parse_rt(opcode), halfword as i16 as u32);
+    }
+
+    // LHU: Load halfword unsigned
+    fn lhu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let halfword = bus.read(address, OpSize::HalfWord);
+        self.registers.write_gpr(parse_rt(opcode), halfword);
+    }
+
     // LUI: Load upper immediate
     fn lui(&mut self, opcode: u32) {
         let register = (opcode >> 16) & 0x1F;
         self.registers.write_gpr(register, opcode << 16);
+    }
+
+    // LW: Load word
+    fn lw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let word = bus.read(address, OpSize::Word);
+        self.registers.write_gpr(parse_rt(opcode), word);
+    }
+
+    // LWL: Load word left
+    fn lwl<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+
+        let shift = 8 * (address & 3);
+        let mask: u32 = 0xFFFF_FFFF << shift;
+
+        let rt = parse_rt(opcode);
+        let existing_value = self.registers.gpr[rt as usize];
+
+        let word = bus.read(address & !3, OpSize::Word) << shift;
+        let new_value = (existing_value & !mask) | word;
+        self.registers.write_gpr(rt, new_value);
+    }
+
+    // LWR: Load word right
+    fn lwr<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+
+        let shift = 8 * (3 - (address & 3));
+        let mask: u32 = 0xFFFF_FFFF >> shift;
+
+        let rt = parse_rt(opcode);
+        let existing_value = self.registers.gpr[rt as usize];
+
+        let word = bus.read(address & !3, OpSize::Word) >> shift;
+        let new_value = (existing_value & !mask) | word;
+        self.registers.write_gpr(rt, new_value);
+    }
+
+    // MFHI: Move from HI
+    fn mfhi(&mut self, opcode: u32) {
+        self.registers
+            .write_gpr(parse_rd(opcode), self.registers.hi);
+    }
+
+    // MFLO: Move from LO
+    fn mflo(&mut self, opcode: u32) {
+        self.registers
+            .write_gpr(parse_rd(opcode), self.registers.lo);
+    }
+
+    // MTHI: Move to HI
+    fn mthi(&mut self, opcode: u32) {
+        self.registers.hi = self.registers.gpr[parse_rs(opcode) as usize];
+    }
+
+    // MTLO: Move to LO
+    fn mtlo(&mut self, opcode: u32) {
+        self.registers.lo = self.registers.gpr[parse_rs(opcode) as usize];
+    }
+
+    // MULT: Multiply word
+    fn mult(&mut self, opcode: u32) {
+        // TODO timing?
+        let operand_a: i64 = self.registers.gpr[parse_rs(opcode) as usize].into();
+        let operand_b: i64 = self.registers.gpr[parse_rt(opcode) as usize].into();
+        let product = operand_a * operand_b;
+
+        self.registers.lo = product as u32;
+        self.registers.hi = (product >> 32) as u32;
+    }
+
+    // MULTU: Multiply unsigned word
+    fn multu(&mut self, opcode: u32) {
+        // TODO timing?
+        let operand_a: u64 = self.registers.gpr[parse_rs(opcode) as usize].into();
+        let operand_b: u64 = self.registers.gpr[parse_rs(opcode) as usize].into();
+        let product = operand_a * operand_b;
+
+        self.registers.lo = product as u32;
+        self.registers.hi = (product >> 32) as u32;
+    }
+
+    // NOR: Nor
+    fn nor(&mut self, opcode: u32) {
+        let operand_a = self.registers.gpr[parse_rs(opcode) as usize];
+        let operand_b = self.registers.gpr[parse_rt(opcode) as usize];
+        self.registers
+            .write_gpr(parse_rd(opcode), !(operand_a | operand_b));
+    }
+
+    // OR: Or
+    fn or(&mut self, opcode: u32) {
+        let operand_a = self.registers.gpr[parse_rs(opcode) as usize];
+        let operand_b = self.registers.gpr[parse_rt(opcode) as usize];
+        self.registers
+            .write_gpr(parse_rd(opcode), operand_a | operand_b);
+    }
+
+    // ORI: Or immediate
+    fn ori(&mut self, opcode: u32) {
+        let operand_a = self.registers.gpr[parse_rs(opcode) as usize];
+        let operand_b = parse_unsigned_immediate(opcode);
+        self.registers
+            .write_gpr(parse_rt(opcode), operand_a | operand_b);
+    }
+
+    // SB: Store byte
+    fn sb<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let byte = self.registers.gpr[parse_rt(opcode) as usize];
+        bus.write(address, byte, OpSize::Byte);
+    }
+
+    // SH: Store halfword
+    fn sh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let halfword = self.registers.gpr[parse_rt(opcode) as usize];
+        bus.write(address, halfword, OpSize::HalfWord);
+    }
+
+    // SW: Store word
+    fn sw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        let word = self.registers.gpr[parse_rt(opcode) as usize];
+        bus.write(address, word, OpSize::Word);
+    }
+
+    // SWL: Store word left
+    fn swl<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        todo!("SWL")
+    }
+
+    // SWR: Store word right
+    fn swr<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        todo!("SWR")
+    }
+
+    // SLL: Shift word left logical
+    fn sll(&mut self, opcode: u32) {
+        let value = self.registers.gpr[parse_rt(opcode) as usize] << parse_sa(opcode);
+        self.registers.write_gpr(parse_rd(opcode), value);
+    }
+
+    // SLLV: Shift word left logical variable
+    fn sllv(&mut self, opcode: u32) {
+        let shift_amount = self.registers.gpr[parse_rs(opcode) as usize] & 0x1F;
+        let value = self.registers.gpr[parse_rt(opcode) as usize] << shift_amount;
+        self.registers.write_gpr(parse_rd(opcode), value);
+    }
+
+    // SRA: Shift word right arithmetic
+    fn sra(&mut self, opcode: u32) {
+        let shift_amount = parse_sa(opcode);
+        let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
+        self.registers
+            .write_gpr(parse_rd(opcode), (rt >> shift_amount) as u32);
+    }
+
+    // SRAV: Shift word right arithmetic variable
+    fn srav(&mut self, opcode: u32) {
+        let shift_amount = self.registers.gpr[parse_rs(opcode) as usize] & 0x1F;
+        let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
+        self.registers
+            .write_gpr(parse_rd(opcode), (rt >> shift_amount) as u32);
+    }
+
+    // SRL: Shift word right logical
+    fn srl(&mut self, opcode: u32) {
+        let value = self.registers.gpr[parse_rt(opcode) as usize] >> parse_sa(opcode);
+        self.registers.write_gpr(parse_rd(opcode), value);
+    }
+
+    // SRLV: Shift word right logical variable
+    fn srlv(&mut self, opcode: u32) {
+        let shift_amount = self.registers.gpr[parse_rs(opcode) as usize] & 0x1F;
+        let value = self.registers.gpr[parse_rt(opcode) as usize] >> shift_amount;
+        self.registers.write_gpr(parse_rd(opcode), value);
+    }
+
+    // SLT: Set on less than
+    fn slt(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize] as i32;
+        let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
+        self.registers.write_gpr(parse_rd(opcode), (rs < rt).into());
+    }
+
+    // SLTU: Set on less than unsigned
+    fn sltu(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize];
+        let rt = self.registers.gpr[parse_rt(opcode) as usize];
+        self.registers.write_gpr(parse_rd(opcode), (rs < rt).into());
+    }
+
+    // SLTI: Set on less than immediate
+    fn slti(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize] as i32;
+        let immediate = parse_signed_immediate(opcode);
+        self.registers
+            .write_gpr(parse_rd(opcode), (rs < immediate).into());
+    }
+
+    // SLTIU: Set on less than immediate unsigned
+    fn sltiu(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize];
+        let immediate = parse_signed_immediate(opcode) as u32;
+        self.registers
+            .write_gpr(parse_rd(opcode), (rs < immediate).into());
+    }
+
+    // SUB: Subtract word
+    fn sub(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize] as i32;
+        let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
+        let (difference, overflowed) = rs.overflowing_sub(rt);
+        if overflowed {
+            todo!("integer overflow exception")
+        }
+
+        self.registers
+            .write_gpr(parse_rd(opcode), difference as u32);
+    }
+
+    // SUBU: Subtract unsigned word
+    fn subu(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize];
+        let rt = self.registers.gpr[parse_rt(opcode) as usize];
+        self.registers
+            .write_gpr(parse_rd(opcode), rs.wrapping_sub(rt));
+    }
+
+    // XOR: Exclusive or
+    fn xor(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize];
+        let rt = self.registers.gpr[parse_rt(opcode) as usize];
+        self.registers.write_gpr(parse_rd(opcode), rs ^ rt);
+    }
+
+    // XORI: Exclusive or immediate
+    fn xori(&mut self, opcode: u32) {
+        let rs = self.registers.gpr[parse_rs(opcode) as usize];
+        let immediate = parse_unsigned_immediate(opcode);
+        self.registers.write_gpr(parse_rd(opcode), rs ^ immediate);
     }
 }
 
@@ -236,11 +559,15 @@ fn parse_rt(opcode: u32) -> u32 {
 }
 
 fn parse_rd(opcode: u32) -> u32 {
-    (opcode >> 1) & 0x1F
+    (opcode >> 11) & 0x1F
+}
+
+fn parse_sa(opcode: u32) -> u32 {
+    (opcode >> 6) & 0x1F
 }
 
 fn parse_unsigned_immediate(opcode: u32) -> u32 {
-    opcode & 0xFF
+    opcode & 0xFFFF
 }
 
 fn parse_signed_immediate(opcode: u32) -> i32 {
