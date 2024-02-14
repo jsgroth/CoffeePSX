@@ -1,4 +1,4 @@
 pub mod api;
 mod bus;
-pub mod cpu;
+mod cpu;
 mod memory;
