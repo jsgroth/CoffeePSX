@@ -1,4 +1,5 @@
 use crate::bus::Bus;
+use crate::control::ControlRegisters;
 use crate::cpu::R3000;
 use crate::memory::Memory;
 use thiserror::Error;
@@ -15,6 +16,7 @@ pub type Ps1Result<T> = Result<T, Ps1Error>;
 pub struct Ps1Emulator {
     cpu: R3000,
     memory: Memory,
+    control_registers: ControlRegisters,
 }
 
 impl Ps1Emulator {
@@ -24,12 +26,14 @@ impl Ps1Emulator {
         Ok(Self {
             cpu: R3000::new(),
             memory,
+            control_registers: ControlRegisters::new(),
         })
     }
 
     pub fn tick(&mut self) {
         self.cpu.execute_instruction(&mut Bus {
             memory: &mut self.memory,
+            control_registers: &mut self.control_registers,
         });
     }
 }

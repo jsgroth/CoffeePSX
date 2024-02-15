@@ -1,21 +1,8 @@
+mod disassemble;
+
 use crate::cpu::bus::{BusInterface, OpSize};
 use crate::cpu::R3000;
-
-trait U32Ext {
-    fn bit(self, i: u8) -> bool;
-
-    fn sign_bit(self) -> bool;
-}
-
-impl U32Ext for u32 {
-    fn bit(self, i: u8) -> bool {
-        self & (1 << i) != 0
-    }
-
-    fn sign_bit(self) -> bool {
-        self.bit(31)
-    }
-}
+use crate::num::U32Ext;
 
 macro_rules! impl_branch {
     ($name:ident, |$rs:ident $(, $rt:ident)?| $cond:expr $(, link: $link:literal)?) => {
@@ -40,7 +27,12 @@ macro_rules! impl_branch {
 }
 
 impl R3000 {
-    pub(crate) fn execute_opcode<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    pub(crate) fn execute_opcode<B: BusInterface>(&mut self, opcode: u32, pc: u32, bus: &mut B) {
+        log::trace!(
+            "opcode {opcode:08X} at PC {pc:08X}: {}",
+            disassemble::instruction_str(opcode)
+        );
+
         // First 6 bits of opcode identify operation
         match opcode >> 26 {
             // If highest 6 bits are all 0, the lowest 6 bits are used to specify the operation
@@ -100,11 +92,11 @@ impl R3000 {
             // If highest 6 bits are $10-$13, this is a coprocessor opcode and bits 21-25 specify
             // the operation
             0x10..=0x13 => match (opcode >> 21) & 0x1F {
-                0x00 => todo!("MFCz opcode {opcode:08X}"),
+                0x00 => self.mfcz(opcode),
                 0x02 => todo!("CFCz opcode {opcode:08X}"),
-                0x04 => todo!("MTCz opcode {opcode:08X}"),
+                0x04 => self.mtcz(opcode),
                 0x06 => todo!("CTCz opcode {opcode:08X}"),
-                0x10..=0x1F => todo!("COPz opcode {opcode:08X}"),
+                0x10..=0x1F => self.copz(opcode),
                 _ => todo!("coprocessor opcode {opcode:08X}"),
             },
             0x20 => self.lb(opcode, bus),
@@ -264,7 +256,7 @@ impl R3000 {
     fn lb<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
-        let byte = bus.read(address, OpSize::Byte);
+        let byte = self.bus_read(bus, address, OpSize::Byte);
         self.registers
             .write_gpr(parse_rt(opcode), byte as i8 as u32);
     }
@@ -273,7 +265,7 @@ impl R3000 {
     fn lbu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
-        let byte = bus.read(address, OpSize::Byte);
+        let byte = self.bus_read(bus, address, OpSize::Byte);
         self.registers.write_gpr(parse_rt(opcode), byte);
     }
 
@@ -281,7 +273,7 @@ impl R3000 {
     fn lh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
-        let halfword = bus.read(address, OpSize::HalfWord);
+        let halfword = self.bus_read(bus, address, OpSize::HalfWord);
         self.registers
             .write_gpr(parse_rt(opcode), halfword as i16 as u32);
     }
@@ -290,7 +282,7 @@ impl R3000 {
     fn lhu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
-        let halfword = bus.read(address, OpSize::HalfWord);
+        let halfword = self.bus_read(bus, address, OpSize::HalfWord);
         self.registers.write_gpr(parse_rt(opcode), halfword);
     }
 
@@ -304,7 +296,7 @@ impl R3000 {
     fn lw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
-        let word = bus.read(address, OpSize::Word);
+        let word = self.bus_read(bus, address, OpSize::Word);
         self.registers.write_gpr(parse_rt(opcode), word);
     }
 
@@ -316,7 +308,7 @@ impl R3000 {
         let rt = parse_rt(opcode);
         let existing_value = self.registers.gpr[rt as usize];
 
-        let memory_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let memory_word = self.bus_read(bus, address & !3, OpSize::Word).swap_bytes();
         let shift = 8 * ((address & 3) ^ 3);
         let mask: u32 = 0xFFFF_FFFF << shift;
 
@@ -332,7 +324,7 @@ impl R3000 {
         let rt = parse_rt(opcode);
         let existing_value = self.registers.gpr[rt as usize];
 
-        let memory_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let memory_word = self.bus_read(bus, address & !3, OpSize::Word).swap_bytes();
         let shift = 8 * (address & 3);
         let mask = 0xFFFF_FFFF >> shift;
 
@@ -413,7 +405,7 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.registers.gpr[parse_rt(opcode) as usize];
-        bus.write(address, byte, OpSize::Byte);
+        self.bus_write(bus, address, byte, OpSize::Byte);
     }
 
     // SH: Store halfword
@@ -421,7 +413,7 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let halfword = self.registers.gpr[parse_rt(opcode) as usize];
-        bus.write(address, halfword, OpSize::HalfWord);
+        self.bus_write(bus, address, halfword, OpSize::HalfWord);
     }
 
     // SW: Store word
@@ -429,7 +421,7 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let word = self.registers.gpr[parse_rt(opcode) as usize];
-        bus.write(address, word, OpSize::Word);
+        self.bus_write(bus, address, word, OpSize::Word);
     }
 
     // SWL: Store word left
@@ -437,14 +429,14 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
-        let existing_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let existing_word = self.bus_read(bus, address & !3, OpSize::Word).swap_bytes();
         let register_word = self.registers.gpr[parse_rt(opcode) as usize];
 
         let shift = 8 * ((address & 3) ^ 3);
         let mask: u32 = 0xFFFF_FFFF >> shift;
 
         let new_value = (existing_word & !mask) | (register_word >> shift);
-        bus.write(address & !3, new_value.swap_bytes(), OpSize::Word);
+        self.bus_write(bus, address & !3, new_value.swap_bytes(), OpSize::Word);
     }
 
     // SWR: Store word right
@@ -452,14 +444,14 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
-        let existing_word = bus.read(address & !3, OpSize::Word).swap_bytes();
+        let existing_word = self.bus_read(bus, address & !3, OpSize::Word).swap_bytes();
         let register_word = self.registers.gpr[parse_rt(opcode) as usize];
 
         let shift = 8 * (address & 3);
         let mask: u32 = 0xFFFF_FFFF << shift;
 
         let new_value = (existing_word & !mask) | (register_word << shift);
-        bus.write(address & !3, new_value.swap_bytes(), OpSize::Word);
+        self.bus_write(bus, address & !3, new_value.swap_bytes(), OpSize::Word);
     }
 
     // SLL: Shift word left logical
@@ -568,6 +560,35 @@ impl R3000 {
         let immediate = parse_unsigned_immediate(opcode);
         self.registers.write_gpr(parse_rd(opcode), rs ^ immediate);
     }
+
+    // MFCz: Move from coprocessor
+    fn mfcz(&mut self, opcode: u32) {
+        let register = parse_rd(opcode);
+        let value = match parse_coprocessor(opcode) {
+            0 => self.cp0.read_register(register),
+            cp => todo!("MFC{cp} {register}"),
+        };
+        self.registers.write_gpr(parse_rt(opcode), value);
+    }
+
+    // MTCz: Move to coprocessor
+    fn mtcz(&mut self, opcode: u32) {
+        let register = parse_rd(opcode);
+        let value = self.registers.gpr[parse_rt(opcode) as usize];
+        match parse_coprocessor(opcode) {
+            0 => self.cp0.write_register(register, value),
+            cp => todo!("MTC{cp} {register} {value:08X}"),
+        }
+    }
+
+    // COPz: Coprocessor operation
+    fn copz(&mut self, opcode: u32) {
+        let operation = opcode & 0xFFFFFF;
+        match parse_coprocessor(opcode) {
+            0 => self.cp0.execute_operation(operation),
+            cp => todo!("COP{cp} {opcode:08X}"),
+        }
+    }
 }
 
 fn parse_rs(opcode: u32) -> u32 {
@@ -596,6 +617,10 @@ fn parse_signed_immediate(opcode: u32) -> i32 {
 
 fn parse_offset(opcode: u32) -> u32 {
     (opcode as i16 as u32) << 2
+}
+
+fn parse_coprocessor(opcode: u32) -> u32 {
+    (opcode >> 26) & 0x3
 }
 
 fn compute_jump_address(pc: u32, opcode: u32) -> u32 {
