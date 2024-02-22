@@ -71,6 +71,10 @@ impl<'a> BusInterface for Bus<'a> {
             }
             0x1F800000..=0x1F800FFF => self.memory.read_scratchpad_ram(address, size),
             0x1F801000..=0x1F8017FF => self.read_io_register(address, size),
+            0x1F801C00..=0x1F801FFF => {
+                // TODO SPU registers
+                0
+            }
             0x1FC00000..=0x1FFFFFFF => self.memory.read_bios_rom(address, size),
             _ => todo!("read {address:08X} {size:?}"),
         }
@@ -82,7 +86,7 @@ impl<'a> BusInterface for Bus<'a> {
                 self.memory.write_main_ram(address, value, size);
             }
             0x1F000000..=0x1F7FFFFF => {
-                log::warn!("Unhandled expansion 1 write {address:08X} {value:08X} {size:?}")
+                unimplemented_register_write("Expansion Device 1", address, value, size)
             }
             0x1F800000..=0x1F800FFF => {
                 self.memory.write_scratchpad_ram(address, value, size);
@@ -90,8 +94,8 @@ impl<'a> BusInterface for Bus<'a> {
             0x1F801000..=0x1F8017FF => {
                 self.write_io_register(address, value, size);
             }
-            0x1F801D80..=0x1F801FFF => {
-                log::warn!("Unhandled SPU register write {address:08X} {value:08X} {size:?}")
+            0x1F801C00..=0x1F801FFF => {
+                // TODO SPU registers
             }
             0x1F802041 => log::warn!("Unhandled POST write {value:08X} {size:?}"),
             _ => todo!("write {address:08X} {size:?}"),

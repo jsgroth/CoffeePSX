@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let bios_rom = fs::read(&filename)?;
     let mut emulator = Ps1Emulator::new(bios_rom)?;
 
-    for _ in 0..10_000_000 {
+    for _ in 0..1_000_000_000 {
         emulator.tick();
     }
 
