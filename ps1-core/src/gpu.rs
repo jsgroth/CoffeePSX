@@ -1,3 +1,4 @@
+mod gp0;
 mod gp1;
 mod registers;
 
@@ -28,7 +29,7 @@ impl Gpu {
     pub fn write_gp0_command(&mut self, value: u32) {
         // Highest 3 bits of word determine command, except for some miscellaneous commands
         match value >> 29 {
-            5 => todo!("GP0 CPU-to-VRAM blit"),
+            5 => todo!("GP0 CPU-to-VRAM blit {value:08X}"),
             _ => todo!("GP0 command {value:08X}"),
         }
     }
