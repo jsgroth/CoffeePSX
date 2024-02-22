@@ -17,6 +17,8 @@ impl<'a> BusInterface for Bus<'a> {
                 log::warn!("Unhandled expansion 1 read {address:08X} {size:?}");
                 0
             }
+            0x1F800000..=0x1F800FFF => self.memory.read_scratchpad_ram(address, size),
+            0x1F801000..=0x1F8017FF => self.control_registers.read_io_register(address),
             0x1FC00000..=0x1FFFFFFF => self.memory.read_bios_rom(address, size),
             _ => todo!("read {address:08X} {size:?}"),
         }
@@ -29,6 +31,9 @@ impl<'a> BusInterface for Bus<'a> {
             }
             0x1F000000..=0x1F7FFFFF => {
                 log::warn!("Unhandled expansion 1 write {address:08X} {value:08X} {size:?}")
+            }
+            0x1F800000..=0x1F800FFF => {
+                self.memory.write_scratchpad_ram(address, value, size);
             }
             0x1F801000..=0x1F8017FF => {
                 self.control_registers.write_io_register(address, value);

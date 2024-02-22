@@ -12,6 +12,13 @@ impl ControlRegisters {
         }
     }
 
+    pub fn read_io_register(&mut self, address: u32) -> u32 {
+        match address & 0xFFFF {
+            0x1074 => self.read_interrupt_mask(),
+            _ => panic!("I/O register read {address:08X}"),
+        }
+    }
+
     pub fn write_io_register(&mut self, address: u32, value: u32) {
         match address & 0xFFFF {
             0x1000 => self.write_expansion_1_address(value),
@@ -24,6 +31,17 @@ impl ControlRegisters {
             0x101C => self.write_expansion_2_memory_control(value),
             0x1020 => self.write_common_delay(value),
             0x1060 => self.write_ram_size(value),
+            0x1070 => self.write_interrupt_status(value),
+            0x1074 => self.write_interrupt_mask(value),
+            0x1100..=0x110F => {
+                log::warn!("Unhandled dot clock register write {address:08X} {value:08X}")
+            }
+            0x1110..=0x111F => log::warn!(
+                "Unhandled horizontal retrace timer register write {address:08x} {value:08X}"
+            ),
+            0x1120..=0x112F => {
+                log::warn!("Unhandled 1/8 system timer register write {address:08X} {value:08X}")
+            }
             _ => panic!("I/O register write {address:08X} {value:08X}"),
         }
     }
@@ -73,5 +91,18 @@ impl ControlRegisters {
 
     fn write_ram_size(&mut self, value: u32) {
         log::warn!("Unhandled write to RAM size register: {value:08X}");
+    }
+
+    fn write_interrupt_status(&mut self, value: u32) {
+        log::warn!("Unhandled write to interrupt status register: {value:08X}");
+    }
+
+    fn read_interrupt_mask(&self) -> u32 {
+        log::warn!("Unhandled read from interrupt mask register");
+        0
+    }
+
+    fn write_interrupt_mask(&mut self, value: u32) {
+        log::warn!("Unhandled write to interrupt mask register: {value:08X}");
     }
 }

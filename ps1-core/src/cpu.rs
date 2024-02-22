@@ -3,9 +3,12 @@ mod cp0;
 mod instructions;
 
 use crate::cpu::bus::{BusInterface, OpSize};
+use crate::cpu::cp0::ExceptionCode;
 use cp0::SystemControlCoprocessor;
 
 const RESET_VECTOR: u32 = 0xBFC0_0000;
+const EXCEPTION_VECTOR: u32 = 0x8000_0080;
+const BOOT_EXCEPTION_VECTOR: u32 = 0xBFC0_0180;
 
 #[derive(Debug, Clone)]
 struct Registers {
@@ -34,6 +37,19 @@ impl Registers {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exception {
+    Syscall,
+}
+
+impl Exception {
+    fn to_code(self) -> ExceptionCode {
+        match self {
+            Self::Syscall => ExceptionCode::Syscall,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct R3000 {
     registers: Registers,
@@ -51,12 +67,15 @@ impl R3000 {
     pub fn execute_instruction<B: BusInterface>(&mut self, bus: &mut B) {
         let pc = self.registers.pc;
         let opcode = self.bus_read(bus, pc, OpSize::Word);
-        self.registers.pc = match self.registers.delayed_branch.take() {
-            Some(address) => address,
-            None => pc.wrapping_add(4),
+        let (in_delay_slot, next_pc) = match self.registers.delayed_branch.take() {
+            Some(address) => (true, address),
+            None => (false, pc.wrapping_add(4)),
         };
+        self.registers.pc = next_pc;
 
-        self.execute_opcode(opcode, pc, bus);
+        if let Err(exception) = self.execute_opcode(opcode, pc, bus) {
+            self.handle_exception(exception, pc, in_delay_slot);
+        }
     }
 
     fn bus_read<B: BusInterface>(&mut self, bus: &mut B, address: u32, size: OpSize) -> u32 {
@@ -75,6 +94,13 @@ impl R3000 {
     }
 
     fn bus_write<B: BusInterface>(&mut self, bus: &mut B, address: u32, value: u32, size: OpSize) {
+        if self.cp0.status.isolate_cache {
+            // If cache is isolated, send writes directly to scratchpad RAM
+            // The BIOS isolates cache on startup to zero out scratchpad
+            bus.write(0x1F800000 | (address & 0x3FF), value, size);
+            return;
+        }
+
         match address {
             // kuseg (only first 512MB are valid addresses)
             0x00000000..=0x1FFFFFFF => bus.write(address, value, size),
@@ -87,5 +113,16 @@ impl R3000 {
             // other addresses in kuseg and kseg2 are invalid
             _ => todo!("invalid address write {address:08X} {value:08X} {size:?}"),
         }
+    }
+
+    fn handle_exception(&mut self, exception: Exception, pc: u32, in_delay_slot: bool) {
+        self.cp0.handle_exception(exception, pc, in_delay_slot);
+
+        self.registers.pc = if self.cp0.status.boot_exception_vectors {
+            BOOT_EXCEPTION_VECTOR
+        } else {
+            EXCEPTION_VECTOR
+        };
+        self.registers.delayed_branch = None;
     }
 }

@@ -1,10 +1,9 @@
+use crate::cpu::Exception;
 use crate::num::U32Ext;
 
 const I_CACHE_LEN: usize = 4 * 1024;
-const D_CACHE_LEN: usize = 1024;
 
 type ICache = [u8; I_CACHE_LEN];
-type DCache = [u8; D_CACHE_LEN];
 
 #[derive(Debug, Clone)]
 pub struct CacheControl {
@@ -36,11 +35,11 @@ pub struct StatusRegister {
     pub boot_exception_vectors: bool,
     pub isolate_cache: bool,
     pub interrupt_mask: u8,
-    pub user_mode: bool,
+    pub kernel_mode: bool,
     pub interrupts_enabled: bool,
-    pub user_mode_previous: bool,
+    pub kernel_mode_previous: bool,
     pub interrupts_enabled_previous: bool,
-    pub user_mode_old: bool,
+    pub kernel_mode_old: bool,
     pub interrupts_enabled_old: bool,
 }
 
@@ -50,11 +49,11 @@ impl StatusRegister {
             boot_exception_vectors: true,
             isolate_cache: false,
             interrupt_mask: 0,
-            user_mode: false,
+            kernel_mode: true,
             interrupts_enabled: false,
-            user_mode_previous: false,
+            kernel_mode_previous: true,
             interrupts_enabled_previous: false,
-            user_mode_old: false,
+            kernel_mode_old: true,
             interrupts_enabled_old: false,
         }
     }
@@ -63,11 +62,11 @@ impl StatusRegister {
         (u32::from(self.boot_exception_vectors) << 22)
             | (u32::from(self.isolate_cache) << 16)
             | (u32::from(self.interrupt_mask) << 8)
-            | (u32::from(self.user_mode) << 5)
+            | (u32::from(self.kernel_mode) << 5)
             | (u32::from(self.interrupts_enabled) << 4)
-            | (u32::from(self.user_mode_previous) << 3)
+            | (u32::from(self.kernel_mode_previous) << 3)
             | (u32::from(self.interrupts_enabled_previous) << 2)
-            | (u32::from(self.user_mode_old) << 1)
+            | (u32::from(self.kernel_mode_old) << 1)
             | u32::from(self.interrupts_enabled_old)
     }
 
@@ -75,14 +74,74 @@ impl StatusRegister {
         self.boot_exception_vectors = value.bit(22);
         self.isolate_cache = value.bit(16);
         self.interrupt_mask = (value >> 8) as u8;
-        self.user_mode = value.bit(5);
+        self.kernel_mode = value.bit(5);
         self.interrupts_enabled = value.bit(4);
-        self.user_mode_previous = value.bit(3);
+        self.kernel_mode_previous = value.bit(3);
         self.interrupts_enabled_previous = value.bit(2);
-        self.user_mode_old = value.bit(1);
+        self.kernel_mode_old = value.bit(1);
         self.interrupts_enabled_old = value.bit(0);
 
         log::trace!("CP0 SR write ({value:08x}): {self:#?}");
+    }
+
+    fn push_exception_stack(&mut self) {
+        self.kernel_mode_old = self.kernel_mode_previous;
+        self.interrupts_enabled_old = self.interrupts_enabled_previous;
+
+        self.kernel_mode_previous = self.kernel_mode;
+        self.interrupts_enabled_previous = self.interrupts_enabled;
+
+        self.kernel_mode = true;
+        self.interrupts_enabled = false;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExceptionCode {
+    #[default]
+    Interrupt = 0,
+    Syscall = 8,
+}
+
+impl ExceptionCode {
+    fn from_bits(bits: u32) -> Self {
+        match bits {
+            0x00 => Self::Interrupt,
+            0x08 => Self::Syscall,
+            _ => {
+                log::warn!("Unimplemented exception code: {bits:02X}");
+                Self::Interrupt
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CauseRegister {
+    pub branch_delay: bool,
+    pub interrupts_pending: u8,
+    pub exception_code: ExceptionCode,
+}
+
+impl CauseRegister {
+    fn new() -> Self {
+        Self {
+            branch_delay: false,
+            interrupts_pending: 0,
+            exception_code: ExceptionCode::default(),
+        }
+    }
+
+    fn read(&self) -> u32 {
+        (u32::from(self.branch_delay) << 31)
+            | (u32::from(self.interrupts_pending) << 8)
+            | ((self.exception_code as u32) << 2)
+    }
+
+    fn write(&mut self, value: u32) {
+        self.branch_delay = value.bit(31);
+        self.interrupts_pending = (value >> 8) as u8;
+        self.exception_code = ExceptionCode::from_bits((value >> 2) & 0x1F);
     }
 }
 
@@ -90,8 +149,9 @@ impl StatusRegister {
 pub struct SystemControlCoprocessor {
     pub cache_control: CacheControl,
     pub status: StatusRegister,
+    pub cause: CauseRegister,
+    pub epc: u32,
     pub i_cache: Box<ICache>,
-    pub d_cache: Box<DCache>,
 }
 
 impl SystemControlCoprocessor {
@@ -99,14 +159,17 @@ impl SystemControlCoprocessor {
         Self {
             cache_control: CacheControl::new(),
             status: StatusRegister::new(),
+            cause: CauseRegister::new(),
+            epc: 0,
             i_cache: vec![0; I_CACHE_LEN].into_boxed_slice().try_into().unwrap(),
-            d_cache: vec![0; D_CACHE_LEN].into_boxed_slice().try_into().unwrap(),
         }
     }
 
     pub fn read_register(&self, register: u32) -> u32 {
         match register {
             12 => self.status.read(),
+            13 => self.cause.read(),
+            14 => self.epc,
             _ => todo!("CP0 read {register}"),
         }
     }
@@ -120,7 +183,7 @@ impl SystemControlCoprocessor {
             9 => log::warn!("Unhandled CP0 data access breakpoint mask write {value:08X}"),
             11 => log::warn!("Unhandled CP0 execute breakpoint mask write {value:08X}"),
             12 => self.status.write(value),
-            13 => log::warn!("Unhandled CP0 Cause write {value:08X}"),
+            13 => self.cause.write(value),
             _ => todo!("CP0 write {register} {value:08X}"),
         }
     }
@@ -129,13 +192,26 @@ impl SystemControlCoprocessor {
         match operation & 0x3F {
             0x10 => {
                 // RFE: Restore from exception
-                self.status.user_mode = self.status.user_mode_previous;
+                self.status.kernel_mode = self.status.kernel_mode_previous;
                 self.status.interrupts_enabled = self.status.interrupts_enabled_previous;
 
-                self.status.user_mode_previous = self.status.user_mode_old;
+                self.status.kernel_mode_previous = self.status.kernel_mode_old;
                 self.status.interrupts_enabled_previous = self.status.interrupts_enabled_old;
             }
             _ => todo!("CP0 operation {operation:06X}"),
         }
+    }
+
+    pub fn handle_exception(&mut self, exception: Exception, pc: u32, in_delay_slot: bool) {
+        self.status.push_exception_stack();
+
+        self.cause.branch_delay = in_delay_slot;
+        self.cause.exception_code = exception.to_code();
+
+        self.epc = if in_delay_slot {
+            pc.wrapping_sub(4)
+        } else {
+            pc
+        };
     }
 }

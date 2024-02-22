@@ -1,7 +1,7 @@
 mod disassemble;
 
 use crate::cpu::bus::{BusInterface, OpSize};
-use crate::cpu::R3000;
+use crate::cpu::{Exception, R3000};
 use crate::num::U32Ext;
 
 macro_rules! impl_branch {
@@ -27,7 +27,12 @@ macro_rules! impl_branch {
 }
 
 impl R3000 {
-    pub(crate) fn execute_opcode<B: BusInterface>(&mut self, opcode: u32, pc: u32, bus: &mut B) {
+    pub(super) fn execute_opcode<B: BusInterface>(
+        &mut self,
+        opcode: u32,
+        pc: u32,
+        bus: &mut B,
+    ) -> Result<(), Exception> {
         log::trace!(
             "opcode {opcode:08X} at PC {pc:08X}: {}",
             disassemble::instruction_str(opcode)
@@ -43,7 +48,7 @@ impl R3000 {
                 0x04 => self.sllv(opcode),
                 0x06 => self.srlv(opcode),
                 0x07 => self.srav(opcode),
-                0x0C => todo!("SYSCALL opcode"),
+                0x0C => return Err(Exception::Syscall),
                 0x0D => todo!("BREAK opcode"),
                 0x08 => self.jr(opcode),
                 0x09 => self.jalr(opcode),
@@ -115,6 +120,8 @@ impl R3000 {
             0x38..=0x3B => todo!("SWCz opcode {opcode:08X}"),
             _ => todo!("opcode {opcode:08X}"),
         }
+
+        Ok(())
     }
 
     // ADD: Add word
