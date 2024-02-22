@@ -64,6 +64,23 @@ impl R3000 {
         }
     }
 
+    pub fn pc(&self) -> u32 {
+        self.registers.pc
+    }
+
+    pub fn set_pc(&mut self, pc: u32) {
+        self.registers.pc = pc;
+        self.registers.delayed_branch = None;
+    }
+
+    pub fn get_gpr(&self, register: u32) -> u32 {
+        self.registers.gpr[register as usize]
+    }
+
+    pub fn set_gpr(&mut self, register: u32, value: u32) {
+        self.registers.gpr[register as usize] = value;
+    }
+
     pub fn execute_instruction<B: BusInterface>(&mut self, bus: &mut B) {
         let pc = self.registers.pc;
         let opcode = self.bus_read(bus, pc, OpSize::Word);

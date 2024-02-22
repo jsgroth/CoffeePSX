@@ -14,6 +14,15 @@ impl<'a> Bus<'a> {
         match address & 0xFFFF {
             0x1074 => unimplemented_register_read("Interrupt Mask", address, size),
             0x10F0 => self.dma_controller.read_control(),
+            0x10F4 => unimplemented_register_read("DMA Interrupt Register", address, size),
+            0x1814 => {
+                unimplemented_register_read("GPU Status Register", address, size);
+                0xFFFFFFFF
+            }
+            0x1C00..=0x1FFF => {
+                // TODO SPU registers
+                0
+            }
             _ => panic!("I/O register read {address:08X} {size:?}"),
         }
     }
@@ -39,12 +48,17 @@ impl<'a> Bus<'a> {
             0x1070 => unimplemented_register_write("Interrupt Status", address, value, size),
             0x1074 => unimplemented_register_write("Interrupt Mask", address, value, size),
             0x10F0 => self.dma_controller.write_control(value),
+            0x10F4 => unimplemented_register_write("DMA Interrupt Register", address, value, size),
             0x1100..=0x112F => unimplemented_register_write(
                 &format!("Timer {} Register", (address >> 4) & 3),
                 address,
                 value,
                 size,
             ),
+            0x1810 => unimplemented_register_write("GP0 Command Register", address, value, size),
+            0x1C00..=0x1FFF => {
+                // TODO SPU registers
+            }
             _ => panic!("I/O register write {address:08X} {value:08X} {size:?}"),
         }
     }
@@ -70,11 +84,7 @@ impl<'a> BusInterface for Bus<'a> {
                 0
             }
             0x1F800000..=0x1F800FFF => self.memory.read_scratchpad_ram(address, size),
-            0x1F801000..=0x1F8017FF => self.read_io_register(address, size),
-            0x1F801C00..=0x1F801FFF => {
-                // TODO SPU registers
-                0
-            }
+            0x1F801000..=0x1F801FFF => self.read_io_register(address, size),
             0x1FC00000..=0x1FFFFFFF => self.memory.read_bios_rom(address, size),
             _ => todo!("read {address:08X} {size:?}"),
         }
@@ -91,11 +101,8 @@ impl<'a> BusInterface for Bus<'a> {
             0x1F800000..=0x1F800FFF => {
                 self.memory.write_scratchpad_ram(address, value, size);
             }
-            0x1F801000..=0x1F8017FF => {
+            0x1F801000..=0x1F801FFF => {
                 self.write_io_register(address, value, size);
-            }
-            0x1F801C00..=0x1F801FFF => {
-                // TODO SPU registers
             }
             0x1F802041 => log::warn!("Unhandled POST write {value:08X} {size:?}"),
             _ => todo!("write {address:08X} {size:?}"),

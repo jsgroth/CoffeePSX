@@ -62,4 +62,8 @@ impl Memory {
             value,
         );
     }
+
+    pub fn copy_to_main_ram(&mut self, data: &[u8], ram_addr: u32) {
+        self.main_ram[ram_addr as usize..ram_addr as usize + data.len()].copy_from_slice(data);
+    }
 }
