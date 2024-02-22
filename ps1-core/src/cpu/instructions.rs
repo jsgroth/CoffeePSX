@@ -522,7 +522,7 @@ impl R3000 {
         let rs = self.registers.gpr[parse_rs(opcode) as usize] as i32;
         let immediate = parse_signed_immediate(opcode);
         self.registers
-            .write_gpr(parse_rd(opcode), (rs < immediate).into());
+            .write_gpr(parse_rt(opcode), (rs < immediate).into());
     }
 
     // SLTIU: Set on less than immediate unsigned
@@ -530,7 +530,7 @@ impl R3000 {
         let rs = self.registers.gpr[parse_rs(opcode) as usize];
         let immediate = parse_signed_immediate(opcode) as u32;
         self.registers
-            .write_gpr(parse_rd(opcode), (rs < immediate).into());
+            .write_gpr(parse_rt(opcode), (rs < immediate).into());
     }
 
     // SUB: Subtract word
