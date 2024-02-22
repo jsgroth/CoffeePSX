@@ -94,6 +94,8 @@ impl R3000 {
     }
 
     fn bus_write<B: BusInterface>(&mut self, bus: &mut B, address: u32, value: u32, size: OpSize) {
+        log::trace!("Bus write {address:08X} {value:08X} {size:?}");
+
         if self.cp0.status.isolate_cache {
             // If cache is isolated, send writes directly to scratchpad RAM
             // The BIOS isolates cache on startup to zero out scratchpad

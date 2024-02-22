@@ -62,24 +62,24 @@ impl StatusRegister {
         (u32::from(self.boot_exception_vectors) << 22)
             | (u32::from(self.isolate_cache) << 16)
             | (u32::from(self.interrupt_mask) << 8)
-            | (u32::from(self.kernel_mode) << 5)
-            | (u32::from(self.interrupts_enabled) << 4)
+            | (u32::from(self.kernel_mode_old) << 5)
+            | (u32::from(self.interrupts_enabled_old) << 4)
             | (u32::from(self.kernel_mode_previous) << 3)
             | (u32::from(self.interrupts_enabled_previous) << 2)
-            | (u32::from(self.kernel_mode_old) << 1)
-            | u32::from(self.interrupts_enabled_old)
+            | (u32::from(self.kernel_mode) << 1)
+            | u32::from(self.interrupts_enabled)
     }
 
     fn write(&mut self, value: u32) {
         self.boot_exception_vectors = value.bit(22);
         self.isolate_cache = value.bit(16);
         self.interrupt_mask = (value >> 8) as u8;
-        self.kernel_mode = value.bit(5);
-        self.interrupts_enabled = value.bit(4);
+        self.kernel_mode_old = value.bit(5);
+        self.interrupts_enabled_old = value.bit(4);
         self.kernel_mode_previous = value.bit(3);
         self.interrupts_enabled_previous = value.bit(2);
-        self.kernel_mode_old = value.bit(1);
-        self.interrupts_enabled_old = value.bit(0);
+        self.kernel_mode = value.bit(1);
+        self.interrupts_enabled = value.bit(0);
 
         log::trace!("CP0 SR write ({value:08x}): {self:#?}");
     }
