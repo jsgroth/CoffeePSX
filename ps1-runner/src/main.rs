@@ -27,6 +27,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         let exe = fs::read(exe_path)?;
 
+        // The BIOS copies its shell to $00030000 in main RAM, and after it's initialized the kernel
+        // it jumps to $80030000 to begin shell execution.
+        // Sideload EXEs by stealing execution from the BIOS once it reaches this point.
         loop {
             emulator.tick();
             if emulator.cpu_pc() == 0x80030000 {

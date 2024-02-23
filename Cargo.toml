@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "ps1-core",
+    "ps1-runner",
 ]
 resolver = "2"
 

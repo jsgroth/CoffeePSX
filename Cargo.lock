@@ -165,10 +165,18 @@ dependencies = [
 name = "ps1-core"
 version = "0.1.0"
 dependencies = [
+ "log",
+ "thiserror",
+]
+
+[[package]]
+name = "ps1-runner"
+version = "0.1.0"
+dependencies = [
  "clap",
  "env_logger",
  "log",
- "thiserror",
+ "ps1-core",
 ]
 
 [[package]]
