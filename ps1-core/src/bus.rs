@@ -1,9 +1,11 @@
 use crate::control::ControlRegisters;
 use crate::cpu::bus::{BusInterface, OpSize};
 use crate::dma::DmaController;
+use crate::gpu::Gpu;
 use crate::memory::Memory;
 
 pub struct Bus<'a> {
+    pub gpu: &'a mut Gpu,
     pub memory: &'a mut Memory,
     pub dma_controller: &'a mut DmaController,
     pub control_registers: &'a mut ControlRegisters,
@@ -15,10 +17,7 @@ impl<'a> Bus<'a> {
             0x1074 => unimplemented_register_read("Interrupt Mask", address, size),
             0x10F0 => self.dma_controller.read_control(),
             0x10F4 => unimplemented_register_read("DMA Interrupt Register", address, size),
-            0x1814 => {
-                unimplemented_register_read("GPU Status Register", address, size);
-                0xFFFFFFFF
-            }
+            0x1814 => self.gpu.read_status_register(),
             0x1C00..=0x1FFF => {
                 // TODO SPU registers
                 0
@@ -55,7 +54,8 @@ impl<'a> Bus<'a> {
                 value,
                 size,
             ),
-            0x1810 => unimplemented_register_write("GP0 Command Register", address, value, size),
+            0x1810 => self.gpu.write_gp0_command(value),
+            0x1814 => self.gpu.write_gp1_command(value),
             0x1C00..=0x1FFF => {
                 // TODO SPU registers
             }

@@ -101,13 +101,15 @@ pub enum ExceptionCode {
     #[default]
     Interrupt = 0,
     Syscall = 8,
+    ReservedInstruction = 10,
 }
 
 impl ExceptionCode {
     fn from_bits(bits: u32) -> Self {
         match bits {
-            0x00 => Self::Interrupt,
-            0x08 => Self::Syscall,
+            0 => Self::Interrupt,
+            8 => Self::Syscall,
+            10 => Self::ReservedInstruction,
             _ => {
                 log::warn!("Unimplemented exception code: {bits:02X}");
                 Self::Interrupt
@@ -142,8 +144,13 @@ impl CauseRegister {
         self.branch_delay = value.bit(31);
         self.interrupts_pending = (value >> 8) as u8;
         self.exception_code = ExceptionCode::from_bits((value >> 2) & 0x1F);
+
+        log::trace!("Cause write ({value:08X}): {self:02X?}");
     }
 }
+
+// PRId register (15) always reads $00000002 on the PS1
+const PRID_VALUE: u32 = 0x00000002;
 
 #[derive(Debug, Clone)]
 pub struct SystemControlCoprocessor {
@@ -170,6 +177,7 @@ impl SystemControlCoprocessor {
             12 => self.status.read(),
             13 => self.cause.read(),
             14 => self.epc,
+            15 => PRID_VALUE,
             _ => todo!("CP0 read {register}"),
         }
     }
