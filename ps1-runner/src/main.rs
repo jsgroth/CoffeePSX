@@ -12,6 +12,8 @@ struct Args {
     bios_path: String,
     #[arg(short = 'e', long)]
     exe_path: Option<String>,
+    #[arg(short = 't', long, default_value_t)]
+    tty_enabled: bool,
 }
 
 struct MiniFbRenderer<'a> {
@@ -58,7 +60,9 @@ fn main() -> anyhow::Result<()> {
     log::info!("Loading BIOS from '{}'", args.bios_path);
 
     let bios_rom = fs::read(&args.bios_path)?;
-    let mut emulator = Ps1Emulator::builder(bios_rom).tty_enabled(true).build()?;
+    let mut emulator = Ps1Emulator::builder(bios_rom)
+        .tty_enabled(args.tty_enabled)
+        .build()?;
     let mut frame_buffer = vec![0; 512 * 448];
 
     let window_title = match &args.exe_path {
