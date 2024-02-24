@@ -3,6 +3,7 @@ use env_logger::Env;
 use minifb::{Key, Window, WindowOptions};
 use ps1_core::api::{Ps1Emulator, Renderer};
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 #[derive(Debug, Parser)]
@@ -60,7 +61,15 @@ fn main() -> anyhow::Result<()> {
     let mut emulator = Ps1Emulator::builder(bios_rom).tty_enabled(true).build()?;
     let mut frame_buffer = vec![0; 512 * 448];
 
-    let mut window = Window::new("needs title", 512, 448, WindowOptions::default())?;
+    let window_title = match &args.exe_path {
+        None => "PS1".into(),
+        Some(exe_path) => format!(
+            "PS1 - {}",
+            Path::new(exe_path).file_name().unwrap().to_str().unwrap()
+        ),
+    };
+
+    let mut window = Window::new(&window_title, 512, 448, WindowOptions::default())?;
 
     window.limit_update_rate(Some(Duration::from_micros(16667)));
 

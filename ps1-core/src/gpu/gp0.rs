@@ -299,9 +299,10 @@ fn parse_vram_size(value: u32) -> (u32, u32) {
 }
 
 fn parse_command_color(value: u32) -> u16 {
-    let r = (value & 0x1F) as u16;
-    let g = ((value >> 8) & 0x1F) as u16;
-    let b = ((value >> 16) & 0x1F) as u16;
+    // Drop the lowest 3 bits of each component
+    let r = ((value >> 3) & 0x1F) as u16;
+    let g = ((value >> 11) & 0x1F) as u16;
+    let b = ((value >> 19) & 0x1F) as u16;
 
     r | (g << 5) | (b << 10)
 }
