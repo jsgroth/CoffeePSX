@@ -17,6 +17,7 @@ impl<'a> Bus<'a> {
             0x1074 => unimplemented_register_read("Interrupt Mask", address, size),
             0x10F0 => self.dma_controller.read_control(),
             0x10F4 => unimplemented_register_read("DMA Interrupt Register", address, size),
+            0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(),
             0x1C00..=0x1FFF => {
                 // TODO SPU registers

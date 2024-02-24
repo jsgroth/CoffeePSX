@@ -1,3 +1,4 @@
+use crate::gpu::gp0::Gp0CommandState;
 use crate::gpu::registers::{
     ColorDepthBits, DmaMode, HorizontalResolution, VerticalResolution, VideoMode,
     DEFAULT_X_DISPLAY_RANGE, DEFAULT_Y_DISPLAY_RANGE,
@@ -9,11 +10,28 @@ const RESET_06_VALUE: u32 = DEFAULT_X_DISPLAY_RANGE.0 | (DEFAULT_X_DISPLAY_RANGE
 const RESET_07_VALUE: u32 = DEFAULT_Y_DISPLAY_RANGE.0 | (DEFAULT_Y_DISPLAY_RANGE.1 << 10);
 
 impl Gpu {
+    pub fn write_gp1_command(&mut self, value: u32) {
+        // Highest 8 bits of word determine command
+        match value >> 24 {
+            0x00 => self.reset(),
+            0x01 => self.reset_command_buffer(),
+            0x02 => self.acknowledge_interrupt(),
+            0x03 => self.set_display_enabled(value),
+            0x04 => self.set_dma_mode(value),
+            0x05 => self.set_display_area_start(value),
+            0x06 => self.set_horizontal_display_range(value),
+            0x07 => self.set_vertical_display_range(value),
+            0x08 => self.set_display_mode(value),
+            0x10..=0x1F => self.get_gpu_info(value),
+            _ => todo!("GP1 command {value:08X}"),
+        }
+    }
+
     // GP1($00)
-    pub(super) fn reset(&mut self) {
+    fn reset(&mut self) {
         log::trace!("GP1($00): Reset");
 
-        self.clear_command_buffer();
+        self.reset_command_buffer();
         self.acknowledge_interrupt();
         self.set_display_enabled(1);
         self.set_dma_mode(0);
@@ -26,10 +44,11 @@ impl Gpu {
     }
 
     // GP1($01)
-    pub(super) fn clear_command_buffer(&mut self) {
-        // TODO ???
+    fn reset_command_buffer(&mut self) {
+        // TODO is this right?
+        self.gp0_state.command_state = Gp0CommandState::WaitingForCommand;
 
-        log::trace!("GP1($01): Clear command buffer");
+        log::trace!("GP1($01): Reset command buffer");
     }
 
     // GP1($02)
@@ -40,7 +59,7 @@ impl Gpu {
     }
 
     // GP1($03)
-    pub(super) fn set_display_enabled(&mut self, value: u32) {
+    fn set_display_enabled(&mut self, value: u32) {
         // 0=on, 1=off
         self.registers.display_enabled = !value.bit(0);
 
@@ -51,14 +70,14 @@ impl Gpu {
     }
 
     // GP1($04)
-    pub(super) fn set_dma_mode(&mut self, value: u32) {
+    fn set_dma_mode(&mut self, value: u32) {
         self.registers.dma_mode = DmaMode::from_bits(value);
 
         log::trace!("GP1($04): DMA mode - {:?}", self.registers.dma_mode);
     }
 
     // GP1($05)
-    pub(super) fn set_display_area_start(&mut self, value: u32) {
+    fn set_display_area_start(&mut self, value: u32) {
         self.registers.display_area_x = value & 0x3FF;
         self.registers.display_area_y = (value >> 10) & 0x1FF;
 
@@ -71,7 +90,7 @@ impl Gpu {
     }
 
     // GP1($06)
-    pub(super) fn set_horizontal_display_range(&mut self, value: u32) {
+    fn set_horizontal_display_range(&mut self, value: u32) {
         let x1 = value & 0xFFF;
         let x2 = (value >> 12) & 0xFFF;
         self.registers.x_display_range = (x1, x2);
@@ -85,7 +104,7 @@ impl Gpu {
     }
 
     // GP1($07)
-    pub(super) fn set_vertical_display_range(&mut self, value: u32) {
+    fn set_vertical_display_range(&mut self, value: u32) {
         let y1 = value & 0x3FF;
         let y2 = (value >> 10) & 0x3FF;
         self.registers.y_display_range = (y1, y2);
@@ -99,7 +118,7 @@ impl Gpu {
     }
 
     // GP1($08)
-    pub(super) fn set_display_mode(&mut self, value: u32) {
+    fn set_display_mode(&mut self, value: u32) {
         self.registers.h_resolution = HorizontalResolution::from_bits(value);
         self.registers.v_resolution = VerticalResolution::from_bit(value.bit(2));
         self.registers.video_mode = VideoMode::from_bit(value.bit(3));
@@ -121,5 +140,14 @@ impl Gpu {
             "  Force horizontal resolution to 368px: {}",
             self.registers.force_h_368px
         );
+    }
+
+    // GP1($10)
+    fn get_gpu_info(&mut self, value: u32) {
+        match value & 0xF {
+            // GPU version (hardcoded to 2)
+            0x7 => self.gpu_read_buffer = 2,
+            _ => todo!("GP1 GPU info command {value:08X}"),
+        }
     }
 }
