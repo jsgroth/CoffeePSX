@@ -23,10 +23,42 @@ pub struct Ps1Emulator {
     memory: Memory,
     dma_controller: DmaController,
     control_registers: ControlRegisters,
+    tty_enabled: bool,
+    tty_buffer: String,
+}
+
+#[derive(Debug)]
+pub struct Ps1EmulatorBuilder {
+    bios_rom: Vec<u8>,
+    tty_enabled: bool,
+}
+
+impl Ps1EmulatorBuilder {
+    pub fn new(bios_rom: Vec<u8>) -> Self {
+        Self {
+            bios_rom,
+            tty_enabled: false,
+        }
+    }
+
+    pub fn tty_enabled(self, tty_enabled: bool) -> Self {
+        Self {
+            tty_enabled,
+            ..self
+        }
+    }
+
+    pub fn build(self) -> Ps1Result<Ps1Emulator> {
+        Ps1Emulator::new(self.bios_rom, self.tty_enabled)
+    }
 }
 
 impl Ps1Emulator {
-    pub fn new(bios_rom: Vec<u8>) -> Ps1Result<Self> {
+    pub fn builder(bios_rom: Vec<u8>) -> Ps1EmulatorBuilder {
+        Ps1EmulatorBuilder::new(bios_rom)
+    }
+
+    pub fn new(bios_rom: Vec<u8>, tty_enabled: bool) -> Ps1Result<Self> {
         let memory = Memory::new(bios_rom)?;
 
         Ok(Self {
@@ -35,6 +67,8 @@ impl Ps1Emulator {
             memory,
             dma_controller: DmaController::new(),
             control_registers: ControlRegisters::new(),
+            tty_enabled,
+            tty_buffer: String::new(),
         })
     }
 
@@ -83,5 +117,31 @@ impl Ps1Emulator {
             dma_controller: &mut self.dma_controller,
             control_registers: &mut self.control_registers,
         });
+
+        if self.tty_enabled {
+            self.check_for_putchar_call();
+        }
+    }
+
+    fn check_for_putchar_call(&mut self) {
+        // BIOS function calls work by jumping to $A0 (A functions), $B0 (B functions), or
+        // $C0 (C functions) with the function number specified in R9.
+        //
+        // A($3C) and B($3D) are both the putchar() function, which prints the ASCII character
+        // in R4 to the TTY.
+        let pc = self.cpu.pc() & 0x1FFFFFFF;
+        if pc == 0xA0 || pc == 0xB0 {
+            let r9 = self.cpu.get_gpr(9);
+            if (pc == 0xA0 && r9 == 0x3C) || (pc == 0xB0 && r9 == 0x3D) {
+                let r4 = self.cpu.get_gpr(4);
+                let c = r4 as u8 as char;
+                if c == '\n' {
+                    println!("TTY: {}", self.tty_buffer);
+                    self.tty_buffer.clear();
+                } else {
+                    self.tty_buffer.push(c);
+                }
+            }
+        }
     }
 }

@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     log::info!("Loading BIOS from '{}'", args.bios_path);
 
     let bios_rom = fs::read(&args.bios_path)?;
-    let mut emulator = Ps1Emulator::new(bios_rom)?;
+    let mut emulator = Ps1Emulator::builder(bios_rom).tty_enabled(true).build()?;
 
     if let Some(exe_path) = &args.exe_path {
         log::info!("Sideloading EXE from '{exe_path}'");
