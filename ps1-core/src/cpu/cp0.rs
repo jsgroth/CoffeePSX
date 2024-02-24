@@ -100,16 +100,22 @@ impl StatusRegister {
 pub enum ExceptionCode {
     #[default]
     Interrupt = 0,
+    AddressErrorLoad = 4,
     Syscall = 8,
+    Breakpoint = 9,
     ReservedInstruction = 10,
+    ArithmeticOverflow = 12,
 }
 
 impl ExceptionCode {
     fn from_bits(bits: u32) -> Self {
         match bits {
             0 => Self::Interrupt,
+            4 => Self::AddressErrorLoad,
             8 => Self::Syscall,
+            9 => Self::Breakpoint,
             10 => Self::ReservedInstruction,
+            12 => Self::ArithmeticOverflow,
             _ => {
                 log::warn!("Unimplemented exception code: {bits:02X}");
                 Self::Interrupt
@@ -158,6 +164,7 @@ pub struct SystemControlCoprocessor {
     pub status: StatusRegister,
     pub cause: CauseRegister,
     pub epc: u32,
+    pub bad_v_addr: u32,
     pub i_cache: Box<ICache>,
 }
 
@@ -168,12 +175,22 @@ impl SystemControlCoprocessor {
             status: StatusRegister::new(),
             cause: CauseRegister::new(),
             epc: 0,
+            bad_v_addr: 0,
             i_cache: vec![0; I_CACHE_LEN].into_boxed_slice().try_into().unwrap(),
         }
     }
 
     pub fn read_register(&self, register: u32) -> u32 {
         match register {
+            6 => {
+                log::warn!("Unimplemented CP0 JUMPDEST read");
+                0
+            }
+            7 => {
+                log::warn!("Unimplemented CP0 breakpoint control read");
+                0
+            }
+            8 => self.bad_v_addr,
             12 => self.status.read(),
             13 => self.cause.read(),
             14 => self.epc,
@@ -221,5 +238,9 @@ impl SystemControlCoprocessor {
         } else {
             pc
         };
+
+        if let Exception::AddressErrorLoad(address) = exception {
+            self.bad_v_addr = address;
+        }
     }
 }

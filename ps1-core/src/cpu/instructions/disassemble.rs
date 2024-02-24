@@ -134,7 +134,7 @@ pub fn instruction_str(opcode: u32) -> String {
                 parse_rs(opcode),
                 parse_signed_immediate(opcode) << 2
             ),
-            _ => panic!("invalid opcode {opcode:08X}"),
+            _ => format!("invalid opcode {opcode:08X} (unofficial branch?)"),
         },
         0x02 => format!("J ${:07X}", (opcode & 0x3FFFFFF) << 2),
         0x03 => format!("JAL ${:07X}", (opcode & 0x3FFFFFF) << 2),

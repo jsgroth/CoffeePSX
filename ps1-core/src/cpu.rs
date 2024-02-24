@@ -39,16 +39,24 @@ impl Registers {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Exception {
+    AddressErrorLoad(u32),
     Syscall,
+    Breakpoint,
+    ArithmeticOverflow,
 }
 
 impl Exception {
     fn to_code(self) -> ExceptionCode {
         match self {
+            Self::AddressErrorLoad(_) => ExceptionCode::AddressErrorLoad,
             Self::Syscall => ExceptionCode::Syscall,
+            Self::Breakpoint => ExceptionCode::Breakpoint,
+            Self::ArithmeticOverflow => ExceptionCode::ArithmeticOverflow,
         }
     }
 }
+
+type CpuResult<T> = Result<T, Exception>;
 
 #[derive(Debug, Clone)]
 pub struct R3000 {
@@ -83,6 +91,16 @@ impl R3000 {
 
     pub fn execute_instruction<B: BusInterface>(&mut self, bus: &mut B) {
         let pc = self.registers.pc;
+        if pc & 3 != 0 {
+            // Address error on opcode fetch
+            self.handle_exception(
+                Exception::AddressErrorLoad(pc),
+                pc,
+                self.registers.delayed_branch.is_some(),
+            );
+            return;
+        }
+
         let opcode = self.bus_read(bus, pc, OpSize::Word);
         let (in_delay_slot, next_pc) = match self.registers.delayed_branch.take() {
             Some(address) => (true, address),
@@ -111,8 +129,6 @@ impl R3000 {
     }
 
     fn bus_write<B: BusInterface>(&mut self, bus: &mut B, address: u32, value: u32, size: OpSize) {
-        log::trace!("Bus write {address:08X} {value:08X} {size:?}");
-
         if self.cp0.status.isolate_cache {
             // If cache is isolated, send writes directly to scratchpad RAM
             // The BIOS isolates cache on startup to zero out scratchpad
@@ -135,6 +151,11 @@ impl R3000 {
     }
 
     fn handle_exception(&mut self, exception: Exception, pc: u32, in_delay_slot: bool) {
+        log::trace!(
+            "Handling exception {exception:?}; PC={pc:08X}, BD={}",
+            u8::from(in_delay_slot)
+        );
+
         self.cp0.handle_exception(exception, pc, in_delay_slot);
 
         self.registers.pc = if self.cp0.status.boot_exception_vectors {

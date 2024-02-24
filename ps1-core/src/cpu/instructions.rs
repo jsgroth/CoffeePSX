@@ -1,7 +1,7 @@
 mod disassemble;
 
 use crate::cpu::bus::{BusInterface, OpSize};
-use crate::cpu::{Exception, R3000};
+use crate::cpu::{CpuResult, Exception, R3000};
 use crate::num::U32Ext;
 
 macro_rules! impl_branch {
@@ -32,7 +32,7 @@ impl R3000 {
         opcode: u32,
         pc: u32,
         bus: &mut B,
-    ) -> Result<(), Exception> {
+    ) -> CpuResult<()> {
         log::trace!(
             "opcode {opcode:08X} at PC {pc:08X}: {}",
             disassemble::instruction_str(opcode)
@@ -49,7 +49,7 @@ impl R3000 {
                 0x06 => self.srlv(opcode),
                 0x07 => self.srav(opcode),
                 0x0C => return Err(Exception::Syscall),
-                0x0D => todo!("BREAK opcode"),
+                0x0D => return Err(Exception::Breakpoint),
                 0x08 => self.jr(opcode),
                 0x09 => self.jalr(opcode),
                 0x10 => self.mfhi(opcode),
@@ -60,9 +60,9 @@ impl R3000 {
                 0x19 => self.multu(opcode),
                 0x1A => self.div(opcode),
                 0x1B => self.divu(opcode),
-                0x20 => self.add(opcode),
+                0x20 => self.add(opcode)?,
                 0x21 => self.addu(opcode),
-                0x22 => self.sub(opcode),
+                0x22 => self.sub(opcode)?,
                 0x23 => self.subu(opcode),
                 0x24 => self.and(opcode),
                 0x25 => self.or(opcode),
@@ -78,7 +78,9 @@ impl R3000 {
                 0x01 => self.bgez(opcode),
                 0x10 => self.bltzal(opcode),
                 0x11 => self.bgezal(opcode),
-                _ => todo!("opcode {opcode:08X}"),
+                _ => {
+                    log::error!("Invalid opcode (unofficial branch?): {opcode:08x}");
+                }
             },
             0x02 => self.j(opcode),
             0x03 => self.jal(opcode),
@@ -86,7 +88,7 @@ impl R3000 {
             0x05 => self.bne(opcode),
             0x06 => self.blez(opcode),
             0x07 => self.bgtz(opcode),
-            0x08 => self.addi(opcode),
+            0x08 => self.addi(opcode)?,
             0x09 => self.addiu(opcode),
             0x0A => self.slti(opcode),
             0x0B => self.sltiu(opcode),
@@ -125,15 +127,17 @@ impl R3000 {
     }
 
     // ADD: Add word
-    fn add(&mut self, opcode: u32) {
+    fn add(&mut self, opcode: u32) -> CpuResult<()> {
         let operand_l = self.registers.gpr[parse_rs(opcode) as usize];
         let operand_r = self.registers.gpr[parse_rt(opcode) as usize];
         let (sum, overflowed) = (operand_l as i32).overflowing_add(operand_r as i32);
         if overflowed {
-            todo!("integer overflow exception")
+            return Err(Exception::ArithmeticOverflow);
         }
 
         self.registers.write_gpr(parse_rd(opcode), sum as u32);
+
+        Ok(())
     }
 
     // ADDU: Add unsigned word
@@ -145,15 +149,17 @@ impl R3000 {
     }
 
     // ADDI: Add immediate word
-    fn addi(&mut self, opcode: u32) {
+    fn addi(&mut self, opcode: u32) -> CpuResult<()> {
         let operand_l = self.registers.gpr[parse_rs(opcode) as usize] as i32;
         let operand_r = parse_signed_immediate(opcode);
         let (sum, overflowed) = operand_l.overflowing_add(operand_r);
         if overflowed {
-            todo!("integer overflow exception")
+            return Err(Exception::ArithmeticOverflow);
         }
 
         self.registers.write_gpr(parse_rt(opcode), sum as u32);
+
+        Ok(())
     }
 
     // ADDIU: Add immediate unsigned word
@@ -534,16 +540,18 @@ impl R3000 {
     }
 
     // SUB: Subtract word
-    fn sub(&mut self, opcode: u32) {
+    fn sub(&mut self, opcode: u32) -> CpuResult<()> {
         let rs = self.registers.gpr[parse_rs(opcode) as usize] as i32;
         let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
         let (difference, overflowed) = rs.overflowing_sub(rt);
         if overflowed {
-            todo!("integer overflow exception")
+            return Err(Exception::ArithmeticOverflow);
         }
 
         self.registers
             .write_gpr(parse_rd(opcode), difference as u32);
+
+        Ok(())
     }
 
     // SUBU: Subtract unsigned word
@@ -565,7 +573,7 @@ impl R3000 {
     fn xori(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize];
         let immediate = parse_unsigned_immediate(opcode);
-        self.registers.write_gpr(parse_rd(opcode), rs ^ immediate);
+        self.registers.write_gpr(parse_rt(opcode), rs ^ immediate);
     }
 
     // MFCz: Move from coprocessor
