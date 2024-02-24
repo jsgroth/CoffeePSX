@@ -11,6 +11,8 @@ const RESET_07_VALUE: u32 = DEFAULT_Y_DISPLAY_RANGE.0 | (DEFAULT_Y_DISPLAY_RANGE
 
 impl Gpu {
     pub fn write_gp1_command(&mut self, value: u32) {
+        log::trace!("GP1 command write: {value:08X}");
+
         // Highest 8 bits of word determine command
         match value >> 24 {
             0x00 => self.reset(),
@@ -23,7 +25,7 @@ impl Gpu {
             0x07 => self.set_vertical_display_range(value),
             0x08 => self.set_display_mode(value),
             0x10..=0x1F => self.get_gpu_info(value),
-            _ => todo!("GP1 command {value:08X}"),
+            _ => log::error!("unimplemented GP1 command {value:08X}"),
         }
     }
 

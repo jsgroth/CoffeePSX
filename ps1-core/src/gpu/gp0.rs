@@ -1,8 +1,36 @@
 use crate::gpu::Gpu;
+use crate::num::U32Ext;
 use std::array;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RectangleSize {
+    Variable,
+    One,
+    Eight,
+    Sixteen,
+}
+
+impl RectangleSize {
+    fn from_bits(bits: u32) -> Self {
+        match bits & 3 {
+            0 => Self::Variable,
+            1 => Self::One,
+            2 => Self::Eight,
+            3 => Self::Sixteen,
+            _ => unreachable!("value & 3 is always <= 3"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Gp0Command {
+    DrawRectangle {
+        size: RectangleSize,
+        textured: bool,
+        semi_transparent: bool,
+        raw_texture: bool,
+        color: u16,
+    },
     CpuToVramBlit,
     VramToCpuBlit,
 }
@@ -77,6 +105,30 @@ impl Gp0CommandState {
         index: 0,
         remaining: 2,
     };
+
+    fn draw_rectangle(value: u32) -> Self {
+        let size = RectangleSize::from_bits(value >> 27);
+        let textured = value.bit(26);
+        let semi_transparent = value.bit(25);
+        let raw_texture = value.bit(24);
+        let color = parse_command_color(value);
+
+        let parameters = 1 + u8::from(textured) + u8::from(size == RectangleSize::Variable);
+
+        let command = Gp0Command::DrawRectangle {
+            size,
+            textured,
+            semi_transparent,
+            raw_texture,
+            color,
+        };
+
+        Self::WaitingForParameters {
+            command,
+            index: 0,
+            remaining: parameters,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -121,9 +173,13 @@ impl Gpu {
 
         self.gp0_state.command_state = match self.gp0_state.command_state {
             Gp0CommandState::WaitingForCommand => match value >> 29 {
+                3 => Gp0CommandState::draw_rectangle(value),
                 5 => Gp0CommandState::CPU_TO_VRAM_BLIT,
                 6 => Gp0CommandState::VRAM_TO_CPU_BLIT,
-                _ => todo!("GP0 command {value:08X}"),
+                _ => {
+                    log::error!("unimplemented GP0 command {value:08X}");
+                    Gp0CommandState::WaitingForCommand
+                }
             },
             Gp0CommandState::WaitingForParameters {
                 command,
@@ -154,6 +210,21 @@ impl Gpu {
         log::trace!("Executing GP0 command {command:?}");
 
         match command {
+            Gp0Command::DrawRectangle {
+                size,
+                textured,
+                semi_transparent,
+                raw_texture,
+                color,
+            } => {
+                if textured || semi_transparent || raw_texture || size != RectangleSize::One {
+                    todo!("draw rectangle {command:?}");
+                }
+
+                self.draw_pixel(color);
+
+                Gp0CommandState::WaitingForCommand
+            }
             Gp0Command::CpuToVramBlit => {
                 let (destination_x, destination_y) =
                     parse_vram_position(self.gp0_state.parameters[0]);
@@ -185,6 +256,17 @@ impl Gpu {
         }
     }
 
+    fn draw_pixel(&mut self, color: u16) {
+        let (x, y) = parse_vram_position(self.gp0_state.parameters[0]);
+
+        log::trace!("Drawing pixel at X={x}, Y={y} with color {color:04X}");
+
+        let vram_addr = (2048 * y + 2 * x) as usize;
+        let [lsb, msb] = color.to_le_bytes();
+        self.vram[vram_addr] = lsb;
+        self.vram[vram_addr + 1] = msb;
+    }
+
     fn receive_vram_word_from_cpu(
         &mut self,
         value: u32,
@@ -214,4 +296,12 @@ fn parse_vram_size(value: u32) -> (u32, u32) {
     let x = (value.wrapping_sub(1) & 0x3FF) + 1;
     let y = ((value >> 16).wrapping_sub(1) & 0x1FF) + 1;
     (x, y)
+}
+
+fn parse_command_color(value: u32) -> u16 {
+    let r = (value & 0x1F) as u16;
+    let g = ((value >> 8) & 0x1F) as u16;
+    let b = ((value >> 16) & 0x1F) as u16;
+
+    r | (g << 5) | (b << 10)
 }
