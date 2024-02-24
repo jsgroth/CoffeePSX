@@ -14,6 +14,11 @@ pub struct Bus<'a> {
 impl<'a> Bus<'a> {
     fn read_io_register(&mut self, address: u32, size: OpSize) -> u32 {
         match address & 0xFFFF {
+            0x1040 => unimplemented_register_read("Joypad TX Data", address, size),
+            0x104A => {
+                // TODO
+                0
+            }
             0x1074 => unimplemented_register_read("Interrupt Mask", address, size),
             0x10F0 => self.dma_controller.read_control(),
             0x10F4 => unimplemented_register_read("DMA Interrupt Register", address, size),
@@ -44,6 +49,7 @@ impl<'a> Bus<'a> {
                 unimplemented_register_write("Expansion 2 Memory Control", address, value, size)
             }
             0x1020 => unimplemented_register_write("Common Delay", address, value, size),
+            0x104A => unimplemented_register_write("Joypad Control", address, value, size),
             0x1060 => unimplemented_register_write("RAM Size", address, value, size),
             0x1070 => unimplemented_register_write("Interrupt Status", address, value, size),
             0x1074 => unimplemented_register_write("Interrupt Mask", address, value, size),

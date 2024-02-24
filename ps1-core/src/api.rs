@@ -6,6 +6,12 @@ use crate::gpu::Gpu;
 use crate::memory::Memory;
 use thiserror::Error;
 
+pub trait Renderer {
+    type Err;
+
+    fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err>;
+}
+
 #[derive(Debug, Error)]
 pub enum Ps1Error {
     #[error("Incorrect BIOS ROM size; expected 512KB, was {bios_len}")]
@@ -25,6 +31,7 @@ pub struct Ps1Emulator {
     control_registers: ControlRegisters,
     tty_enabled: bool,
     tty_buffer: String,
+    cycle_count: u64,
 }
 
 #[derive(Debug)]
@@ -69,6 +76,7 @@ impl Ps1Emulator {
             control_registers: ControlRegisters::new(),
             tty_enabled,
             tty_buffer: String::new(),
+            cycle_count: 0,
         })
     }
 
@@ -110,7 +118,7 @@ impl Ps1Emulator {
         Ok(())
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick<R: Renderer>(&mut self, renderer: &mut R) -> Result<(), R::Err> {
         self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
             memory: &mut self.memory,
@@ -121,6 +129,15 @@ impl Ps1Emulator {
         if self.tty_enabled {
             self.check_for_putchar_call();
         }
+
+        // Very, very rough timing for renders
+        self.cycle_count += 1;
+        if self.cycle_count == 33_868_800 / 60 {
+            self.cycle_count = 0;
+            renderer.render_frame(self.gpu.vram())?
+        }
+
+        Ok(())
     }
 
     fn check_for_putchar_call(&mut self) {

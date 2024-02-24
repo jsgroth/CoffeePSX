@@ -38,4 +38,8 @@ impl Gpu {
     pub fn read_status_register(&self) -> u32 {
         self.registers.read_status()
     }
+
+    pub fn vram(&self) -> &[u8] {
+        self.vram.as_ref()
+    }
 }
