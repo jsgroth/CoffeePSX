@@ -40,6 +40,7 @@ impl Registers {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Exception {
     AddressErrorLoad(u32),
+    AddressErrorStore(u32),
     Syscall,
     Breakpoint,
     ArithmeticOverflow,
@@ -49,6 +50,7 @@ impl Exception {
     fn to_code(self) -> ExceptionCode {
         match self {
             Self::AddressErrorLoad(_) => ExceptionCode::AddressErrorLoad,
+            Self::AddressErrorStore(_) => ExceptionCode::AddressErrorStore,
             Self::Syscall => ExceptionCode::Syscall,
             Self::Breakpoint => ExceptionCode::Breakpoint,
             Self::ArithmeticOverflow => ExceptionCode::ArithmeticOverflow,

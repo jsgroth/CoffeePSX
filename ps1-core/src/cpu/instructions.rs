@@ -107,16 +107,16 @@ impl R3000 {
                 _ => todo!("coprocessor opcode {opcode:08X}"),
             },
             0x20 => self.lb(opcode, bus),
-            0x21 => self.lh(opcode, bus),
+            0x21 => self.lh(opcode, bus)?,
             0x22 => self.lwl(opcode, bus),
-            0x23 => self.lw(opcode, bus),
+            0x23 => self.lw(opcode, bus)?,
             0x24 => self.lbu(opcode, bus),
-            0x25 => self.lhu(opcode, bus),
+            0x25 => self.lhu(opcode, bus)?,
             0x26 => self.lwr(opcode, bus),
             0x28 => self.sb(opcode, bus),
-            0x29 => self.sh(opcode, bus),
+            0x29 => self.sh(opcode, bus)?,
             0x2A => self.swl(opcode, bus),
-            0x2B => self.sw(opcode, bus),
+            0x2B => self.sw(opcode, bus)?,
             0x2E => self.swr(opcode, bus),
             0x30..=0x33 => todo!("LWCz opcode {opcode:08X}"),
             0x38..=0x3B => todo!("SWCz opcode {opcode:08X}"),
@@ -284,20 +284,32 @@ impl R3000 {
     }
 
     // LH: Load halfword
-    fn lh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn lh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        if address & 1 != 0 {
+            return Err(Exception::AddressErrorLoad(address));
+        }
+
         let halfword = self.bus_read(bus, address, OpSize::HalfWord);
         self.registers
             .write_gpr(parse_rt(opcode), halfword as i16 as u32);
+
+        Ok(())
     }
 
     // LHU: Load halfword unsigned
-    fn lhu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn lhu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        if address & 1 != 0 {
+            return Err(Exception::AddressErrorLoad(address));
+        }
+
         let halfword = self.bus_read(bus, address, OpSize::HalfWord);
         self.registers.write_gpr(parse_rt(opcode), halfword);
+
+        Ok(())
     }
 
     // LUI: Load upper immediate
@@ -307,11 +319,17 @@ impl R3000 {
     }
 
     // LW: Load word
-    fn lw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn lw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        if address & 3 != 0 {
+            return Err(Exception::AddressErrorLoad(address));
+        }
+
         let word = self.bus_read(bus, address, OpSize::Word);
         self.registers.write_gpr(parse_rt(opcode), word);
+
+        Ok(())
     }
 
     // LWL: Load word left
@@ -423,19 +441,31 @@ impl R3000 {
     }
 
     // SH: Store halfword
-    fn sh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn sh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        if address & 1 != 0 {
+            return Err(Exception::AddressErrorStore(address));
+        }
+
         let halfword = self.registers.gpr[parse_rt(opcode) as usize];
         self.bus_write(bus, address, halfword, OpSize::HalfWord);
+
+        Ok(())
     }
 
     // SW: Store word
-    fn sw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn sw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        if address & 3 != 0 {
+            return Err(Exception::AddressErrorStore(address));
+        }
+
         let word = self.registers.gpr[parse_rt(opcode) as usize];
         self.bus_write(bus, address, word, OpSize::Word);
+
+        Ok(())
     }
 
     // SWL: Store word left

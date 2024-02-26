@@ -101,6 +101,7 @@ pub enum ExceptionCode {
     #[default]
     Interrupt = 0,
     AddressErrorLoad = 4,
+    AddressErrorStore = 5,
     Syscall = 8,
     Breakpoint = 9,
     ReservedInstruction = 10,
@@ -112,6 +113,7 @@ impl ExceptionCode {
         match bits {
             0 => Self::Interrupt,
             4 => Self::AddressErrorLoad,
+            5 => Self::AddressErrorStore,
             8 => Self::Syscall,
             9 => Self::Breakpoint,
             10 => Self::ReservedInstruction,
@@ -239,8 +241,11 @@ impl SystemControlCoprocessor {
             pc
         };
 
-        if let Exception::AddressErrorLoad(address) = exception {
-            self.bad_v_addr = address;
+        match exception {
+            Exception::AddressErrorLoad(address) | Exception::AddressErrorStore(address) => {
+                self.bad_v_addr = address;
+            }
+            _ => {}
         }
     }
 }
