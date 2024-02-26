@@ -216,9 +216,10 @@ impl R3000 {
         let dividend = self.registers.gpr[parse_rs(opcode) as usize] as i32;
         let divisor = self.registers.gpr[parse_rt(opcode) as usize] as i32;
         if divisor == 0 {
-            // TODO divide by zero behavior?
-            self.registers.lo = u32::MAX;
-            self.registers.hi = divisor as u32;
+            // Divide by zero sets LO to $00000001 if dividend is negative and $FFFFFFFF if dividend
+            // is non-negative. HI is always set to dividend
+            self.registers.lo = if dividend < 0 { 1 } else { u32::MAX };
+            self.registers.hi = dividend as u32;
             return;
         }
 
@@ -232,9 +233,9 @@ impl R3000 {
         let dividend = self.registers.gpr[parse_rs(opcode) as usize];
         let divisor = self.registers.gpr[parse_rt(opcode) as usize];
         if divisor == 0 {
-            // TODO divide by zero behavior?
+            // Divide by zero sets LO to $FFFFFFFF and HI to the dividend
             self.registers.lo = u32::MAX;
-            self.registers.hi = divisor;
+            self.registers.hi = dividend;
             return;
         }
 
@@ -370,8 +371,8 @@ impl R3000 {
     // MULT: Multiply word
     fn mult(&mut self, opcode: u32) {
         // TODO timing?
-        let operand_a: i64 = self.registers.gpr[parse_rs(opcode) as usize].into();
-        let operand_b: i64 = self.registers.gpr[parse_rt(opcode) as usize].into();
+        let operand_a: i64 = (self.registers.gpr[parse_rs(opcode) as usize] as i32).into();
+        let operand_b: i64 = (self.registers.gpr[parse_rt(opcode) as usize] as i32).into();
         let product = operand_a * operand_b;
 
         self.registers.lo = product as u32;
@@ -382,7 +383,7 @@ impl R3000 {
     fn multu(&mut self, opcode: u32) {
         // TODO timing?
         let operand_a: u64 = self.registers.gpr[parse_rs(opcode) as usize].into();
-        let operand_b: u64 = self.registers.gpr[parse_rs(opcode) as usize].into();
+        let operand_b: u64 = self.registers.gpr[parse_rt(opcode) as usize].into();
         let product = operand_a * operand_b;
 
         self.registers.lo = product as u32;
