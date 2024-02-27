@@ -29,14 +29,14 @@ impl Gpu {
 
     pub fn read_port(&mut self) -> u32 {
         if let Gp0CommandState::SendingToCpu(fields) = self.gp0_state.command_state {
-            self.gpu_read_buffer = self.read_vram_word(fields);
+            self.gpu_read_buffer = self.read_vram_word_for_cpu(fields);
         }
 
         self.gpu_read_buffer
     }
 
     pub fn read_status_register(&self) -> u32 {
-        self.registers.read_status()
+        self.registers.read_status(&self.gp0_state)
     }
 
     pub fn vram(&self) -> &[u8] {

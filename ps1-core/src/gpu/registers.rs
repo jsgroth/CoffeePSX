@@ -1,3 +1,4 @@
+use crate::gpu::gp0::Gp0State;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,13 +168,20 @@ impl Registers {
         }
     }
 
-    pub fn read_status(&self) -> u32 {
+    pub fn read_status(&self, gp0_state: &Gp0State) -> u32 {
         // TODO bits hardcoded:
-        //   Bits 0-12 and 15: various GP0 fields
         //   Bit 13: interlaced field
         //   Bit 14: "Reverseflag"
         //   Bits 25-28: DMA request bits
-        (1 << 13)
+        gp0_state.global_texture_page.x_base
+            | ((gp0_state.global_texture_page.y_base / 256) << 4)
+            | ((gp0_state.global_texture_page.semi_transparency_mode as u32) << 5)
+            | ((gp0_state.global_texture_page.color_depth as u32) << 7)
+            | (u32::from(gp0_state.draw_settings.dithering_enabled) << 9)
+            | (u32::from(gp0_state.draw_settings.drawing_enabled) << 10)
+            | (u32::from(gp0_state.draw_settings.force_mask_bit) << 11)
+            | (u32::from(gp0_state.draw_settings.check_mask_bit) << 12)
+            | (1 << 13)
             | (u32::from(self.force_h_368px) << 16)
             | ((self.h_resolution as u32) << 17)
             | ((self.v_resolution as u32) << 19)
