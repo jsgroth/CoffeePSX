@@ -276,6 +276,15 @@ impl Gpu {
 
         self.gp0_state.command_state = match self.gp0_state.command_state {
             Gp0CommandState::WaitingForCommand => match value >> 29 {
+                0 => {
+                    // If the highest byte is $1F, this command immediately sets the GPU IRQ flag
+                    // Other command 0 bytes seem to be no-ops?
+                    if value >> 24 == 0x1F {
+                        todo!("GP0($1F) - set GPU IRQ");
+                    }
+
+                    Gp0CommandState::WaitingForCommand
+                }
                 3 => Gp0CommandState::draw_rectangle(value),
                 5 => Gp0CommandState::CPU_TO_VRAM_BLIT,
                 6 => Gp0CommandState::VRAM_TO_CPU_BLIT,
