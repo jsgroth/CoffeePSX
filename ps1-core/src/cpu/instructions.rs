@@ -18,7 +18,7 @@ macro_rules! impl_branch {
             }
 
             $(
-                if $link {
+                if $link && (opcode >> 16) & 0xF <= 1 {
                     self.registers.gpr[31] = self.registers.pc.wrapping_add(4);
                 }
             )?
@@ -73,13 +73,17 @@ impl R3000 {
                 _ => todo!("opcode {opcode:08X}"),
             },
             // If highest 6 bits are $01, bits 16-20 are used to specify the operation
+            // Undocumented: For any combination of bits other than $10 (BLTZAL) and $11 (BGEZAL),
+            // the CPU executes BLTZ if bit 16 is clear and BGEZ if bit 16 is set
             0x01 => match (opcode >> 16) & 0x1F {
-                0x00 => self.bltz(opcode),
-                0x01 => self.bgez(opcode),
                 0x10 => self.bltzal(opcode),
                 0x11 => self.bgezal(opcode),
-                _ => {
-                    log::error!("Invalid opcode (unofficial branch?): {opcode:08x}");
+                br_bits => {
+                    if !br_bits.bit(0) {
+                        self.bltz(opcode)
+                    } else {
+                        self.bgez(opcode)
+                    }
                 }
             },
             0x02 => self.j(opcode),
