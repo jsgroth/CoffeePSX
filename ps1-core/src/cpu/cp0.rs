@@ -41,6 +41,10 @@ pub struct StatusRegister {
     pub interrupts_enabled_previous: bool,
     pub kernel_mode_old: bool,
     pub interrupts_enabled_old: bool,
+    pub cp0_enabled: bool,
+    pub cp1_enabled: bool,
+    pub cp2_enabled: bool,
+    pub cp3_enabled: bool,
 }
 
 impl StatusRegister {
@@ -55,11 +59,19 @@ impl StatusRegister {
             interrupts_enabled_previous: false,
             kernel_mode_old: true,
             interrupts_enabled_old: false,
+            cp0_enabled: true,
+            cp1_enabled: true,
+            cp2_enabled: true,
+            cp3_enabled: true,
         }
     }
 
     fn read(&self) -> u32 {
-        (u32::from(self.boot_exception_vectors) << 22)
+        (u32::from(self.cp3_enabled) << 31)
+            | (u32::from(self.cp2_enabled) << 30)
+            | (u32::from(self.cp1_enabled) << 29)
+            | (u32::from(self.cp0_enabled) << 28)
+            | (u32::from(self.boot_exception_vectors) << 22)
             | (u32::from(self.isolate_cache) << 16)
             | (u32::from(self.interrupt_mask) << 8)
             | (u32::from(self.kernel_mode_old) << 5)
@@ -71,6 +83,10 @@ impl StatusRegister {
     }
 
     fn write(&mut self, value: u32) {
+        self.cp3_enabled = value.bit(31);
+        self.cp2_enabled = value.bit(30);
+        self.cp1_enabled = value.bit(29);
+        self.cp0_enabled = value.bit(28);
         self.boot_exception_vectors = value.bit(22);
         self.isolate_cache = value.bit(16);
         self.interrupt_mask = (value >> 8) as u8;
