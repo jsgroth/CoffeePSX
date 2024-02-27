@@ -17,8 +17,8 @@ struct Registers {
     hi: u32,
     lo: u32,
     delayed_branch: Option<u32>,
-    delayed_load: Option<(u8, u32)>,
-    delayed_load_next: Option<(u8, u32)>,
+    delayed_load: Option<(u32, u32)>,
+    delayed_load_next: Option<(u32, u32)>,
 }
 
 impl Registers {
@@ -34,6 +34,15 @@ impl Registers {
         }
     }
 
+    fn read_gpr_lwl_lwr(&self, register: u32) -> u32 {
+        // LWL and LWR are not affected by load delays; they can read in-flight values from load
+        // instructions
+        match self.delayed_load {
+            Some((delayed_register, value)) if register == delayed_register => value,
+            _ => self.gpr[register as usize],
+        }
+    }
+
     fn write_gpr(&mut self, register: u32, value: u32) {
         if register != 0 {
             self.gpr[register as usize] = value;
@@ -42,7 +51,15 @@ impl Registers {
 
     fn write_gpr_delayed(&mut self, register: u32, value: u32) {
         if register != 0 {
-            self.delayed_load_next = Some((register as u8, value));
+            // Undocumented: If two consecutive load instructions write to the same register, the
+            // first delayed load is canceled
+            if self
+                .delayed_load
+                .is_some_and(|(delayed_register, _)| register == delayed_register)
+            {
+                self.delayed_load = None;
+            }
+            self.delayed_load_next = Some((register, value));
         }
     }
 

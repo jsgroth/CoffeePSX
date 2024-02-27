@@ -78,8 +78,8 @@ impl R3000 {
             0x01 => match (opcode >> 16) & 0x1F {
                 0x10 => self.bltzal(opcode),
                 0x11 => self.bgezal(opcode),
-                br_bits => {
-                    if !br_bits.bit(0) {
+                _ => {
+                    if !opcode.bit(16) {
                         self.bltz(opcode)
                     } else {
                         self.bgez(opcode)
@@ -338,14 +338,11 @@ impl R3000 {
 
     // LWL: Load word left
     fn lwl<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
-        // LWL and LWR are not affected by load delays
-        self.registers.process_delayed_loads();
-
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
         let rt = parse_rt(opcode);
-        let existing_value = self.registers.gpr[rt as usize];
+        let existing_value = self.registers.read_gpr_lwl_lwr(rt);
 
         let memory_word = self.bus_read(bus, address & !3, OpSize::Word);
         let shift = 8 * ((address & 3) ^ 3);
@@ -357,14 +354,11 @@ impl R3000 {
 
     // LWR: Load word right
     fn lwr<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
-        // LWL and LWR are not affected by load delays
-        self.registers.process_delayed_loads();
-
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
         let rt = parse_rt(opcode);
-        let existing_value = self.registers.gpr[rt as usize];
+        let existing_value = self.registers.read_gpr_lwl_lwr(rt);
 
         let memory_word = self.bus_read(bus, address & !3, OpSize::Word);
         let shift = 8 * (address & 3);
