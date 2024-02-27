@@ -17,6 +17,8 @@ struct Registers {
     hi: u32,
     lo: u32,
     delayed_branch: Option<u32>,
+    delayed_load: Option<(u8, u32)>,
+    delayed_load_next: Option<(u8, u32)>,
 }
 
 impl Registers {
@@ -27,6 +29,8 @@ impl Registers {
             hi: 0,
             lo: 0,
             delayed_branch: None,
+            delayed_load: None,
+            delayed_load_next: None,
         }
     }
 
@@ -34,6 +38,19 @@ impl Registers {
         if register != 0 {
             self.gpr[register as usize] = value;
         }
+    }
+
+    fn write_gpr_delayed(&mut self, register: u32, value: u32) {
+        if register != 0 {
+            self.delayed_load_next = Some((register as u8, value));
+        }
+    }
+
+    fn process_delayed_loads(&mut self) {
+        if let Some((register, value)) = self.delayed_load {
+            self.gpr[register as usize] = value;
+        }
+        self.delayed_load = self.delayed_load_next.take();
     }
 }
 
@@ -113,6 +130,8 @@ impl R3000 {
         if let Err(exception) = self.execute_opcode(opcode, pc, bus) {
             self.handle_exception(exception, pc, in_delay_slot);
         }
+
+        self.registers.process_delayed_loads();
     }
 
     fn bus_read<B: BusInterface>(&mut self, bus: &mut B, address: u32, size: OpSize) -> u32 {

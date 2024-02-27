@@ -272,7 +272,7 @@ impl R3000 {
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.bus_read(bus, address, OpSize::Byte);
         self.registers
-            .write_gpr(parse_rt(opcode), byte as i8 as u32);
+            .write_gpr_delayed(parse_rt(opcode), byte as i8 as u32);
     }
 
     // LBU: Load byte unsigned
@@ -280,7 +280,7 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.bus_read(bus, address, OpSize::Byte);
-        self.registers.write_gpr(parse_rt(opcode), byte);
+        self.registers.write_gpr_delayed(parse_rt(opcode), byte);
     }
 
     // LH: Load halfword
@@ -293,7 +293,7 @@ impl R3000 {
 
         let halfword = self.bus_read(bus, address, OpSize::HalfWord);
         self.registers
-            .write_gpr(parse_rt(opcode), halfword as i16 as u32);
+            .write_gpr_delayed(parse_rt(opcode), halfword as i16 as u32);
 
         Ok(())
     }
@@ -307,7 +307,7 @@ impl R3000 {
         }
 
         let halfword = self.bus_read(bus, address, OpSize::HalfWord);
-        self.registers.write_gpr(parse_rt(opcode), halfword);
+        self.registers.write_gpr_delayed(parse_rt(opcode), halfword);
 
         Ok(())
     }
@@ -327,13 +327,16 @@ impl R3000 {
         }
 
         let word = self.bus_read(bus, address, OpSize::Word);
-        self.registers.write_gpr(parse_rt(opcode), word);
+        self.registers.write_gpr_delayed(parse_rt(opcode), word);
 
         Ok(())
     }
 
     // LWL: Load word left
     fn lwl<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        // LWL and LWR are not affected by load delays
+        self.registers.process_delayed_loads();
+
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
@@ -345,11 +348,14 @@ impl R3000 {
         let mask: u32 = 0xFFFF_FFFF << shift;
 
         let new_value = (existing_value & !mask) | (memory_word << shift);
-        self.registers.write_gpr(rt, new_value);
+        self.registers.write_gpr_delayed(rt, new_value);
     }
 
     // LWR: Load word right
     fn lwr<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+        // LWL and LWR are not affected by load delays
+        self.registers.process_delayed_loads();
+
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
@@ -361,7 +367,7 @@ impl R3000 {
         let mask = 0xFFFF_FFFF >> shift;
 
         let new_value = (existing_value & !mask) | (memory_word >> shift);
-        self.registers.write_gpr(rt, new_value);
+        self.registers.write_gpr_delayed(rt, new_value);
     }
 
     // MFHI: Move from HI
