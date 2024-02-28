@@ -19,7 +19,8 @@ impl<'a> Bus<'a> {
                 // TODO
                 0
             }
-            0x1074 => unimplemented_register_read("Interrupt Mask", address, size),
+            0x1070 => self.control_registers.read_interrupt_status(),
+            0x1074 => self.control_registers.read_interrupt_mask(),
             0x10F0 => self.dma_controller.read_control(),
             0x1080..=0x10EF => match (address >> 2) & 3 {
                 2 => self.dma_controller.read_channel_control(address),
@@ -56,8 +57,8 @@ impl<'a> Bus<'a> {
             0x1020 => unimplemented_register_write("Common Delay", address, value, size),
             0x104A => unimplemented_register_write("Joypad Control", address, value, size),
             0x1060 => unimplemented_register_write("RAM Size", address, value, size),
-            0x1070 => unimplemented_register_write("Interrupt Status", address, value, size),
-            0x1074 => unimplemented_register_write("Interrupt Mask", address, value, size),
+            0x1070 => self.control_registers.write_interrupt_status(value),
+            0x1074 => self.control_registers.write_interrupt_mask(value),
             0x1080..=0x10EF => match (address >> 2) & 3 {
                 0 => self.dma_controller.write_channel_address(address, value),
                 1 => self.dma_controller.write_channel_length(address, value),
@@ -129,5 +130,9 @@ impl<'a> BusInterface for Bus<'a> {
             0x1F802041 => log::warn!("Unhandled POST write {value:08X} {size:?}"),
             _ => todo!("write {address:08X} {size:?}"),
         }
+    }
+
+    fn hardware_interrupt_pending(&self) -> bool {
+        self.control_registers.interrupt_pending()
     }
 }

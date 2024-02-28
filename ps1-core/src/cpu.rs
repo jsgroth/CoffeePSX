@@ -73,6 +73,7 @@ impl Registers {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Exception {
+    Interrupt,
     AddressErrorLoad(u32),
     AddressErrorStore(u32),
     Syscall,
@@ -83,6 +84,7 @@ enum Exception {
 impl Exception {
     fn to_code(self) -> ExceptionCode {
         match self {
+            Self::Interrupt => ExceptionCode::Interrupt,
             Self::AddressErrorLoad(_) => ExceptionCode::AddressErrorLoad,
             Self::AddressErrorStore(_) => ExceptionCode::AddressErrorStore,
             Self::Syscall => ExceptionCode::Syscall,
@@ -127,6 +129,20 @@ impl R3000 {
 
     pub fn execute_instruction<B: BusInterface>(&mut self, bus: &mut B) {
         let pc = self.registers.pc;
+
+        self.cp0
+            .cause
+            .set_hardware_interrupt_flag(bus.hardware_interrupt_pending());
+        if self.cp0.interrupt_pending() {
+            self.handle_exception(
+                Exception::Interrupt,
+                pc,
+                self.registers.delayed_branch.is_some(),
+            );
+            self.registers.process_delayed_loads();
+            return;
+        }
+
         if pc & 3 != 0 {
             // Address error on opcode fetch
             self.handle_exception(
@@ -134,6 +150,7 @@ impl R3000 {
                 pc,
                 self.registers.delayed_branch.is_some(),
             );
+            self.registers.process_delayed_loads();
             return;
         }
 

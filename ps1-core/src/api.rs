@@ -1,5 +1,5 @@
 use crate::bus::Bus;
-use crate::control::ControlRegisters;
+use crate::control::{ControlRegisters, InterruptType};
 use crate::cpu::R3000;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
@@ -134,7 +134,10 @@ impl Ps1Emulator {
         self.cycle_count += 1;
         if self.cycle_count == 33_868_800 / 60 {
             self.cycle_count = 0;
-            renderer.render_frame(self.gpu.vram())?
+            renderer.render_frame(self.gpu.vram())?;
+
+            self.control_registers
+                .set_interrupt_flag(InterruptType::VBlank);
         }
 
         Ok(())

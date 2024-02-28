@@ -187,6 +187,8 @@ impl Registers {
             | ((self.v_resolution as u32) << 19)
             | ((self.video_mode as u32) << 20)
             | ((self.display_area_color_depth as u32) << 21)
+            | (u32::from(self.interlaced) << 22)
+            | (u32::from(self.display_enabled) << 23)
             | (u32::from(self.irq) << 24)
             | (1 << 26)
             | (1 << 27)

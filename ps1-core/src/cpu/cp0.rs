@@ -171,6 +171,14 @@ impl CauseRegister {
 
         log::trace!("Cause write ({value:08X}): {self:02X?}");
     }
+
+    pub fn set_hardware_interrupt_flag(&mut self, pending: bool) {
+        if pending {
+            self.interrupts_pending |= 1 << 2;
+        } else {
+            self.interrupts_pending &= !(1 << 2);
+        }
+    }
 }
 
 // PRId register (15) always reads $00000002 on the PS1
@@ -263,5 +271,10 @@ impl SystemControlCoprocessor {
             }
             _ => {}
         }
+    }
+
+    pub fn interrupt_pending(&self) -> bool {
+        self.status.interrupts_enabled
+            && self.status.interrupt_mask & self.cause.interrupts_pending != 0
     }
 }
