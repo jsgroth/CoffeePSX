@@ -1,6 +1,57 @@
+mod rasterize;
+
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
 use std::array;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Vertex {
+    x: i32,
+    y: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Color {
+    fn truncate_to_15_bit(self) -> u16 {
+        let r: u16 = (self.r >> 3).into();
+        let g: u16 = (self.g >> 3).into();
+        let b: u16 = (self.b >> 3).into();
+
+        // TODO mask bit?
+        r | (g << 5) | (b << 10)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolygonVertices {
+    Three,
+    Four,
+}
+
+impl PolygonVertices {
+    fn from_bit(bit: bool) -> Self {
+        if bit {
+            Self::Four
+        } else {
+            Self::Three
+        }
+    }
+}
+
+impl From<PolygonVertices> for u8 {
+    fn from(value: PolygonVertices) -> Self {
+        match value {
+            PolygonVertices::Three => 3,
+            PolygonVertices::Four => 4,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RectangleSize {
@@ -24,12 +75,20 @@ impl RectangleSize {
 
 #[derive(Debug, Clone, Copy)]
 pub enum DrawCommand {
+    DrawPolygon {
+        vertices: PolygonVertices,
+        gouraud_shading: bool,
+        textured: bool,
+        semi_transparent: bool,
+        raw_texture: bool,
+        color: Color,
+    },
     DrawRectangle {
         size: RectangleSize,
         textured: bool,
         semi_transparent: bool,
         raw_texture: bool,
-        color: u16,
+        color: Color,
     },
     CpuToVramBlit,
     VramToCpuBlit,
@@ -105,6 +164,40 @@ impl Gp0CommandState {
         index: 0,
         remaining: 2,
     };
+
+    fn draw_polygon(value: u32) -> Self {
+        let gouraud_shading = value.bit(28);
+        let vertices = PolygonVertices::from_bit(value.bit(27));
+        let textured = value.bit(26);
+        let semi_transparent = value.bit(25);
+        let raw_texture = value.bit(24);
+        let color = parse_command_color(value);
+
+        let vertex_count: u8 = vertices.into();
+
+        // Each vertex requires 1-3 parameters:
+        // - 1 parameter for the coordinates
+        // - 1 parameter for the color (only if Gouraud shading is enabled, and not for the first
+        //   vertex because it uses the color from the command word)
+        // - 1 parameter for the U/V texture coordinates (only for textured polygons)
+        let parameters = vertex_count * (1 + u8::from(textured))
+            + (vertex_count - 1) * u8::from(gouraud_shading);
+
+        let command = DrawCommand::DrawPolygon {
+            vertices,
+            gouraud_shading,
+            textured,
+            semi_transparent,
+            raw_texture,
+            color,
+        };
+
+        Self::WaitingForParameters {
+            command,
+            index: 0,
+            remaining: parameters,
+        }
+    }
 
     fn draw_rectangle(value: u32) -> Self {
         let size = RectangleSize::from_bits(value >> 27);
@@ -231,7 +324,7 @@ pub struct DrawSettings {
 #[derive(Debug, Clone)]
 pub struct Gp0State {
     pub command_state: Gp0CommandState,
-    pub parameters: [u32; 2],
+    pub parameters: [u32; 8],
     pub global_texture_page: TexturePage,
     pub texture_window: TextureWindow,
     pub draw_settings: DrawSettings,
@@ -285,6 +378,7 @@ impl Gpu {
 
                     Gp0CommandState::WaitingForCommand
                 }
+                1 => Gp0CommandState::draw_polygon(value),
                 3 => Gp0CommandState::draw_rectangle(value),
                 5 => Gp0CommandState::CPU_TO_VRAM_BLIT,
                 6 => Gp0CommandState::VRAM_TO_CPU_BLIT,
@@ -327,6 +421,22 @@ impl Gpu {
         log::trace!("Executing GP0 command {command:?}");
 
         match command {
+            DrawCommand::DrawPolygon {
+                vertices,
+                gouraud_shading,
+                textured,
+                semi_transparent,
+                raw_texture,
+                color,
+            } => {
+                if textured || semi_transparent || raw_texture {
+                    todo!("draw polygon {command:?}");
+                }
+
+                self.draw_polygon(vertices, gouraud_shading, color);
+
+                Gp0CommandState::WaitingForCommand
+            }
             DrawCommand::DrawRectangle {
                 size,
                 textured,
@@ -459,13 +569,36 @@ impl Gpu {
         }
     }
 
-    fn draw_pixel(&mut self, color: u16) {
+    fn draw_polygon(&mut self, vertices: PolygonVertices, gouraud_shading: bool, color: Color) {
+        let v0 = parse_vertex_coordinates(self.gp0_state.parameters[0]);
+        let v1 = parse_vertex_coordinates(
+            self.gp0_state.parameters[if gouraud_shading { 2 } else { 1 }],
+        );
+        let v2 = parse_vertex_coordinates(
+            self.gp0_state.parameters[if gouraud_shading { 4 } else { 2 }],
+        );
+
+        match vertices {
+            PolygonVertices::Three => {
+                self.rasterize_triangle(v0, v1, v2, color);
+            }
+            PolygonVertices::Four => {
+                let v3 = parse_vertex_coordinates(
+                    self.gp0_state.parameters[if gouraud_shading { 6 } else { 3 }],
+                );
+                self.rasterize_triangle(v0, v1, v2, color);
+                self.rasterize_triangle(v1, v2, v3, color);
+            }
+        }
+    }
+
+    fn draw_pixel(&mut self, color: Color) {
         let (x, y) = parse_vram_position(self.gp0_state.parameters[0]);
 
-        log::trace!("Drawing pixel at X={x}, Y={y} with color {color:04X}");
+        log::trace!("Drawing pixel at X={x}, Y={y} with color {color:02X?}");
 
         let vram_addr = (2048 * y + 2 * x) as usize;
-        let [lsb, msb] = color.to_le_bytes();
+        let [lsb, msb] = color.truncate_to_15_bit().to_le_bytes();
         self.vram[vram_addr] = lsb;
         self.vram[vram_addr + 1] = msb;
     }
@@ -501,13 +634,20 @@ fn parse_vram_size(value: u32) -> (u32, u32) {
     (x, y)
 }
 
-fn parse_command_color(value: u32) -> u16 {
-    // Drop the lowest 3 bits of each component
-    let r = ((value >> 3) & 0x1F) as u16;
-    let g = ((value >> 11) & 0x1F) as u16;
-    let b = ((value >> 19) & 0x1F) as u16;
+fn parse_command_color(value: u32) -> Color {
+    let r = value as u8;
+    let g = (value >> 8) as u8;
+    let b = (value >> 16) as u8;
 
-    r | (g << 5) | (b << 10)
+    Color { r, g, b }
+}
+
+fn parse_vertex_coordinates(parameter: u32) -> Vertex {
+    // Vertex coordinates are signed 11-bit values, X in the low halfword and Y in the high halfword
+    let x = parse_signed_11_bit(parameter);
+    let y = parse_signed_11_bit(parameter >> 16);
+
+    Vertex { x, y }
 }
 
 fn parse_signed_11_bit(word: u32) -> i32 {
