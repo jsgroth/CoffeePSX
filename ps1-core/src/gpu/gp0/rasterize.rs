@@ -52,6 +52,7 @@ impl Gpu {
             cmp::max(v0.y, cmp::max(v1.y, v2.y)).clamp(draw_min_y as i32, draw_max_y as i32);
 
         log::trace!("Vertices: {v0:?}, {v1:?}, {v2:?}");
+        log::trace!("Shading: {shading:?}");
         log::trace!("Bounding box: X=[{min_x}, {max_x}], Y=[{min_y}, {max_y}]");
 
         let mut v0 = v0.to_float();

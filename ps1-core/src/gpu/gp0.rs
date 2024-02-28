@@ -430,11 +430,14 @@ impl Gpu {
                 raw_texture,
                 color,
             } => {
-                if textured || semi_transparent || raw_texture {
+                if semi_transparent || raw_texture {
                     todo!("draw polygon {command:?}");
                 }
 
-                self.draw_polygon(vertices, gouraud_shading, color);
+                // TODO draw textured polygons
+                if !textured {
+                    self.draw_polygon(vertices, gouraud_shading, color);
+                }
 
                 Gp0CommandState::WaitingForCommand
             }
