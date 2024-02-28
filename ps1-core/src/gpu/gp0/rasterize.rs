@@ -17,8 +17,20 @@ impl Vertex {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Shading {
+    Flat(Color),
+    Gouraud(Color, Color, Color),
+}
+
 impl Gpu {
-    pub(super) fn rasterize_triangle(&mut self, v0: Vertex, v1: Vertex, v2: Vertex, color: Color) {
+    pub(super) fn rasterize_triangle(
+        &mut self,
+        v0: Vertex,
+        v1: Vertex,
+        v2: Vertex,
+        shading: Shading,
+    ) {
         if !self.gp0_state.draw_settings.drawing_enabled {
             return;
         }
@@ -51,8 +63,6 @@ impl Gpu {
             mem::swap(&mut v0, &mut v1);
         }
 
-        let [color_lsb, color_msb] = color.truncate_to_15_bit().to_le_bytes();
-
         for py in min_y..=max_y {
             'x: for px in min_x..=max_x {
                 // The sampling point is in the center of the pixel (add 0.5 to both coordinates)
@@ -66,6 +76,12 @@ impl Gpu {
                         continue 'x;
                     }
                 }
+
+                // TODO actually implement Gouraud shading, and also make this more efficient
+                let [color_lsb, color_msb] = match shading {
+                    Shading::Flat(color) => color.truncate_to_15_bit().to_le_bytes(),
+                    Shading::Gouraud(color, _, _) => color.truncate_to_15_bit().to_le_bytes(),
+                };
 
                 let vram_addr = (2048 * py + 2 * px) as usize;
                 self.vram[vram_addr] = color_lsb;

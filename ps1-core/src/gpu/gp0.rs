@@ -1,5 +1,6 @@
 mod rasterize;
 
+use crate::gpu::gp0::rasterize::Shading;
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
 use std::array;
@@ -569,7 +570,12 @@ impl Gpu {
         }
     }
 
-    fn draw_polygon(&mut self, vertices: PolygonVertices, gouraud_shading: bool, color: Color) {
+    fn draw_polygon(
+        &mut self,
+        vertices: PolygonVertices,
+        gouraud_shading: bool,
+        command_color: Color,
+    ) {
         let v0 = parse_vertex_coordinates(self.gp0_state.parameters[0]);
         let v1 = parse_vertex_coordinates(
             self.gp0_state.parameters[if gouraud_shading { 2 } else { 1 }],
@@ -578,16 +584,32 @@ impl Gpu {
             self.gp0_state.parameters[if gouraud_shading { 4 } else { 2 }],
         );
 
+        let shading = if gouraud_shading {
+            let v1_color = parse_command_color(self.gp0_state.parameters[1]);
+            let v2_color = parse_command_color(self.gp0_state.parameters[3]);
+            Shading::Gouraud(command_color, v1_color, v2_color)
+        } else {
+            Shading::Flat(command_color)
+        };
+
         match vertices {
             PolygonVertices::Three => {
-                self.rasterize_triangle(v0, v1, v2, color);
+                self.rasterize_triangle(v0, v1, v2, shading);
             }
             PolygonVertices::Four => {
                 let v3 = parse_vertex_coordinates(
                     self.gp0_state.parameters[if gouraud_shading { 6 } else { 3 }],
                 );
-                self.rasterize_triangle(v0, v1, v2, color);
-                self.rasterize_triangle(v1, v2, v3, color);
+                self.rasterize_triangle(v0, v1, v2, shading);
+
+                let second_triangle_shading = match shading {
+                    Shading::Flat(color) => Shading::Flat(color),
+                    Shading::Gouraud(_, v1_color, v2_color) => {
+                        let v3_color = parse_command_color(self.gp0_state.parameters[5]);
+                        Shading::Gouraud(v1_color, v2_color, v3_color)
+                    }
+                };
+                self.rasterize_triangle(v1, v2, v3, second_triangle_shading);
             }
         }
     }
