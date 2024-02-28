@@ -18,7 +18,7 @@ macro_rules! impl_branch {
             }
 
             $(
-                if $link && (opcode >> 16) & 0xF <= 1 {
+                if $link {
                     self.registers.gpr[31] = self.registers.pc.wrapping_add(4);
                 }
             )?
