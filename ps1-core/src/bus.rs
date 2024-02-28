@@ -21,7 +21,12 @@ impl<'a> Bus<'a> {
             }
             0x1074 => unimplemented_register_read("Interrupt Mask", address, size),
             0x10F0 => self.dma_controller.read_control(),
+            0x1080..=0x10EF => match (address >> 2) & 3 {
+                2 => self.dma_controller.read_channel_control(address),
+                _ => todo!("DMA register read {address:08X} {size:?}"),
+            },
             0x10F4 => unimplemented_register_read("DMA Interrupt Register", address, size),
+            0x1110 => unimplemented_register_read("Timer 1 (horizontal retrace)", address, size),
             0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(),
             0x1C00..=0x1FFF => {
@@ -53,6 +58,16 @@ impl<'a> Bus<'a> {
             0x1060 => unimplemented_register_write("RAM Size", address, value, size),
             0x1070 => unimplemented_register_write("Interrupt Status", address, value, size),
             0x1074 => unimplemented_register_write("Interrupt Mask", address, value, size),
+            0x1080..=0x10EF => match (address >> 2) & 3 {
+                0 => self.dma_controller.write_channel_address(address, value),
+                1 => self.dma_controller.write_channel_length(address, value),
+                2 => {
+                    self.dma_controller
+                        .write_channel_control(address, value, self.gpu, self.memory)
+                }
+                3 => todo!("Invalid DMA register write: {address:08X} {value:08X} {size:?}"),
+                _ => unreachable!("value & 3 is always <= 3"),
+            },
             0x10F0 => self.dma_controller.write_control(value),
             0x10F4 => unimplemented_register_write("DMA Interrupt Register", address, value, size),
             0x1100..=0x112F => unimplemented_register_write(
