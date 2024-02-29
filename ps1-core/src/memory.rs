@@ -44,10 +44,12 @@ impl Memory {
     }
 
     pub fn read_main_ram(&self, address: u32, size: OpSize) -> u32 {
+        log::trace!("Main RAM read: {address:08X} {size:?}");
         size.read_memory(self.main_ram.as_slice(), address & MAIN_RAM_MASK)
     }
 
     pub fn write_main_ram(&mut self, address: u32, value: u32, size: OpSize) {
+        log::trace!("Main RAM write: {address:08X} {value:08X} {size:?}");
         size.write_memory(self.main_ram.as_mut_slice(), address & MAIN_RAM_MASK, value);
     }
 

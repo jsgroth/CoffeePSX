@@ -278,6 +278,8 @@ pub struct TexturePage {
     pub y_base: u32,
     pub semi_transparency_mode: SemiTransparencyMode,
     pub color_depth: TextureColorDepthBits,
+    pub rectangle_x_flip: bool,
+    pub rectangle_y_flip: bool,
 }
 
 impl TexturePage {
@@ -287,6 +289,8 @@ impl TexturePage {
             y_base: 256 * ((command >> 4) & 1),
             semi_transparency_mode: SemiTransparencyMode::from_bits(command >> 5),
             color_depth: TextureColorDepthBits::from_bits(command >> 7),
+            rectangle_x_flip: command.bit(12),
+            rectangle_y_flip: command.bit(13),
         }
     }
 }

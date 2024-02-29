@@ -13,6 +13,8 @@ pub struct Bus<'a> {
 
 impl<'a> Bus<'a> {
     fn read_io_register(&mut self, address: u32, size: OpSize) -> u32 {
+        log::trace!("I/O register read: {address:08X} {size:?}");
+
         match address & 0xFFFF {
             0x1040 => unimplemented_register_read("Joypad TX Data", address, size),
             0x104A => {

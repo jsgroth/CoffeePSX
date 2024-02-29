@@ -36,9 +36,9 @@ impl Gpu {
     }
 
     pub fn read_status_register(&self) -> u32 {
-        log::trace!("GPU status register read");
-
-        self.registers.read_status(&self.gp0_state)
+        let status = self.registers.read_status(&self.gp0_state);
+        log::trace!("GPU status register read: {status:08X}");
+        status
     }
 
     pub fn vram(&self) -> &[u8] {

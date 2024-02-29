@@ -1,4 +1,4 @@
-use crate::gpu::gp0::Gp0State;
+use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -25,9 +25,9 @@ impl DmaMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HorizontalResolution {
     // 256px
+    #[default]
     TwoFiftySix = 0,
     // 320px
-    #[default]
     ThreeTwenty = 1,
     // 512px
     FiveTwelve = 2,
@@ -169,6 +169,19 @@ impl Registers {
     }
 
     pub fn read_status(&self, gp0_state: &Gp0State) -> u32 {
+        let ready_to_receive_command =
+            matches!(gp0_state.command_state, Gp0CommandState::WaitingForCommand);
+        let ready_to_send_vram =
+            matches!(gp0_state.command_state, Gp0CommandState::SendingToCpu(..));
+        let ready_to_receive_vram = true;
+
+        let dma_request: u32 = match self.dma_mode {
+            DmaMode::Off => 0,
+            DmaMode::Fifo => 1,
+            DmaMode::CpuToGpu => ready_to_receive_vram.into(),
+            DmaMode::GpuToCpu => ready_to_send_vram.into(),
+        };
+
         // TODO bits hardcoded:
         //   Bit 13: interlaced field
         //   Bit 14: "Reverseflag"
@@ -188,11 +201,12 @@ impl Registers {
             | ((self.video_mode as u32) << 20)
             | ((self.display_area_color_depth as u32) << 21)
             | (u32::from(self.interlaced) << 22)
-            | (u32::from(self.display_enabled) << 23)
+            | (u32::from(!self.display_enabled) << 23)
             | (u32::from(self.irq) << 24)
-            | (1 << 26)
-            | (1 << 27)
-            | (1 << 28)
+            | (u32::from(dma_request) << 25)
+            | (u32::from(ready_to_receive_command) << 26)
+            | (u32::from(ready_to_send_vram) << 27)
+            | (u32::from(ready_to_receive_vram) << 28)
             | ((self.dma_mode as u32) << 29)
     }
 }
