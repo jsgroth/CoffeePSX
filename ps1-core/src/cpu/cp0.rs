@@ -74,11 +74,11 @@ impl StatusRegister {
             | (u32::from(self.boot_exception_vectors) << 22)
             | (u32::from(self.isolate_cache) << 16)
             | (u32::from(self.interrupt_mask) << 8)
-            | (u32::from(self.kernel_mode_old) << 5)
+            | (u32::from(!self.kernel_mode_old) << 5)
             | (u32::from(self.interrupts_enabled_old) << 4)
-            | (u32::from(self.kernel_mode_previous) << 3)
+            | (u32::from(!self.kernel_mode_previous) << 3)
             | (u32::from(self.interrupts_enabled_previous) << 2)
-            | (u32::from(self.kernel_mode) << 1)
+            | (u32::from(!self.kernel_mode) << 1)
             | u32::from(self.interrupts_enabled)
     }
 
@@ -90,11 +90,11 @@ impl StatusRegister {
         self.boot_exception_vectors = value.bit(22);
         self.isolate_cache = value.bit(16);
         self.interrupt_mask = (value >> 8) as u8;
-        self.kernel_mode_old = value.bit(5);
+        self.kernel_mode_old = !value.bit(5);
         self.interrupts_enabled_old = value.bit(4);
-        self.kernel_mode_previous = value.bit(3);
+        self.kernel_mode_previous = !value.bit(3);
         self.interrupts_enabled_previous = value.bit(2);
-        self.kernel_mode = value.bit(1);
+        self.kernel_mode = !value.bit(1);
         self.interrupts_enabled = value.bit(0);
 
         log::trace!("CP0 SR write ({value:08x}): {self:#?}");
@@ -166,7 +166,7 @@ impl CauseRegister {
 
     fn write(&mut self, value: u32) {
         self.branch_delay = value.bit(31);
-        self.interrupts_pending = (value >> 8) as u8;
+        self.interrupts_pending = (self.interrupts_pending & 0xFC) | (((value >> 8) & 0x03) as u8);
         self.exception_code = ExceptionCode::from_bits((value >> 2) & 0x1F);
 
         log::trace!("Cause write ({value:08X}): {self:02X?}");
@@ -248,6 +248,12 @@ impl SystemControlCoprocessor {
 
                 self.status.kernel_mode_previous = self.status.kernel_mode_old;
                 self.status.interrupts_enabled_previous = self.status.interrupts_enabled_old;
+
+                log::trace!(
+                    "Executed RFE; kernel mode is {}, interrupts enabled is {}",
+                    self.status.kernel_mode,
+                    self.status.interrupts_enabled
+                );
             }
             _ => todo!("CP0 operation {operation:06X}"),
         }

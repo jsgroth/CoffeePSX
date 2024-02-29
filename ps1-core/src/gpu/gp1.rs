@@ -40,9 +40,11 @@ impl Gpu {
         self.set_display_area_start(0);
         self.set_horizontal_display_range(RESET_06_VALUE);
         self.set_vertical_display_range(RESET_07_VALUE);
-
-        // TODO should this set 320x240 instead of 256x240?
         self.set_display_mode(0);
+
+        for gp0_command in 0xE1..=0xE6 {
+            self.write_gp0_command(gp0_command << 24);
+        }
     }
 
     // GP1($01)
@@ -54,7 +56,7 @@ impl Gpu {
     }
 
     // GP1($02)
-    pub(super) fn acknowledge_interrupt(&mut self) {
+    fn acknowledge_interrupt(&mut self) {
         self.registers.irq = false;
 
         log::trace!("GP1($02): Acknowledge IRQ");

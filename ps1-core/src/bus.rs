@@ -43,6 +43,8 @@ impl<'a> Bus<'a> {
     }
 
     fn write_io_register(&mut self, address: u32, value: u32, size: OpSize) {
+        log::trace!("I/O register write: {address:08X} {value:08X} {size:?}");
+
         match address & 0xFFFF {
             0x1000 => self.control_registers.write_expansion_1_address(value),
             0x1004 => self.control_registers.write_expansion_2_address(value),

@@ -173,19 +173,19 @@ impl Registers {
             matches!(gp0_state.command_state, Gp0CommandState::WaitingForCommand);
         let ready_to_send_vram =
             matches!(gp0_state.command_state, Gp0CommandState::SendingToCpu(..));
-        let ready_to_receive_vram = true;
+        let ready_to_receive_dma = ready_to_receive_command;
 
         let dma_request: u32 = match self.dma_mode {
             DmaMode::Off => 0,
             DmaMode::Fifo => 1,
-            DmaMode::CpuToGpu => ready_to_receive_vram.into(),
+            DmaMode::CpuToGpu => ready_to_receive_dma.into(),
             DmaMode::GpuToCpu => ready_to_send_vram.into(),
         };
 
         // TODO bits hardcoded:
         //   Bit 13: interlaced field
         //   Bit 14: "Reverseflag"
-        //   Bits 25-28: DMA request bits
+        //   Bit 31: Even/odd line
         gp0_state.global_texture_page.x_base
             | ((gp0_state.global_texture_page.y_base / 256) << 4)
             | ((gp0_state.global_texture_page.semi_transparency_mode as u32) << 5)
@@ -206,7 +206,7 @@ impl Registers {
             | (u32::from(dma_request) << 25)
             | (u32::from(ready_to_receive_command) << 26)
             | (u32::from(ready_to_send_vram) << 27)
-            | (u32::from(ready_to_receive_vram) << 28)
+            | (u32::from(ready_to_receive_dma) << 28)
             | ((self.dma_mode as u32) << 29)
     }
 }
