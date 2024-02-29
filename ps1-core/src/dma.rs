@@ -1,3 +1,4 @@
+use crate::control::{ControlRegisters, InterruptType};
 use crate::cpu::bus::OpSize;
 use crate::gpu::Gpu;
 use crate::memory::Memory;
@@ -90,12 +91,12 @@ impl ChannelConfig {
 }
 
 #[derive(Debug, Clone)]
-struct ControlRegister {
+struct DmaControlRegister {
     channel_priority: [u8; 7],
     channel_enabled: [bool; 7],
 }
 
-impl ControlRegister {
+impl DmaControlRegister {
     fn new() -> Self {
         // Control register value at power-on should be $07654321:
         //   Channel 0 has priority 1, channel 1 has priority 2, etc.
@@ -133,9 +134,44 @@ impl ControlRegister {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct DmaInterruptRegister {
+    channel_irq_enabled: u8,
+    irq_enabled: bool,
+    channel_irq_pending: u8,
+    force_irq: bool,
+}
+
+impl DmaInterruptRegister {
+    fn pending(&self) -> bool {
+        self.force_irq
+            || (self.irq_enabled && (self.channel_irq_enabled & self.channel_irq_pending != 0))
+    }
+
+    fn read(&self) -> u32 {
+        let irq_pending = self.pending();
+
+        (u32::from(self.force_irq) << 15)
+            | (u32::from(self.channel_irq_enabled) << 16)
+            | (u32::from(self.irq_enabled) << 23)
+            | (u32::from(self.channel_irq_pending) << 24)
+            | (u32::from(irq_pending) << 31)
+    }
+
+    fn write(&mut self, value: u32) {
+        self.force_irq = value.bit(15);
+        self.channel_irq_enabled = ((value >> 16) as u8) & 0x7F;
+        self.irq_enabled = value.bit(23);
+
+        let irq_pending_mask = ((value >> 24) as u8) & 0x7F;
+        self.channel_irq_pending &= !irq_pending_mask;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct DmaController {
-    control: ControlRegister,
+    control: DmaControlRegister,
+    interrupt: DmaInterruptRegister,
     channel_configs: [ChannelConfig; 7],
 }
 
@@ -145,13 +181,32 @@ impl DmaController {
         channel_configs[6] = ChannelConfig::otc();
 
         Self {
-            control: ControlRegister::new(),
+            control: DmaControlRegister::new(),
+            interrupt: DmaInterruptRegister::default(),
             channel_configs,
         }
     }
 
     pub fn read_control(&self) -> u32 {
         self.control.read()
+    }
+
+    pub fn read_interrupt(&self) -> u32 {
+        self.interrupt.read()
+    }
+
+    pub fn write_interrupt(&mut self, value: u32, control_registers: &mut ControlRegisters) {
+        let prev_irq_pending = self.interrupt.pending();
+        self.interrupt.write(value);
+
+        if !prev_irq_pending && self.interrupt.pending() {
+            control_registers.set_interrupt_flag(InterruptType::Dma);
+        }
+
+        log::trace!(
+            "DMA interrupt register write: {value:08X} {:?}",
+            self.interrupt
+        );
     }
 
     pub fn write_control(&mut self, value: u32) {
@@ -210,6 +265,7 @@ impl DmaController {
         value: u32,
         gpu: &mut Gpu,
         memory: &mut Memory,
+        control_registers: &mut ControlRegisters,
     ) {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -254,6 +310,15 @@ impl DmaController {
                     log::trace!("OTC DMA complete");
                 }
                 _ => todo!("DMA start on channel {channel}"),
+            }
+
+            let prev_irq_pending = self.interrupt.pending();
+            if self.interrupt.channel_irq_enabled & (1 << channel) != 0 {
+                self.interrupt.channel_irq_pending |= 1 << channel;
+
+                if !prev_irq_pending && self.interrupt.pending() {
+                    control_registers.set_interrupt_flag(InterruptType::Dma);
+                }
             }
         }
     }
