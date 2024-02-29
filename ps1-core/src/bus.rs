@@ -3,12 +3,14 @@ use crate::cpu::bus::{BusInterface, OpSize};
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::memory::Memory;
+use crate::timers::Timers;
 
 pub struct Bus<'a> {
     pub gpu: &'a mut Gpu,
     pub memory: &'a mut Memory,
     pub dma_controller: &'a mut DmaController,
     pub control_registers: &'a mut ControlRegisters,
+    pub timers: &'a mut Timers,
 }
 
 impl<'a> Bus<'a> {
@@ -29,7 +31,7 @@ impl<'a> Bus<'a> {
                 _ => todo!("DMA register read {address:08X} {size:?}"),
             },
             0x10F4 => self.dma_controller.read_interrupt(),
-            0x1110 => unimplemented_register_read("Timer 1 (horizontal retrace)", address, size),
+            0x1110 => self.timers.timer_1.counter.into(),
             0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(),
             0x1C00..=0x1FFF => {
@@ -78,12 +80,7 @@ impl<'a> Bus<'a> {
             0x10F4 => self
                 .dma_controller
                 .write_interrupt(value, self.control_registers),
-            0x1100..=0x112F => unimplemented_register_write(
-                &format!("Timer {} Register", (address >> 4) & 3),
-                address,
-                value,
-                size,
-            ),
+            0x1100..=0x112F => self.timers.write_register(address, value),
             0x1810 => self.gpu.write_gp0_command(value),
             0x1814 => self.gpu.write_gp1_command(value),
             0x1C00..=0x1FFF => {

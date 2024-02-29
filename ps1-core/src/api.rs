@@ -1,9 +1,10 @@
 use crate::bus::Bus;
-use crate::control::{ControlRegisters, InterruptType};
+use crate::control::ControlRegisters;
 use crate::cpu::R3000;
 use crate::dma::DmaController;
-use crate::gpu::Gpu;
+use crate::gpu::{Gpu, TickEffect};
 use crate::memory::Memory;
+use crate::timers::Timers;
 use thiserror::Error;
 
 pub trait Renderer {
@@ -29,9 +30,9 @@ pub struct Ps1Emulator {
     memory: Memory,
     dma_controller: DmaController,
     control_registers: ControlRegisters,
+    timers: Timers,
     tty_enabled: bool,
     tty_buffer: String,
-    cycle_count: u64,
 }
 
 #[derive(Debug)]
@@ -74,9 +75,9 @@ impl Ps1Emulator {
             memory,
             dma_controller: DmaController::new(),
             control_registers: ControlRegisters::new(),
+            timers: Timers::new(),
             tty_enabled,
             tty_buffer: String::new(),
-            cycle_count: 0,
         })
     }
 
@@ -124,6 +125,7 @@ impl Ps1Emulator {
             memory: &mut self.memory,
             dma_controller: &mut self.dma_controller,
             control_registers: &mut self.control_registers,
+            timers: &mut self.timers,
         });
 
         if self.tty_enabled {
@@ -131,13 +133,12 @@ impl Ps1Emulator {
         }
 
         // Very, very rough timing for renders
-        self.cycle_count += 1;
-        if self.cycle_count == 33_868_800 / 60 {
-            self.cycle_count = 0;
+        if self
+            .gpu
+            .tick(1, &mut self.control_registers, &mut self.timers)
+            == TickEffect::RenderFrame
+        {
             renderer.render_frame(self.gpu.vram())?;
-
-            self.control_registers
-                .set_interrupt_flag(InterruptType::VBlank);
         }
 
         Ok(())

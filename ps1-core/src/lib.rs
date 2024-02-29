@@ -6,3 +6,4 @@ mod dma;
 mod gpu;
 mod memory;
 mod num;
+mod timers;
