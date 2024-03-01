@@ -75,8 +75,10 @@ impl Gpu {
         let v2 = v2.to_float();
 
         // Ensure vertices are ordered correctly; the PS1 GPU does not cull based on facing
+        let mut swapped = false;
         if cross_product_z(v0, v1, v2) < 0.0 {
             mem::swap(&mut v0, &mut v1);
+            swapped = true;
         }
 
         for py in min_y..=max_y {
@@ -96,7 +98,29 @@ impl Gpu {
                 // TODO actually implement Gouraud shading, and also make this more efficient
                 let [color_lsb, color_msb] = match shading {
                     Shading::Flat(color) => color.truncate_to_15_bit().to_le_bytes(),
-                    Shading::Gouraud(color, _, _) => color.truncate_to_15_bit().to_le_bytes(),
+                    Shading::Gouraud(mut color0, mut color1, color2) => {
+                        if swapped {
+                            mem::swap(&mut color0, &mut color1);
+                        }
+
+                        let (alpha, beta, gamma) = compute_affine_coordinates(p, v0, v1, v2);
+                        let r = alpha * color0.r as f64
+                            + beta * color1.r as f64
+                            + gamma * color2.r as f64;
+                        let g = alpha * color0.g as f64
+                            + beta * color1.g as f64
+                            + gamma * color2.g as f64;
+                        let b = alpha * color0.b as f64
+                            + beta * color1.b as f64
+                            + gamma * color2.b as f64;
+
+                        let color = Color {
+                            r: r.round() as u8,
+                            g: g.round() as u8,
+                            b: b.round() as u8,
+                        };
+                        color.truncate_to_15_bit().to_le_bytes()
+                    }
                 };
 
                 let vram_addr = (2048 * py + 2 * px) as usize;
@@ -110,4 +134,24 @@ impl Gpu {
 // Z component of the cross product between v0->v1 and v0->v2
 fn cross_product_z(v0: VertexFloat, v1: VertexFloat, v2: VertexFloat) -> f64 {
     (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
+}
+
+fn compute_affine_coordinates(
+    p: VertexFloat,
+    v1: VertexFloat,
+    v2: VertexFloat,
+    v3: VertexFloat,
+) -> (f64, f64, f64) {
+    let determinant = (v1.x - v3.x) * (v2.y - v3.y) - (v2.x - v3.x) * (v1.y - v3.y);
+    if determinant.abs() < 1e-6 {
+        // TODO what to do when points are collinear?
+        let one_third = 1.0 / 3.0;
+        return (one_third, one_third, one_third);
+    }
+
+    let alpha = ((p.x - v3.x) * (v2.y - v3.y) - (p.y - v3.y) * (v2.x - v3.x)) / determinant;
+    let beta = ((p.x - v3.x) * (v3.y - v1.y) - (p.y - v3.y) * (v3.x - v1.x)) / determinant;
+    let gamma = 1.0 - alpha - beta;
+
+    (alpha, beta, gamma)
 }
