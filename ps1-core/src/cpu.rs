@@ -49,7 +49,14 @@ impl Registers {
         }
     }
 
+    #[allow(unreachable_code)]
     fn write_gpr_delayed(&mut self, register: u32, value: u32) {
+        // TODO remove this after fixing load delay implementation
+        // non-delayed writes to a register must override any delayed write to a register, including
+        // in JAL and JALR instructions
+        self.write_gpr(register, value);
+        return;
+
         if register != 0 {
             // Undocumented: If two consecutive load instructions write to the same register, the
             // first delayed load is canceled

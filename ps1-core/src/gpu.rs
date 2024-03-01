@@ -22,6 +22,7 @@ struct ClockState {
     line: u16,
     line_cycle: u16,
     cpu_cycles_11x: u32,
+    odd_frame: bool,
 }
 
 impl ClockState {
@@ -47,6 +48,7 @@ impl ClockState {
                 self.line += 1;
                 if self.line == 263 {
                     self.line = 0;
+                    self.odd_frame = !self.odd_frame;
                     tick_effect = TickEffect::RenderFrame;
                 } else if self.line == 256 {
                     control_registers.set_interrupt_flag(InterruptType::VBlank);
@@ -87,7 +89,9 @@ impl Gpu {
     }
 
     pub fn read_status_register(&self) -> u32 {
-        let status = self.registers.read_status(&self.gp0_state);
+        let status = self
+            .registers
+            .read_status(&self.gp0_state, &self.clock_state);
         log::trace!("GPU status register read: {status:08X}");
         status
     }

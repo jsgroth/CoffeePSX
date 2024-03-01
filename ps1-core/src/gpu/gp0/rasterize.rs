@@ -31,9 +31,9 @@ impl Gpu {
         v2: Vertex,
         shading: Shading,
     ) {
-        if !self.gp0_state.draw_settings.drawing_enabled {
-            return;
-        }
+        // if !self.gp0_state.draw_settings.drawing_enabled {
+        //     return;
+        // }
 
         let (draw_min_x, draw_min_y) = self.gp0_state.draw_settings.draw_area_top_left;
         let (draw_max_x, draw_max_y) = self.gp0_state.draw_settings.draw_area_bottom_right;
@@ -41,6 +41,21 @@ impl Gpu {
         if draw_min_x > draw_max_x || draw_min_y > draw_max_y {
             return;
         }
+
+        let (x_offset, y_offset) = self.gp0_state.draw_settings.draw_offset;
+
+        let v0 = Vertex {
+            x: v0.x + x_offset,
+            y: v0.y + y_offset,
+        };
+        let v1 = Vertex {
+            x: v1.x + x_offset,
+            y: v1.y + y_offset,
+        };
+        let v2 = Vertex {
+            x: v2.x + x_offset,
+            y: v2.y + y_offset,
+        };
 
         let min_x =
             cmp::min(v0.x, cmp::min(v1.x, v2.x)).clamp(draw_min_x as i32, draw_max_x as i32);

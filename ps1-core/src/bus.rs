@@ -32,6 +32,7 @@ impl<'a> Bus<'a> {
             },
             0x10F4 => self.dma_controller.read_interrupt(),
             0x1110 => self.timers.timer_1.counter.into(),
+            0x1800..=0x1803 => unimplemented_register_read("CD-ROM", address, size),
             0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(),
             0x1C00..=0x1FFF => {
@@ -83,6 +84,7 @@ impl<'a> Bus<'a> {
                 .dma_controller
                 .write_interrupt(value, self.control_registers),
             0x1100..=0x112F => self.timers.write_register(address, value),
+            0x1800..=0x1803 => unimplemented_register_write("CD-ROM", address, value, size),
             0x1810 => self.gpu.write_gp0_command(value),
             0x1814 => self.gpu.write_gp1_command(value),
             0x1C00..=0x1FFF => {
