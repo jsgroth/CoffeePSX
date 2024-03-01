@@ -2,6 +2,13 @@ use crate::gpu::gp0::{Color, Vertex};
 use crate::gpu::Gpu;
 use std::{cmp, mem};
 
+const DITHER_TABLE: &[[i8; 4]; 4] = &[
+    [-4, 0, -3, 1],
+    [2, -2, 3, -1],
+    [-3, 1, -4, 0],
+    [3, -1, 2, -2],
+];
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct VertexFloat {
     x: f64,
@@ -114,11 +121,19 @@ impl Gpu {
                             + beta * color1.b as f64
                             + gamma * color2.b as f64;
 
-                        let color = Color {
+                        let mut color = Color {
                             r: r.round() as u8,
                             g: g.round() as u8,
                             b: b.round() as u8,
                         };
+
+                        if self.gp0_state.draw_settings.dithering_enabled {
+                            let dither = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
+                            color.r = color.r.saturating_add_signed(dither);
+                            color.g = color.g.saturating_add_signed(dither);
+                            color.b = color.b.saturating_add_signed(dither);
+                        }
+
                         color.truncate_to_15_bit().to_le_bytes()
                     }
                 };

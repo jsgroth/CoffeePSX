@@ -26,8 +26,10 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
     type Err = anyhow::Error;
 
     fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err> {
-        for y in 0..512 {
-            for x in 0..1024 {
+        let mut frame_buffer_2 = vec![0_u32; 640 * 480];
+
+        for y in 2..482 {
+            for x in 0..640 {
                 let vram_addr = (2048 * y + 2 * x) as usize;
                 let color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
 
@@ -37,12 +39,11 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
 
                 let color_u32 = rgb_5_to_8(b) | (rgb_5_to_8(g) << 8) | (rgb_5_to_8(r) << 16);
 
-                self.frame_buffer[1024 * y as usize + x as usize] = color_u32;
+                frame_buffer_2[640 * (y - 2) as usize + x as usize] = color_u32;
             }
         }
 
-        self.window
-            .update_with_buffer(self.frame_buffer, 1024, 512)?;
+        self.window.update_with_buffer(&frame_buffer_2, 640, 480)?;
 
         if self.window.is_key_pressed(Key::P, KeyRepeat::No) {
             *self.paused = !*self.paused;
@@ -77,7 +78,7 @@ fn main() -> anyhow::Result<()> {
         ),
     };
 
-    let mut window = Window::new(&window_title, 1024, 512, WindowOptions::default())?;
+    let mut window = Window::new(&window_title, 640, 480, WindowOptions::default())?;
 
     window.limit_update_rate(Some(Duration::from_micros(16667)));
 
