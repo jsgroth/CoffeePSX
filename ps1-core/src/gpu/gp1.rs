@@ -50,7 +50,7 @@ impl Gpu {
     // GP1($01)
     fn reset_command_buffer(&mut self) {
         // TODO is this right?
-        self.gp0_state.command_state = Gp0CommandState::WaitingForCommand;
+        self.gp0.command_state = Gp0CommandState::WaitingForCommand;
 
         log::trace!("GP1($01): Reset command buffer");
     }

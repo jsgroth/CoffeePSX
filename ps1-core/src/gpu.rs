@@ -64,7 +64,7 @@ impl ClockState {
 pub struct Gpu {
     vram: Box<Vram>,
     registers: Registers,
-    gp0_state: Gp0State,
+    gp0: Gp0State,
     gpu_read_buffer: u32,
     clock_state: ClockState,
 }
@@ -74,14 +74,14 @@ impl Gpu {
         Self {
             vram: vec![0; VRAM_LEN].into_boxed_slice().try_into().unwrap(),
             registers: Registers::new(),
-            gp0_state: Gp0State::new(),
+            gp0: Gp0State::new(),
             gpu_read_buffer: 0,
             clock_state: ClockState::default(),
         }
     }
 
     pub fn read_port(&mut self) -> u32 {
-        if let Gp0CommandState::SendingToCpu(fields) = self.gp0_state.command_state {
+        if let Gp0CommandState::SendingToCpu(fields) = self.gp0.command_state {
             self.gpu_read_buffer = self.read_vram_word_for_cpu(fields);
         }
 
@@ -89,9 +89,7 @@ impl Gpu {
     }
 
     pub fn read_status_register(&self) -> u32 {
-        let status = self
-            .registers
-            .read_status(&self.gp0_state, &self.clock_state);
+        let status = self.registers.read_status(&self.gp0, &self.clock_state);
         log::trace!("GPU status register read: {status:08X}");
         status
     }

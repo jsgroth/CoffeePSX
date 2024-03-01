@@ -358,21 +358,21 @@ impl Gpu {
             if fields.increment() == IncrementEffect::Finished {
                 log::trace!("VRAM-to-CPU blit finished, sending word {word:08X} to CPU");
 
-                self.gp0_state.command_state = Gp0CommandState::WaitingForCommand;
+                self.gp0.command_state = Gp0CommandState::WaitingForCommand;
                 return word;
             }
         }
 
         log::trace!("VRAM-to-CPU blit in progress, sending word {word:08X} to CPU");
 
-        self.gp0_state.command_state = Gp0CommandState::SendingToCpu(fields);
+        self.gp0.command_state = Gp0CommandState::SendingToCpu(fields);
         word
     }
 
     pub fn write_gp0_command(&mut self, value: u32) {
         log::trace!("GP0 command write: {value:08X}");
 
-        self.gp0_state.command_state = match self.gp0_state.command_state {
+        self.gp0.command_state = match self.gp0.command_state {
             Gp0CommandState::WaitingForCommand => match value >> 29 {
                 0 => {
                     // If the highest byte is $1F, this command immediately sets the GPU IRQ flag
@@ -402,7 +402,7 @@ impl Gpu {
                 index,
                 remaining,
             } => {
-                self.gp0_state.parameters[index as usize] = value;
+                self.gp0.parameters[index as usize] = value;
                 if remaining == 1 {
                     self.execute_draw_command(command)
                 } else {
@@ -461,9 +461,8 @@ impl Gpu {
                 Gp0CommandState::WaitingForCommand
             }
             DrawCommand::CpuToVramBlit => {
-                let (destination_x, destination_y) =
-                    parse_vram_position(self.gp0_state.parameters[0]);
-                let (x_size, y_size) = parse_vram_size(self.gp0_state.parameters[1]);
+                let (destination_x, destination_y) = parse_vram_position(self.gp0.parameters[0]);
+                let (x_size, y_size) = parse_vram_size(self.gp0.parameters[1]);
 
                 Gp0CommandState::ReceivingFromCpu(VramTransferFields {
                     destination_x,
@@ -475,9 +474,8 @@ impl Gpu {
                 })
             }
             DrawCommand::VramToCpuBlit => {
-                let (destination_x, destination_y) =
-                    parse_vram_position(self.gp0_state.parameters[0]);
-                let (x_size, y_size) = parse_vram_size(self.gp0_state.parameters[1]);
+                let (destination_x, destination_y) = parse_vram_position(self.gp0.parameters[0]);
+                let (x_size, y_size) = parse_vram_size(self.gp0.parameters[1]);
 
                 Gp0CommandState::SendingToCpu(VramTransferFields {
                     destination_x,
@@ -496,53 +494,50 @@ impl Gpu {
         match command >> 24 {
             0xE1 => {
                 // GP0($E1): Texture page & draw mode settings
-                self.gp0_state.global_texture_page = TexturePage::from_command_word(command);
-                self.gp0_state.draw_settings.drawing_enabled = command.bit(10);
-                self.gp0_state.draw_settings.dithering_enabled = command.bit(9);
+                self.gp0.global_texture_page = TexturePage::from_command_word(command);
+                self.gp0.draw_settings.drawing_enabled = command.bit(10);
+                self.gp0.draw_settings.dithering_enabled = command.bit(9);
 
                 log::trace!("Executed texture page / draw mode command: {command:08X}");
-                log::trace!(
-                    "  Global texture page: {:?}",
-                    self.gp0_state.global_texture_page
-                );
+                log::trace!("  Global texture page: {:?}", self.gp0.global_texture_page);
                 log::trace!(
                     "  Drawing allowed in display area: {}",
-                    self.gp0_state.draw_settings.drawing_enabled
+                    self.gp0.draw_settings.drawing_enabled
                 );
                 log::trace!(
                     "  Dithering from 24-bit to 15-bit enabled: {}",
-                    self.gp0_state.draw_settings.dithering_enabled
+                    self.gp0.draw_settings.dithering_enabled
                 );
             }
             0xE2 => {
                 // GP0($E2): Texture window settings
-                self.gp0_state.texture_window = TextureWindow::from_command_word(command);
+                self.gp0.texture_window = TextureWindow::from_command_word(command);
 
                 log::trace!("Executed texture window settings command: {command:08X}");
-                log::trace!("  Texture window: {:?}", self.gp0_state.texture_window);
+                log::trace!("  Texture window: {:?}", self.gp0.texture_window);
             }
             0xE3 => {
                 // GP0($E3): Drawing area top-left coordinates
                 let x1 = command & 0x3FF;
                 let y1 = (command >> 10) & 0x1FF;
-                self.gp0_state.draw_settings.draw_area_top_left = (x1, y1);
+                self.gp0.draw_settings.draw_area_top_left = (x1, y1);
 
                 log::trace!("Executed drawing area top-left command: {command:08X}");
                 log::trace!(
                     "  (X1, Y1) = {:?}",
-                    self.gp0_state.draw_settings.draw_area_top_left
+                    self.gp0.draw_settings.draw_area_top_left
                 );
             }
             0xE4 => {
                 // GP0($E4): Drawing area bottom-right coordinates
                 let x2 = command & 0x3FF;
                 let y2 = (command >> 10) & 0x1FF;
-                self.gp0_state.draw_settings.draw_area_bottom_right = (x2, y2);
+                self.gp0.draw_settings.draw_area_bottom_right = (x2, y2);
 
                 log::trace!("Executed drawing area bottom-right command: {command:08X}");
                 log::trace!(
                     "  (X2, Y2) = {:?}",
-                    self.gp0_state.draw_settings.draw_area_bottom_right
+                    self.gp0.draw_settings.draw_area_bottom_right
                 );
             }
             0xE5 => {
@@ -550,27 +545,27 @@ impl Gpu {
                 // Both values are signed 11-bit integers (-1024 to +1023)
                 let x_offset = parse_signed_11_bit(command);
                 let y_offset = parse_signed_11_bit(command >> 11);
-                self.gp0_state.draw_settings.draw_offset = (x_offset, y_offset);
+                self.gp0.draw_settings.draw_offset = (x_offset, y_offset);
 
                 log::trace!("Executed draw offset command: {command:08X}");
                 log::trace!(
                     "  (X offset, Y offset) = {:?}",
-                    self.gp0_state.draw_settings.draw_offset
+                    self.gp0.draw_settings.draw_offset
                 );
             }
             0xE6 => {
                 // GP0($E6): Mask bit settings
-                self.gp0_state.draw_settings.force_mask_bit = command.bit(0);
-                self.gp0_state.draw_settings.check_mask_bit = command.bit(1);
+                self.gp0.draw_settings.force_mask_bit = command.bit(0);
+                self.gp0.draw_settings.check_mask_bit = command.bit(1);
 
                 log::trace!("Executed mask bit settings command: {command:08X}");
                 log::trace!(
                     "  Force mask bit: {}",
-                    self.gp0_state.draw_settings.force_mask_bit
+                    self.gp0.draw_settings.force_mask_bit
                 );
                 log::trace!(
                     "  Check mask bit on draw: {}",
-                    self.gp0_state.draw_settings.check_mask_bit
+                    self.gp0.draw_settings.check_mask_bit
                 );
             }
             _ => todo!("GP0 settings command {command:08X}"),
@@ -583,17 +578,13 @@ impl Gpu {
         gouraud_shading: bool,
         command_color: Color,
     ) {
-        let v0 = parse_vertex_coordinates(self.gp0_state.parameters[0]);
-        let v1 = parse_vertex_coordinates(
-            self.gp0_state.parameters[if gouraud_shading { 2 } else { 1 }],
-        );
-        let v2 = parse_vertex_coordinates(
-            self.gp0_state.parameters[if gouraud_shading { 4 } else { 2 }],
-        );
+        let v0 = parse_vertex_coordinates(self.gp0.parameters[0]);
+        let v1 = parse_vertex_coordinates(self.gp0.parameters[if gouraud_shading { 2 } else { 1 }]);
+        let v2 = parse_vertex_coordinates(self.gp0.parameters[if gouraud_shading { 4 } else { 2 }]);
 
         let shading = if gouraud_shading {
-            let v1_color = parse_command_color(self.gp0_state.parameters[1]);
-            let v2_color = parse_command_color(self.gp0_state.parameters[3]);
+            let v1_color = parse_command_color(self.gp0.parameters[1]);
+            let v2_color = parse_command_color(self.gp0.parameters[3]);
             Shading::Gouraud(command_color, v1_color, v2_color)
         } else {
             Shading::Flat(command_color)
@@ -605,14 +596,14 @@ impl Gpu {
             }
             PolygonVertices::Four => {
                 let v3 = parse_vertex_coordinates(
-                    self.gp0_state.parameters[if gouraud_shading { 6 } else { 3 }],
+                    self.gp0.parameters[if gouraud_shading { 6 } else { 3 }],
                 );
                 self.rasterize_triangle(v0, v1, v2, shading);
 
                 let second_triangle_shading = match shading {
                     Shading::Flat(color) => Shading::Flat(color),
                     Shading::Gouraud(_, v1_color, v2_color) => {
-                        let v3_color = parse_command_color(self.gp0_state.parameters[5]);
+                        let v3_color = parse_command_color(self.gp0.parameters[5]);
                         Shading::Gouraud(v1_color, v2_color, v3_color)
                     }
                 };
@@ -622,7 +613,7 @@ impl Gpu {
     }
 
     fn draw_pixel(&mut self, color: Color) {
-        let (x, y) = parse_vram_position(self.gp0_state.parameters[0]);
+        let (x, y) = parse_vram_position(self.gp0.parameters[0]);
 
         log::trace!("Drawing pixel at X={x}, Y={y} with color {color:02X?}");
 

@@ -42,14 +42,14 @@ impl Gpu {
         //     return;
         // }
 
-        let (draw_min_x, draw_min_y) = self.gp0_state.draw_settings.draw_area_top_left;
-        let (draw_max_x, draw_max_y) = self.gp0_state.draw_settings.draw_area_bottom_right;
+        let (draw_min_x, draw_min_y) = self.gp0.draw_settings.draw_area_top_left;
+        let (draw_max_x, draw_max_y) = self.gp0.draw_settings.draw_area_bottom_right;
 
         if draw_min_x > draw_max_x || draw_min_y > draw_max_y {
             return;
         }
 
-        let (x_offset, y_offset) = self.gp0_state.draw_settings.draw_offset;
+        let (x_offset, y_offset) = self.gp0.draw_settings.draw_offset;
 
         let v0 = Vertex {
             x: v0.x + x_offset,
@@ -127,7 +127,7 @@ impl Gpu {
                             b: b.round() as u8,
                         };
 
-                        if self.gp0_state.draw_settings.dithering_enabled {
+                        if self.gp0.draw_settings.dithering_enabled {
                             let dither = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
                             color.r = color.r.saturating_add_signed(dither);
                             color.g = color.g.saturating_add_signed(dither);
