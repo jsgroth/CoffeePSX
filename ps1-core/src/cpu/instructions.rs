@@ -1,7 +1,7 @@
 mod disassemble;
 
-use crate::cpu::bus::{BusInterface, OpSize};
-use crate::cpu::{CpuResult, Exception, R3000};
+use crate::bus::Bus;
+use crate::cpu::{CpuResult, Exception, OpSize, R3000};
 use crate::num::U32Ext;
 
 macro_rules! impl_branch {
@@ -27,11 +27,11 @@ macro_rules! impl_branch {
 }
 
 impl R3000 {
-    pub(super) fn execute_opcode<B: BusInterface>(
+    pub(super) fn execute_opcode(
         &mut self,
         opcode: u32,
         pc: u32,
-        bus: &mut B,
+        bus: &mut Bus<'_>,
     ) -> CpuResult<()> {
         log::trace!(
             "opcode {opcode:08X} at PC {pc:08X}: {}",
@@ -271,7 +271,7 @@ impl R3000 {
     }
 
     // LB: Load byte
-    fn lb<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn lb(&mut self, opcode: u32, bus: &mut Bus<'_>) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.bus_read(bus, address, OpSize::Byte);
@@ -280,7 +280,7 @@ impl R3000 {
     }
 
     // LBU: Load byte unsigned
-    fn lbu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn lbu(&mut self, opcode: u32, bus: &mut Bus<'_>) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.bus_read(bus, address, OpSize::Byte);
@@ -288,7 +288,7 @@ impl R3000 {
     }
 
     // LH: Load halfword
-    fn lh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
+    fn lh(&mut self, opcode: u32, bus: &mut Bus<'_>) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         if address & 1 != 0 {
@@ -303,7 +303,7 @@ impl R3000 {
     }
 
     // LHU: Load halfword unsigned
-    fn lhu<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
+    fn lhu(&mut self, opcode: u32, bus: &mut Bus<'_>) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         if address & 1 != 0 {
@@ -323,7 +323,7 @@ impl R3000 {
     }
 
     // LW: Load word
-    fn lw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
+    fn lw(&mut self, opcode: u32, bus: &mut Bus<'_>) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         if address & 3 != 0 {
@@ -337,7 +337,7 @@ impl R3000 {
     }
 
     // LWL: Load word left
-    fn lwl<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn lwl(&mut self, opcode: u32, bus: &mut Bus<'_>) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
@@ -353,7 +353,7 @@ impl R3000 {
     }
 
     // LWR: Load word right
-    fn lwr<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn lwr(&mut self, opcode: u32, bus: &mut Bus<'_>) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
@@ -437,7 +437,7 @@ impl R3000 {
     }
 
     // SB: Store byte
-    fn sb<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn sb(&mut self, opcode: u32, bus: &mut Bus<'_>) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.registers.gpr[parse_rt(opcode) as usize];
@@ -445,7 +445,7 @@ impl R3000 {
     }
 
     // SH: Store halfword
-    fn sh<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
+    fn sh(&mut self, opcode: u32, bus: &mut Bus<'_>) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         if address & 1 != 0 {
@@ -459,7 +459,7 @@ impl R3000 {
     }
 
     // SW: Store word
-    fn sw<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) -> CpuResult<()> {
+    fn sw(&mut self, opcode: u32, bus: &mut Bus<'_>) -> CpuResult<()> {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         if address & 3 != 0 {
@@ -473,7 +473,7 @@ impl R3000 {
     }
 
     // SWL: Store word left
-    fn swl<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn swl(&mut self, opcode: u32, bus: &mut Bus<'_>) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 
@@ -488,7 +488,7 @@ impl R3000 {
     }
 
     // SWR: Store word right
-    fn swr<B: BusInterface>(&mut self, opcode: u32, bus: &mut B) {
+    fn swr(&mut self, opcode: u32, bus: &mut Bus<'_>) {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
 

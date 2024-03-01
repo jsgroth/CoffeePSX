@@ -1,5 +1,5 @@
 use crate::control::{ControlRegisters, InterruptType};
-use crate::cpu::bus::OpSize;
+use crate::cpu::OpSize;
 use crate::gpu::Gpu;
 use crate::memory::Memory;
 use crate::num::U32Ext;

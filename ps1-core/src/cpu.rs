@@ -1,8 +1,7 @@
-pub mod bus;
 mod cp0;
 mod instructions;
 
-use crate::cpu::bus::{BusInterface, OpSize};
+use crate::bus::Bus;
 use crate::cpu::cp0::ExceptionCode;
 use cp0::SystemControlCoprocessor;
 
@@ -103,6 +102,43 @@ impl Exception {
 
 type CpuResult<T> = Result<T, Exception>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpSize {
+    Byte,
+    HalfWord,
+    Word,
+}
+
+impl OpSize {
+    pub fn read_memory(self, memory: &[u8], address: u32) -> u32 {
+        let address = address as usize;
+        match self {
+            Self::Byte => memory[address].into(),
+            Self::HalfWord => {
+                u16::from_le_bytes(memory[address..address + 2].try_into().unwrap()).into()
+            }
+            Self::Word => u32::from_le_bytes(memory[address..address + 4].try_into().unwrap()),
+        }
+    }
+
+    pub fn write_memory(self, memory: &mut [u8], address: u32, value: u32) {
+        let address = address as usize;
+        match self {
+            Self::Byte => {
+                memory[address] = value as u8;
+            }
+            Self::HalfWord => {
+                let bytes = (value as u16).to_le_bytes();
+                memory[address..address + 2].copy_from_slice(&bytes);
+            }
+            Self::Word => {
+                let bytes = value.to_le_bytes();
+                memory[address..address + 4].copy_from_slice(&bytes);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct R3000 {
     registers: Registers,
@@ -134,7 +170,7 @@ impl R3000 {
         self.registers.gpr[register as usize] = value;
     }
 
-    pub fn execute_instruction<B: BusInterface>(&mut self, bus: &mut B) {
+    pub fn execute_instruction(&mut self, bus: &mut Bus<'_>) {
         let pc = self.registers.pc;
 
         self.cp0
@@ -175,7 +211,7 @@ impl R3000 {
         self.registers.process_delayed_loads();
     }
 
-    fn bus_read<B: BusInterface>(&mut self, bus: &mut B, address: u32, size: OpSize) -> u32 {
+    fn bus_read(&mut self, bus: &mut Bus<'_>, address: u32, size: OpSize) -> u32 {
         match address {
             // kuseg (only first 512MB are valid addresses)
             0x00000000..=0x1FFFFFFF => bus.read(address, size),
@@ -190,7 +226,7 @@ impl R3000 {
         }
     }
 
-    fn bus_write<B: BusInterface>(&mut self, bus: &mut B, address: u32, value: u32, size: OpSize) {
+    fn bus_write(&mut self, bus: &mut Bus<'_>, address: u32, value: u32, size: OpSize) {
         if self.cp0.status.isolate_cache {
             // If cache is isolated, send writes directly to scratchpad RAM
             // The BIOS isolates cache on startup to zero out scratchpad

@@ -1,5 +1,5 @@
 use crate::api::{Ps1Error, Ps1Result};
-use crate::cpu::bus::OpSize;
+use crate::cpu::OpSize;
 
 const BIOS_ROM_LEN: usize = 512 * 1024;
 const MAIN_RAM_LEN: usize = 2 * 1024 * 1024;
