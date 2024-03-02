@@ -1,5 +1,8 @@
-use crate::gpu::gp0::{Color, TexturePage, Vertex};
-use crate::gpu::Gpu;
+use crate::gpu::gp0::{
+    Color, DrawPolygonParameters, PolygonCommandParameters, TextureColorDepthBits, TexturePage,
+    Vertex,
+};
+use crate::gpu::{Gpu, Vram};
 use std::{cmp, mem};
 
 const DITHER_TABLE: &[[i8; 4]; 4] = &[
@@ -33,22 +36,41 @@ pub enum Shading {
 #[derive(Debug, Clone)]
 pub struct TextureParameters {
     pub texpage: TexturePage,
-    pub clut_index: u16,
+    pub clut_x: u16,
+    pub clut_y: u16,
     pub u: [u8; 3],
     pub v: [u8; 3],
     pub semi_transparent: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureMode {
     None,
-    Raw(TextureParameters),
-    Modulated(TextureParameters),
+    Raw,
+    Modulated,
+}
+
+impl TextureMode {
+    pub fn from_command_params(params: PolygonCommandParameters) -> Self {
+        match (params.textured, params.raw_texture) {
+            (false, _) => Self::None,
+            (true, false) => Self::Modulated,
+            (true, true) => Self::Raw,
+        }
+    }
 }
 
 impl Gpu {
     // TODO rewrite this, code is terrible
-    pub(super) fn rasterize_triangle(&mut self, vertices: [Vertex; 3], shading: Shading) {
+    pub(super) fn rasterize_triangle(
+        &mut self,
+        DrawPolygonParameters {
+            vertices,
+            shading,
+            texture_params,
+            texture_mode,
+        }: DrawPolygonParameters,
+    ) {
         let (draw_min_x, draw_min_y) = self.gp0.draw_settings.draw_area_top_left;
         let (draw_max_x, draw_max_y) = self.gp0.draw_settings.draw_area_bottom_right;
 
@@ -83,16 +105,27 @@ impl Gpu {
 
         log::trace!("Vertices: {v0:?}, {v1:?}, {v2:?}");
         log::trace!("Shading: {shading:?}");
+        log::trace!("Texpage: {:?}", texture_params.texpage);
+        log::trace!(
+            "U/V coordinates: {:?} {:?}",
+            texture_params.u,
+            texture_params.v
+        );
         log::trace!("Bounding box: X=[{min_x}, {max_x}], Y=[{min_y}, {max_y}]");
 
         let mut v0 = v0.to_float();
         let mut v1 = v1.to_float();
         let v2 = v2.to_float();
 
+        let mut tex_u = texture_params.u;
+        let mut tex_v = texture_params.v;
+
         // Ensure vertices are ordered correctly; the PS1 GPU does not cull based on facing
         let mut swapped = false;
         if cross_product_z(v0, v1, v2) < 0.0 {
             mem::swap(&mut v0, &mut v1);
+            tex_u.swap(0, 1);
+            tex_v.swap(0, 1);
             swapped = true;
         }
 
@@ -121,8 +154,8 @@ impl Gpu {
                     }
                 }
 
-                let [color_lsb, color_msb] = match shading {
-                    Shading::Flat(color) => color.truncate_to_15_bit().to_le_bytes(),
+                let mut shading_color = match shading {
+                    Shading::Flat(color) => color,
                     Shading::Gouraud(mut color0, mut color1, color2) => {
                         if swapped {
                             mem::swap(&mut color0, &mut color1);
@@ -139,23 +172,81 @@ impl Gpu {
                             + beta * color1.b as f64
                             + gamma * color2.b as f64;
 
-                        let mut color = Color {
+                        let color = Color {
                             r: r.round() as u8,
                             g: g.round() as u8,
                             b: b.round() as u8,
                         };
 
-                        if self.gp0.draw_settings.dithering_enabled {
-                            let dither = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
-                            color.r = color.r.saturating_add_signed(dither);
-                            color.g = color.g.saturating_add_signed(dither);
-                            color.b = color.b.saturating_add_signed(dither);
-                        }
-
-                        color.truncate_to_15_bit().to_le_bytes()
+                        color
                     }
                 };
 
+                if self.gp0.draw_settings.dithering_enabled
+                    && (matches!(shading, Shading::Gouraud(..))
+                        || texture_mode == TextureMode::Modulated)
+                {
+                    let dither = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
+                    shading_color.r = shading_color.r.saturating_add_signed(dither);
+                    shading_color.g = shading_color.g.saturating_add_signed(dither);
+                    shading_color.b = shading_color.b.saturating_add_signed(dither);
+                }
+
+                let truncated_color = match texture_mode {
+                    TextureMode::None => shading_color.truncate_to_15_bit(),
+                    TextureMode::Raw | TextureMode::Modulated => {
+                        let (alpha, beta, gamma) = compute_affine_coordinates(p, v0, v1, v2);
+
+                        let u = alpha * tex_u[0] as f64
+                            + beta * tex_u[1] as f64
+                            + gamma * tex_u[2] as f64;
+
+                        let v = alpha * tex_v[0] as f64
+                            + beta * tex_v[1] as f64
+                            + gamma * tex_v[2] as f64;
+
+                        let u = u.round() as u8;
+                        let v = v.round() as u8;
+
+                        let tex_pixel = sample_texture(
+                            &self.vram,
+                            &texture_params.texpage,
+                            texture_params.clut_x.into(),
+                            texture_params.clut_y.into(),
+                            u.into(),
+                            v.into(),
+                        );
+                        if tex_pixel == 0 {
+                            continue;
+                        }
+
+                        let tex_r = tex_pixel & 0x1F;
+                        let tex_g = (tex_pixel >> 5) & 0x1F;
+                        let tex_b = (tex_pixel >> 10) & 0x1F;
+
+                        match texture_mode {
+                            TextureMode::Raw => tex_r | (tex_g << 5) | (tex_b << 10),
+                            TextureMode::Modulated => {
+                                let r = tex_r as f64 * shading_color.r as f64 / 128.0;
+                                let g = tex_g as f64 * shading_color.g as f64 / 128.0;
+                                let b = tex_b as f64 * shading_color.b as f64 / 128.0;
+
+                                let r = r.round().clamp(0.0, 31.0) as u16;
+                                let g = g.round().clamp(0.0, 31.0) as u16;
+                                let b = b.round().clamp(0.0, 31.0) as u16;
+
+                                r | (g << 5) | (b << 10)
+                            }
+                            TextureMode::None => unreachable!(),
+                        }
+                    }
+                };
+
+                if texture_mode != TextureMode::None && truncated_color == 0 {
+                    continue;
+                }
+
+                let [color_lsb, color_msb] = truncated_color.to_le_bytes();
                 let vram_addr = (2048 * py + 2 * px) as usize;
                 self.vram[vram_addr] = color_lsb;
                 self.vram[vram_addr + 1] = color_msb;
@@ -187,4 +278,31 @@ fn compute_affine_coordinates(
     let gamma = 1.0 - alpha - beta;
 
     (alpha, beta, gamma)
+}
+
+fn sample_texture(
+    vram: &Vram,
+    texpage: &TexturePage,
+    clut_x: u32,
+    clut_y: u32,
+    u: u32,
+    v: u32,
+) -> u16 {
+    // TODO texture window mask/offset
+
+    let y = texpage.y_base + u32::from(v);
+
+    match texpage.color_depth {
+        TextureColorDepthBits::Four => {
+            let vram_addr = 2048 * y + 2 * 64 * texpage.x_base + u32::from(u) / 2;
+            let shift = 4 * (u % 2);
+            let clut_index: u32 = ((vram[vram_addr as usize] >> shift) & 0xF).into();
+
+            let clut_base_addr = 2048 * clut_y + 2 * 16 * clut_x;
+            let clut_addr = clut_base_addr + 2 * clut_index;
+
+            u16::from_le_bytes([vram[clut_addr as usize], vram[(clut_addr + 1) as usize]])
+        }
+        _ => todo!("color depth {:?}", texpage.color_depth),
+    }
 }

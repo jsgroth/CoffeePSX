@@ -1,6 +1,6 @@
 mod rasterize;
 
-use crate::gpu::gp0::rasterize::{Shading, TextureParameters};
+use crate::gpu::gp0::rasterize::{Shading, TextureMode, TextureParameters};
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
 use std::array;
@@ -581,9 +581,9 @@ impl Gpu {
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
         let (first_params, second_params) =
             parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
-        self.rasterize_triangle(first_params.vertices, first_params.shading);
+        self.rasterize_triangle(first_params);
         if let Some(second_params) = second_params {
-            self.rasterize_triangle(second_params.vertices, second_params.shading);
+            self.rasterize_triangle(second_params);
         }
     }
 
@@ -654,6 +654,7 @@ pub struct DrawPolygonParameters {
     vertices: [Vertex; 3],
     shading: Shading,
     texture_params: TextureParameters,
+    texture_mode: TextureMode,
 }
 
 fn parse_draw_polygon_parameters(
@@ -664,7 +665,8 @@ fn parse_draw_polygon_parameters(
     let mut colors = [Color::default(); 4];
     let mut u = [0; 4];
     let mut v = [0; 4];
-    let mut clut_index = 0;
+    let mut clut_x = 0;
+    let mut clut_y = 0;
     let mut texpage = TexturePage::default();
 
     colors[0] = command_parameters.color;
@@ -681,7 +683,8 @@ fn parse_draw_polygon_parameters(
         if command_parameters.textured {
             match vertex_idx {
                 0 => {
-                    clut_index = (parameters[0] >> 16) as u16;
+                    clut_x = ((parameters[0] >> 16) & 0x3F) as u16;
+                    clut_y = ((parameters[0] >> 22) & 0x1FF) as u16;
                 }
                 1 => {
                     texpage = TexturePage::from_command_word(parameters[0] >> 16);
@@ -695,6 +698,8 @@ fn parse_draw_polygon_parameters(
         }
     }
 
+    let texture_mode = TextureMode::from_command_params(command_parameters);
+
     let first_parameters = DrawPolygonParameters {
         vertices: [vertices[0], vertices[1], vertices[2]],
         shading: if command_parameters.gouraud_shading {
@@ -704,11 +709,13 @@ fn parse_draw_polygon_parameters(
         },
         texture_params: TextureParameters {
             texpage: texpage.clone(),
-            clut_index,
+            clut_x,
+            clut_y,
             u: [u[0], u[1], u[2]],
             v: [v[0], v[1], v[2]],
             semi_transparent: command_parameters.semi_transparent,
         },
+        texture_mode,
     };
 
     match command_parameters.vertices {
@@ -723,11 +730,13 @@ fn parse_draw_polygon_parameters(
                 },
                 texture_params: TextureParameters {
                     texpage,
-                    clut_index,
+                    clut_x,
+                    clut_y,
                     u: [u[1], u[2], u[3]],
                     v: [v[1], v[2], v[3]],
                     semi_transparent: command_parameters.semi_transparent,
                 },
+                texture_mode,
             };
 
             (first_parameters, Some(second_parameters))
