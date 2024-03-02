@@ -132,10 +132,13 @@ impl Ps1Emulator {
             self.check_for_putchar_call();
         }
 
-        // Very, very rough timing for renders
+        // Very, very rough timing: Assume that the CPU takes on average 2 cycles/instruction.
+        // On actual hardware, timing varies depending on what memory was accessed (if any),
+        // whether the opcode read hit in I-cache, and whether the instruction wrote to memory
+        // while the write queue was full.
         if self
             .gpu
-            .tick(1, &mut self.control_registers, &mut self.timers)
+            .tick(2, &mut self.control_registers, &mut self.timers)
             == TickEffect::RenderFrame
         {
             renderer.render_frame(self.gpu.vram())?;
