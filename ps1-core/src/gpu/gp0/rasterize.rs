@@ -1,4 +1,4 @@
-use crate::gpu::gp0::{Color, Vertex};
+use crate::gpu::gp0::{Color, TexturePage, Vertex};
 use crate::gpu::Gpu;
 use std::{cmp, mem};
 
@@ -30,18 +30,25 @@ pub enum Shading {
     Gouraud(Color, Color, Color),
 }
 
-impl Gpu {
-    pub(super) fn rasterize_triangle(
-        &mut self,
-        v0: Vertex,
-        v1: Vertex,
-        v2: Vertex,
-        shading: Shading,
-    ) {
-        // if !self.gp0_state.draw_settings.drawing_enabled {
-        //     return;
-        // }
+#[derive(Debug, Clone)]
+pub struct TextureParameters {
+    pub texpage: TexturePage,
+    pub clut_index: u16,
+    pub u: [u8; 3],
+    pub v: [u8; 3],
+    pub semi_transparent: bool,
+}
 
+#[derive(Debug, Clone)]
+pub enum TextureMode {
+    None,
+    Raw(TextureParameters),
+    Modulated(TextureParameters),
+}
+
+impl Gpu {
+    // TODO rewrite this, code is terrible
+    pub(super) fn rasterize_triangle(&mut self, vertices: [Vertex; 3], shading: Shading) {
         let (draw_min_x, draw_min_y) = self.gp0.draw_settings.draw_area_top_left;
         let (draw_max_x, draw_max_y) = self.gp0.draw_settings.draw_area_bottom_right;
 
@@ -51,6 +58,7 @@ impl Gpu {
 
         let (x_offset, y_offset) = self.gp0.draw_settings.draw_offset;
 
+        let [v0, v1, v2] = vertices;
         let v0 = Vertex {
             x: v0.x + x_offset,
             y: v0.y + y_offset,
@@ -113,9 +121,6 @@ impl Gpu {
                     }
                 }
 
-                log::trace!("Plotting pixel at X={px} Y={py}");
-
-                // TODO actually implement Gouraud shading, and also make this more efficient
                 let [color_lsb, color_msb] = match shading {
                     Shading::Flat(color) => color.truncate_to_15_bit().to_le_bytes(),
                     Shading::Gouraud(mut color0, mut color1, color2) => {

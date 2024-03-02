@@ -1,17 +1,17 @@
 mod rasterize;
 
-use crate::gpu::gp0::rasterize::Shading;
+use crate::gpu::gp0::rasterize::{Shading, TextureParameters};
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
 use std::array;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct Vertex {
     x: i32,
     y: i32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -75,15 +75,18 @@ impl RectangleSize {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct PolygonCommandParameters {
+    pub vertices: PolygonVertices,
+    pub gouraud_shading: bool,
+    pub textured: bool,
+    pub semi_transparent: bool,
+    pub raw_texture: bool,
+    pub color: Color,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum DrawCommand {
-    DrawPolygon {
-        vertices: PolygonVertices,
-        gouraud_shading: bool,
-        textured: bool,
-        semi_transparent: bool,
-        raw_texture: bool,
-        color: Color,
-    },
+    DrawPolygon(PolygonCommandParameters),
     DrawRectangle {
         size: RectangleSize,
         textured: bool,
@@ -184,14 +187,14 @@ impl Gp0CommandState {
         let parameters = vertex_count * (1 + u8::from(textured))
             + (vertex_count - 1) * u8::from(gouraud_shading);
 
-        let command = DrawCommand::DrawPolygon {
+        let command = DrawCommand::DrawPolygon(PolygonCommandParameters {
             vertices,
             gouraud_shading,
             textured,
             semi_transparent,
             raw_texture,
             color,
-        };
+        });
 
         Self::WaitingForParameters {
             command,
@@ -317,7 +320,7 @@ impl TextureWindow {
 
 #[derive(Debug, Clone, Default)]
 pub struct DrawSettings {
-    pub drawing_enabled: bool,
+    pub drawing_in_display_allowed: bool,
     pub dithering_enabled: bool,
     pub draw_area_top_left: (u32, u32),
     pub draw_area_bottom_right: (u32, u32),
@@ -326,10 +329,12 @@ pub struct DrawSettings {
     pub check_mask_bit: bool,
 }
 
+const PARAMETERS_LEN: usize = 8;
+
 #[derive(Debug, Clone)]
 pub struct Gp0State {
     pub command_state: Gp0CommandState,
-    pub parameters: [u32; 8],
+    pub parameters: [u32; PARAMETERS_LEN],
     pub global_texture_page: TexturePage,
     pub texture_window: TextureWindow,
     pub draw_settings: DrawSettings,
@@ -375,13 +380,24 @@ impl Gpu {
         self.gp0.command_state = match self.gp0.command_state {
             Gp0CommandState::WaitingForCommand => match value >> 29 {
                 0 => {
-                    // If the highest byte is $1F, this command immediately sets the GPU IRQ flag
-                    // Other command 0 bytes seem to be no-ops?
-                    if value >> 24 == 0x1F {
-                        todo!("GP0($1F) - set GPU IRQ");
+                    match value >> 24 {
+                        0x00 => {
+                            // GP0($00): Apparently a no-op? Functionally unknown
+                            Gp0CommandState::WaitingForCommand
+                        }
+                        0x01 => {
+                            // GP0($01): Clear texture cache
+                            // TODO emulate texture cache?
+                            Gp0CommandState::WaitingForCommand
+                        }
+                        0x1F => {
+                            // GP0($1F): Set GPU IRQ flag
+                            // Apparently nothing uses this feature? Except for one game that seems
+                            // to accidentally send a GP0($1F) command
+                            todo!("GP0($1F) - set GPU IRQ")
+                        }
+                        _ => todo!("GP0 command: {value:08X}"),
                     }
-
-                    Gp0CommandState::WaitingForCommand
                 }
                 1 => Gp0CommandState::draw_polygon(value),
                 3 => Gp0CommandState::draw_rectangle(value),
@@ -426,22 +442,12 @@ impl Gpu {
         log::trace!("Executing GP0 command {command:?}");
 
         match command {
-            DrawCommand::DrawPolygon {
-                vertices,
-                gouraud_shading,
-                textured,
-                semi_transparent,
-                raw_texture,
-                color,
-            } => {
-                if semi_transparent || raw_texture {
+            DrawCommand::DrawPolygon(parameters) => {
+                if parameters.semi_transparent || parameters.raw_texture {
                     todo!("draw polygon {command:?}");
                 }
 
-                // TODO draw textured polygons
-                if !textured {
-                    self.draw_polygon(vertices, gouraud_shading, color);
-                }
+                self.draw_polygon(parameters);
 
                 Gp0CommandState::WaitingForCommand
             }
@@ -495,14 +501,14 @@ impl Gpu {
             0xE1 => {
                 // GP0($E1): Texture page & draw mode settings
                 self.gp0.global_texture_page = TexturePage::from_command_word(command);
-                self.gp0.draw_settings.drawing_enabled = command.bit(10);
+                self.gp0.draw_settings.drawing_in_display_allowed = command.bit(10);
                 self.gp0.draw_settings.dithering_enabled = command.bit(9);
 
                 log::trace!("Executed texture page / draw mode command: {command:08X}");
                 log::trace!("  Global texture page: {:?}", self.gp0.global_texture_page);
                 log::trace!(
                     "  Drawing allowed in display area: {}",
-                    self.gp0.draw_settings.drawing_enabled
+                    self.gp0.draw_settings.drawing_in_display_allowed
                 );
                 log::trace!(
                     "  Dithering from 24-bit to 15-bit enabled: {}",
@@ -572,43 +578,12 @@ impl Gpu {
         }
     }
 
-    fn draw_polygon(
-        &mut self,
-        vertices: PolygonVertices,
-        gouraud_shading: bool,
-        command_color: Color,
-    ) {
-        let v0 = parse_vertex_coordinates(self.gp0.parameters[0]);
-        let v1 = parse_vertex_coordinates(self.gp0.parameters[if gouraud_shading { 2 } else { 1 }]);
-        let v2 = parse_vertex_coordinates(self.gp0.parameters[if gouraud_shading { 4 } else { 2 }]);
-
-        let shading = if gouraud_shading {
-            let v1_color = parse_command_color(self.gp0.parameters[1]);
-            let v2_color = parse_command_color(self.gp0.parameters[3]);
-            Shading::Gouraud(command_color, v1_color, v2_color)
-        } else {
-            Shading::Flat(command_color)
-        };
-
-        match vertices {
-            PolygonVertices::Three => {
-                self.rasterize_triangle(v0, v1, v2, shading);
-            }
-            PolygonVertices::Four => {
-                let v3 = parse_vertex_coordinates(
-                    self.gp0.parameters[if gouraud_shading { 6 } else { 3 }],
-                );
-                self.rasterize_triangle(v0, v1, v2, shading);
-
-                let second_triangle_shading = match shading {
-                    Shading::Flat(color) => Shading::Flat(color),
-                    Shading::Gouraud(_, v1_color, v2_color) => {
-                        let v3_color = parse_command_color(self.gp0.parameters[5]);
-                        Shading::Gouraud(v1_color, v2_color, v3_color)
-                    }
-                };
-                self.rasterize_triangle(v1, v2, v3, second_triangle_shading);
-            }
+    fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
+        let (first_params, second_params) =
+            parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
+        self.rasterize_triangle(first_params.vertices, first_params.shading);
+        if let Some(second_params) = second_params {
+            self.rasterize_triangle(second_params.vertices, second_params.shading);
         }
     }
 
@@ -672,4 +647,90 @@ fn parse_vertex_coordinates(parameter: u32) -> Vertex {
 
 fn parse_signed_11_bit(word: u32) -> i32 {
     ((word as i32) << 21) >> 21
+}
+
+#[derive(Debug, Clone)]
+pub struct DrawPolygonParameters {
+    vertices: [Vertex; 3],
+    shading: Shading,
+    texture_params: TextureParameters,
+}
+
+fn parse_draw_polygon_parameters(
+    command_parameters: PolygonCommandParameters,
+    mut parameters: &[u32],
+) -> (DrawPolygonParameters, Option<DrawPolygonParameters>) {
+    let mut vertices = [Vertex::default(); 4];
+    let mut colors = [Color::default(); 4];
+    let mut u = [0; 4];
+    let mut v = [0; 4];
+    let mut clut_index = 0;
+    let mut texpage = TexturePage::default();
+
+    colors[0] = command_parameters.color;
+
+    for vertex_idx in 0..command_parameters.vertices.into() {
+        if vertex_idx != 0 && command_parameters.gouraud_shading {
+            colors[vertex_idx as usize] = parse_command_color(parameters[0]);
+            parameters = &parameters[1..];
+        }
+
+        vertices[vertex_idx as usize] = parse_vertex_coordinates(parameters[0]);
+        parameters = &parameters[1..];
+
+        if command_parameters.textured {
+            match vertex_idx {
+                0 => {
+                    clut_index = (parameters[0] >> 16) as u16;
+                }
+                1 => {
+                    texpage = TexturePage::from_command_word(parameters[0] >> 16);
+                }
+                _ => {}
+            }
+
+            u[vertex_idx as usize] = parameters[0] as u8;
+            v[vertex_idx as usize] = (parameters[0] >> 8) as u8;
+            parameters = &parameters[1..];
+        }
+    }
+
+    let first_parameters = DrawPolygonParameters {
+        vertices: [vertices[0], vertices[1], vertices[2]],
+        shading: if command_parameters.gouraud_shading {
+            Shading::Gouraud(colors[0], colors[1], colors[2])
+        } else {
+            Shading::Flat(colors[0])
+        },
+        texture_params: TextureParameters {
+            texpage: texpage.clone(),
+            clut_index,
+            u: [u[0], u[1], u[2]],
+            v: [v[0], v[1], v[2]],
+            semi_transparent: command_parameters.semi_transparent,
+        },
+    };
+
+    match command_parameters.vertices {
+        PolygonVertices::Three => (first_parameters, None),
+        PolygonVertices::Four => {
+            let second_parameters = DrawPolygonParameters {
+                vertices: [vertices[1], vertices[2], vertices[3]],
+                shading: if command_parameters.gouraud_shading {
+                    Shading::Gouraud(colors[1], colors[2], colors[3])
+                } else {
+                    Shading::Flat(colors[0])
+                },
+                texture_params: TextureParameters {
+                    texpage,
+                    clut_index,
+                    u: [u[1], u[2], u[3]],
+                    v: [v[1], v[2], v[3]],
+                    semi_transparent: command_parameters.semi_transparent,
+                },
+            };
+
+            (first_parameters, Some(second_parameters))
+        }
+    }
 }

@@ -198,7 +198,7 @@ impl Registers {
             | ((gp0_state.global_texture_page.semi_transparency_mode as u32) << 5)
             | ((gp0_state.global_texture_page.color_depth as u32) << 7)
             | (u32::from(gp0_state.draw_settings.dithering_enabled) << 9)
-            | (u32::from(gp0_state.draw_settings.drawing_enabled) << 10)
+            | (u32::from(gp0_state.draw_settings.drawing_in_display_allowed) << 10)
             | (u32::from(gp0_state.draw_settings.force_mask_bit) << 11)
             | (u32::from(gp0_state.draw_settings.check_mask_bit) << 12)
             | (1 << 13)
