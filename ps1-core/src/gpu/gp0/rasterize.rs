@@ -97,10 +97,23 @@ impl Gpu {
                 };
 
                 for (edge_0, edge_1) in [(v0, v1), (v1, v2), (v2, v0)] {
-                    if cross_product_z(edge_0, edge_1, p) < 0.0 {
+                    let cpz = cross_product_z(edge_0, edge_1, p);
+                    if cpz < 0.0 {
                         continue 'x;
                     }
+
+                    if cpz.abs() < 1e-3 {
+                        if (edge_0.x - edge_1.x).abs() < 1e-3 && edge_1.y > edge_0.y {
+                            continue 'x;
+                        }
+
+                        if edge_1.x < edge_0.x {
+                            continue 'x;
+                        }
+                    }
                 }
+
+                log::trace!("Plotting pixel at X={px} Y={py}");
 
                 // TODO actually implement Gouraud shading, and also make this more efficient
                 let [color_lsb, color_msb] = match shading {
