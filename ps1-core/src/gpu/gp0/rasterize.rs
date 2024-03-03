@@ -205,8 +205,8 @@ impl Gpu {
                             + beta * tex_v[1] as f64
                             + gamma * tex_v[2] as f64;
 
-                        let u = u.round() as u8;
-                        let v = v.round() as u8;
+                        let u = u.floor() as u8;
+                        let v = v.floor() as u8;
 
                         let tex_pixel = sample_texture(
                             &self.vram,
