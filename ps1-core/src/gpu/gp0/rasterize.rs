@@ -178,14 +178,18 @@ pub fn triangle(
             rasterize_pixel(
                 px,
                 py,
-                v,
-                shading,
-                semi_transparent,
-                global_texpage.semi_transparency_mode,
-                &texture_params,
-                texture_mode,
-                draw_settings.dithering_enabled,
                 vram,
+                RasterizePixelArgs {
+                    v,
+                    shading,
+                    semi_transparent,
+                    global_semi_transparency_mode: global_texpage.semi_transparency_mode,
+                    texture_params: &texture_params,
+                    texture_mode,
+                    dithering: draw_settings.dithering_enabled,
+                    force_mask_bit: draw_settings.force_mask_bit,
+                    check_mask_bit: draw_settings.check_mask_bit,
+                },
             );
         }
     }
@@ -236,19 +240,40 @@ fn triangle_swapped_vertices(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-fn rasterize_pixel(
-    px: i32,
-    py: i32,
+struct RasterizePixelArgs<'a> {
     v: [VertexFloat; 3],
     shading: Shading,
     semi_transparent: bool,
     global_semi_transparency_mode: SemiTransparencyMode,
-    texture_params: &TextureParameters,
+    texture_params: &'a TextureParameters,
     texture_mode: TextureMode,
     dithering: bool,
+    force_mask_bit: bool,
+    check_mask_bit: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rasterize_pixel(
+    px: i32,
+    py: i32,
     vram: &mut Vram,
+    RasterizePixelArgs {
+        v,
+        shading,
+        semi_transparent,
+        global_semi_transparency_mode,
+        texture_params,
+        texture_mode,
+        dithering,
+        force_mask_bit,
+        check_mask_bit,
+    }: RasterizePixelArgs<'_>,
 ) {
+    let vram_addr = (2048 * py + 2 * px) as usize;
+    if check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+        return;
+    }
+
     // The sampling point is in the center of the pixel, so add 0.5 to both coordinates
     let p = VertexFloat {
         x: f64::from(px) + 0.5,
@@ -333,7 +358,6 @@ fn rasterize_pixel(
         }
     };
 
-    let vram_addr = (2048 * py + 2 * px) as usize;
     let masked_color = if semi_transparent && (texture_mode == TextureMode::None || mask_bit) {
         let existing_pixel = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
         let existing_color = Color::from_15_bit(existing_pixel);
@@ -363,7 +387,7 @@ fn rasterize_pixel(
 
     let [color_lsb, color_msb] = dithered_color.truncate_to_15_bit().to_le_bytes();
     vram[vram_addr] = color_lsb;
-    vram[vram_addr + 1] = color_msb | (u8::from(mask_bit) << 7);
+    vram[vram_addr + 1] = color_msb | (u8::from(mask_bit || force_mask_bit) << 7);
 }
 
 fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]) -> Color {
