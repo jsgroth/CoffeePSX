@@ -211,6 +211,7 @@ impl R3000 {
         self.registers.process_delayed_loads();
     }
 
+    #[allow(clippy::match_same_arms)]
     fn bus_read(&mut self, bus: &mut Bus<'_>, address: u32, size: OpSize) -> u32 {
         match address {
             // kuseg (only first 512MB are valid addresses)
@@ -226,6 +227,7 @@ impl R3000 {
         }
     }
 
+    #[allow(clippy::match_same_arms)]
     fn bus_write(&mut self, bus: &mut Bus<'_>, address: u32, value: u32, size: OpSize) {
         if self.cp0.status.isolate_cache {
             // If cache is isolated, send writes directly to scratchpad RAM

@@ -210,7 +210,7 @@ impl Registers {
             | (u32::from(self.interlaced) << 22)
             | (u32::from(!self.display_enabled) << 23)
             | (u32::from(self.irq) << 24)
-            | (u32::from(dma_request) << 25)
+            | (dma_request << 25)
             | (u32::from(ready_to_receive_command) << 26)
             | (u32::from(ready_to_send_vram) << 27)
             | (u32::from(ready_to_receive_dma) << 28)

@@ -1,3 +1,5 @@
+#![allow(clippy::many_single_char_names)]
+
 use crate::gpu::gp0::{
     Color, DrawPolygonParameters, DrawSettings, PolygonCommandParameters, SemiTransparencyMode,
     TextureColorDepthBits, TexturePage, Vertex,
@@ -21,8 +23,8 @@ struct VertexFloat {
 impl Vertex {
     fn to_float(self) -> VertexFloat {
         VertexFloat {
-            x: self.x as f64,
-            y: self.y as f64,
+            x: self.x.into(),
+            y: self.y.into(),
         }
     }
 }
@@ -33,9 +35,9 @@ impl Color {
         let g = (color >> 5) & 0x1F;
         let b = (color >> 10) & 0x1F;
 
-        let r = (r as f64 * 255.0 / 31.0).round() as u8;
-        let g = (g as f64 * 255.0 / 31.0).round() as u8;
-        let b = (b as f64 * 255.0 / 31.0).round() as u8;
+        let r = (f64::from(r) * 255.0 / 31.0).round() as u8;
+        let g = (f64::from(g) * 255.0 / 31.0).round() as u8;
+        let b = (f64::from(b) * 255.0 / 31.0).round() as u8;
 
         Self { r, g, b }
     }
@@ -168,7 +170,7 @@ pub fn triangle(
         cmp::max(v[0].y, cmp::max(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
 
     // Operate in floating-point from here on
-    let v = v.map(|vertex| vertex.to_float());
+    let v = v.map(Vertex::to_float);
 
     // Iterate over every pixel in the bounding box to determine which ones to rasterize
     for py in min_y..=max_y {
@@ -189,6 +191,7 @@ pub fn triangle(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn triangle_swapped_vertices(
     v: [Vertex; 3],
     shading: Shading,
@@ -233,6 +236,7 @@ fn triangle_swapped_vertices(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rasterize_pixel(
     px: i32,
     py: i32,
@@ -247,8 +251,8 @@ fn rasterize_pixel(
 ) {
     // The sampling point is in the center of the pixel, so add 0.5 to both coordinates
     let p = VertexFloat {
-        x: px as f64 + 0.5,
-        y: py as f64 + 0.5,
+        x: f64::from(px) + 0.5,
+        y: f64::from(py) + 0.5,
     };
 
     // A given point is contained within the triangle if the cross-product of v0->p and
@@ -304,25 +308,19 @@ fn rasterize_pixel(
 
             // TODO semi-transparency / mask bit
 
-            let r = texture_pixel & 0x1F;
-            let g = (texture_pixel >> 5) & 0x1F;
-            let b = (texture_pixel >> 10) & 0x1F;
+            let raw_texture_color = Color::from_15_bit(texture_pixel);
 
             let texture_color = match texture_mode {
-                TextureMode::Raw => Color {
-                    r: (r as f64 * 255.0 / 31.0).round() as u8,
-                    g: (g as f64 * 255.0 / 31.0).round() as u8,
-                    b: (b as f64 * 255.0 / 31.0).round() as u8,
-                },
+                TextureMode::Raw => raw_texture_color,
                 TextureMode::Modulated => {
                     // Apply modulation: multiply the texture color by the shading color / 128
-                    let r = (r as f64 * 255.0 / 31.0 * shading_color.r as f64 / 128.0)
+                    let r = (f64::from(raw_texture_color.r) * f64::from(shading_color.r) / 128.0)
                         .round()
                         .clamp(0.0, 255.0) as u8;
-                    let g = (g as f64 * 255.0 / 31.0 * shading_color.g as f64 / 128.0)
+                    let g = (f64::from(raw_texture_color.g) * f64::from(shading_color.g) / 128.0)
                         .round()
                         .clamp(0.0, 255.0) as u8;
-                    let b = (b as f64 * 255.0 / 31.0 * shading_color.b as f64 / 128.0)
+                    let b = (f64::from(raw_texture_color.b) * f64::from(shading_color.b) / 128.0)
                         .round()
                         .clamp(0.0, 255.0) as u8;
 
@@ -369,19 +367,21 @@ fn rasterize_pixel(
 }
 
 fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]) -> Color {
+    let rf = colors.map(|color| f64::from(color.r));
+    let gf = colors.map(|color| f64::from(color.g));
+    let bf = colors.map(|color| f64::from(color.b));
+
     // Interpolate between the color of each vertex using Barycentric/affine coordinates
     let (alpha, beta, gamma) = compute_affine_coordinates(p, v[0], v[1], v[2]);
-    let r = alpha * colors[0].r as f64 + beta * colors[1].r as f64 + gamma * colors[2].r as f64;
-    let g = alpha * colors[0].g as f64 + beta * colors[1].g as f64 + gamma * colors[2].g as f64;
-    let b = alpha * colors[0].b as f64 + beta * colors[1].b as f64 + gamma * colors[2].b as f64;
+    let r = alpha * rf[0] + beta * rf[1] + gamma * rf[2];
+    let g = alpha * gf[0] + beta * gf[1] + gamma * gf[2];
+    let b = alpha * bf[0] + beta * bf[1] + gamma * bf[2];
 
-    let color = Color {
+    Color {
         r: r.round() as u8,
         g: g.round() as u8,
         b: b.round() as u8,
-    };
-
-    color
+    }
 }
 
 fn interpolate_uv_coordinates(
@@ -395,13 +395,15 @@ fn interpolate_uv_coordinates(
         y: vertex.y + 0.5,
     });
 
+    let uf = u.map(f64::from);
+    let vf = v.map(f64::from);
+
     // Similar to Gouraud shading, interpolate the U/V coordinates between vertices by using
     // Barycentric/affine coordinates
     let (alpha, beta, gamma) = compute_affine_coordinates(p, vertices[0], vertices[1], vertices[2]);
 
-    let u = alpha * u[0] as f64 + beta * u[1] as f64 + gamma * u[2] as f64;
-
-    let v = alpha * v[0] as f64 + beta * v[1] as f64 + gamma * v[2] as f64;
+    let u = alpha * uf[0] + beta * uf[1] + gamma * uf[2];
+    let v = alpha * vf[0] + beta * vf[1] + gamma * vf[2];
 
     // Floor rather than round because rounding looks smoother than what the PS1 GPU outputs
     let u = u.round() as u8;
@@ -445,11 +447,11 @@ fn sample_texture(
 ) -> u16 {
     // TODO texture window mask/offset
 
-    let y = texpage.y_base + u32::from(v);
+    let y = texpage.y_base + v;
 
     match texpage.color_depth {
         TextureColorDepthBits::Four => {
-            let vram_addr = 2048 * y + 2 * 64 * texpage.x_base + u32::from(u) / 2;
+            let vram_addr = 2048 * y + 2 * 64 * texpage.x_base + u / 2;
             let shift = 4 * (u % 2);
             let clut_index: u32 = ((vram[vram_addr as usize] >> shift) & 0xF).into();
 
@@ -459,7 +461,7 @@ fn sample_texture(
             u16::from_le_bytes([vram[clut_addr as usize], vram[(clut_addr + 1) as usize]])
         }
         TextureColorDepthBits::Eight => {
-            let vram_x_bytes = (2 * 64 * texpage.x_base + u32::from(u)) & 0x7FF;
+            let vram_x_bytes = (2 * 64 * texpage.x_base + u) & 0x7FF;
             let vram_addr = 2048 * y + vram_x_bytes;
             let clut_index: u32 = vram[vram_addr as usize].into();
 
@@ -469,7 +471,7 @@ fn sample_texture(
             u16::from_le_bytes([vram[clut_addr as usize], vram[(clut_addr + 1) as usize]])
         }
         TextureColorDepthBits::Fifteen => {
-            let vram_x_pixels = (64 * texpage.x_base + u32::from(u)) & 0x3FF;
+            let vram_x_pixels = (64 * texpage.x_base + u) & 0x3FF;
             let vram_addr = (2048 * y + 2 * vram_x_pixels) as usize;
             u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]])
         }

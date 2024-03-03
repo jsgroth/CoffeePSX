@@ -36,7 +36,7 @@ impl<'a> Bus<'a> {
                 self.memory.write_main_ram(address, value, size);
             }
             0x1F000000..=0x1F7FFFFF => {
-                unimplemented_register_write("Expansion Device 1", address, value, size)
+                unimplemented_register_write("Expansion Device 1", address, value, size);
             }
             0x1F800000..=0x1F800FFF => {
                 self.memory.write_scratchpad_ram(address, value, size);
@@ -53,6 +53,7 @@ impl<'a> Bus<'a> {
         self.control_registers.interrupt_pending()
     }
 
+    #[allow(clippy::match_same_arms)]
     fn read_io_register(&mut self, address: u32, size: OpSize) -> u32 {
         log::trace!("I/O register read: {address:08X} {size:?}");
 
@@ -89,16 +90,16 @@ impl<'a> Bus<'a> {
             0x1000 => self.control_registers.write_expansion_1_address(value),
             0x1004 => self.control_registers.write_expansion_2_address(value),
             0x1008 => {
-                unimplemented_register_write("Expansion 1 Memory Control", address, value, size)
+                unimplemented_register_write("Expansion 1 Memory Control", address, value, size);
             }
             0x100C => {
-                unimplemented_register_write("Expansion 3 Memory Control", address, value, size)
+                unimplemented_register_write("Expansion 3 Memory Control", address, value, size);
             }
             0x1010 => unimplemented_register_write("BIOS Memory Control", address, value, size),
             0x1014 => unimplemented_register_write("SPU Memory Control", address, value, size),
             0x1018 => unimplemented_register_write("CD-ROM Memory Control", address, value, size),
             0x101C => {
-                unimplemented_register_write("Expansion 2 Memory Control", address, value, size)
+                unimplemented_register_write("Expansion 2 Memory Control", address, value, size);
             }
             0x1020 => unimplemented_register_write("Common Delay", address, value, size),
             0x104A => unimplemented_register_write("Joypad Control", address, value, size),

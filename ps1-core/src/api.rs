@@ -10,6 +10,9 @@ use thiserror::Error;
 pub trait Renderer {
     type Err;
 
+    /// # Errors
+    ///
+    /// Should propagate any error encountered while rendering the frame.
     fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err>;
 }
 
@@ -42,6 +45,7 @@ pub struct Ps1EmulatorBuilder {
 }
 
 impl Ps1EmulatorBuilder {
+    #[must_use]
     pub fn new(bios_rom: Vec<u8>) -> Self {
         Self {
             bios_rom,
@@ -49,6 +53,7 @@ impl Ps1EmulatorBuilder {
         }
     }
 
+    #[must_use]
     pub fn tty_enabled(self, tty_enabled: bool) -> Self {
         Self {
             tty_enabled,
@@ -56,16 +61,23 @@ impl Ps1EmulatorBuilder {
         }
     }
 
+    /// # Errors
+    ///
+    /// Will return an error if the BIOS ROM is invalid.
     pub fn build(self) -> Ps1Result<Ps1Emulator> {
         Ps1Emulator::new(self.bios_rom, self.tty_enabled)
     }
 }
 
 impl Ps1Emulator {
+    #[must_use]
     pub fn builder(bios_rom: Vec<u8>) -> Ps1EmulatorBuilder {
         Ps1EmulatorBuilder::new(bios_rom)
     }
 
+    /// # Errors
+    ///
+    /// Will return an error if the BIOS ROM is invalid.
     pub fn new(bios_rom: Vec<u8>, tty_enabled: bool) -> Ps1Result<Self> {
         let memory = Memory::new(bios_rom)?;
 
@@ -81,10 +93,15 @@ impl Ps1Emulator {
         })
     }
 
+    #[must_use]
     pub fn cpu_pc(&self) -> u32 {
         self.cpu.pc()
     }
 
+    /// # Errors
+    ///
+    /// Will return an error if the EXE does not appear to be a PS1 executable based on the header.
+    #[allow(clippy::missing_panics_doc)]
     pub fn sideload_exe(&mut self, exe: &[u8]) -> Ps1Result<()> {
         if exe.len() < 0x800 || &exe[..0x008] != "PS-X EXE".as_bytes() {
             return Err(Ps1Error::InvalidExeFormat);
@@ -119,6 +136,9 @@ impl Ps1Emulator {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Will propagate any error encountered while rendering a frame.
     pub fn tick<R: Renderer>(&mut self, renderer: &mut R) -> Result<(), R::Err> {
         self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,

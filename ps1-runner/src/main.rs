@@ -53,7 +53,7 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
 }
 
 fn rgb_5_to_8(color: u16) -> u32 {
-    (255.0 * color as f64 / 31.0).round() as u32
+    (255.0 * f64::from(color) / 31.0).round() as u32
 }
 
 fn main() -> anyhow::Result<()> {

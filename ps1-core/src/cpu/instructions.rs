@@ -80,9 +80,9 @@ impl R3000 {
                 0x11 => self.bgezal(opcode),
                 _ => {
                     if !opcode.bit(16) {
-                        self.bltz(opcode)
+                        self.bltz(opcode);
                     } else {
-                        self.bgez(opcode)
+                        self.bgez(opcode);
                     }
                 }
             },

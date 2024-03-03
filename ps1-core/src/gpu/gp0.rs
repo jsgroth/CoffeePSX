@@ -391,6 +391,7 @@ impl Gpu {
         word
     }
 
+    #[allow(clippy::match_same_arms)]
     pub fn write_gp0_command(&mut self, value: u32) {
         log::trace!("GP0 command write: {value:08X}");
 
