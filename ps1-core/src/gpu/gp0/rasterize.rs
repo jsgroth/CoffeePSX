@@ -384,3 +384,23 @@ fn sample_texture(
         _ => todo!("color depth {:?}", texpage.color_depth),
     }
 }
+
+pub fn fill(fill_x: u32, fill_y: u32, width: u32, height: u32, color: Color, vram: &mut Vram) {
+    let fill_x = fill_x & 0x3F0;
+    let fill_y = fill_y & 0x1FF;
+    let width = ((width & 0x3FF) + 0xF) & !0xF;
+    let height = height & 0x1FF;
+
+    let [color_lsb, color_msb] = color.truncate_to_15_bit().to_le_bytes();
+
+    for y_offset in 0..height {
+        for x_offset in 0..width {
+            let x = (fill_x + x_offset) & 0x3FF;
+            let y = (fill_y + y_offset) & 0x1FF;
+
+            let vram_addr = (2048 * y + 2 * x) as usize;
+            vram[vram_addr] = color_lsb;
+            vram[vram_addr + 1] = color_msb;
+        }
+    }
+}

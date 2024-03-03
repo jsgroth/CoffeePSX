@@ -86,6 +86,7 @@ pub struct PolygonCommandParameters {
 
 #[derive(Debug, Clone, Copy)]
 pub enum DrawCommand {
+    Fill(Color),
     DrawPolygon(PolygonCommandParameters),
     DrawRectangle {
         size: RectangleSize,
@@ -168,6 +169,15 @@ impl Gp0CommandState {
         index: 0,
         remaining: 2,
     };
+
+    fn fill(value: u32) -> Self {
+        let color = parse_command_color(value);
+        Self::WaitingForParameters {
+            command: DrawCommand::Fill(color),
+            index: 0,
+            remaining: 2,
+        }
+    }
 
     fn draw_polygon(value: u32) -> Self {
         let gouraud_shading = value.bit(28);
@@ -390,6 +400,10 @@ impl Gpu {
                             // TODO emulate texture cache?
                             Gp0CommandState::WaitingForCommand
                         }
+                        0x02 => {
+                            // GP0($02): VRAM fill
+                            Gp0CommandState::fill(value)
+                        }
                         0x1F => {
                             // GP0($1F): Set GPU IRQ flag
                             // Apparently nothing uses this feature? Except for one game that seems
@@ -442,6 +456,11 @@ impl Gpu {
         log::trace!("Executing GP0 command {command:?}");
 
         match command {
+            DrawCommand::Fill(color) => {
+                self.vram_fill(color);
+
+                Gp0CommandState::WaitingForCommand
+            }
             DrawCommand::DrawPolygon(parameters) => {
                 if parameters.semi_transparent || parameters.raw_texture {
                     todo!("draw polygon {command:?}");
@@ -576,6 +595,17 @@ impl Gpu {
             }
             _ => todo!("GP0 settings command {command:08X}"),
         }
+    }
+
+    fn vram_fill(&mut self, color: Color) {
+        let x = self.gp0.parameters[0] & 0xFFFF;
+        let y = self.gp0.parameters[0] >> 16;
+        let width = self.gp0.parameters[1] & 0xFFFF;
+        let height = self.gp0.parameters[1] >> 16;
+
+        log::trace!("Executing VRAM fill with X={x}, Y={y}, width={width}, height={height}");
+
+        rasterize::fill(x, y, width, height, color, &mut self.vram);
     }
 
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
