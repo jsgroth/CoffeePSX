@@ -118,11 +118,11 @@ pub fn triangle(
         vertices: v,
         shading,
         semi_transparent,
-        global_semi_transparency_mode,
         texture_params,
         texture_mode,
     }: DrawPolygonParameters,
     draw_settings: &DrawSettings,
+    global_texpage: &TexturePage,
     vram: &mut Vram,
 ) {
     // Determine if the vertices are in clockwise order; if not, swap the first 2
@@ -131,10 +131,10 @@ pub fn triangle(
             v,
             shading,
             semi_transparent,
-            global_semi_transparency_mode,
             texture_params,
             texture_mode,
             draw_settings,
+            global_texpage,
             vram,
         );
         return;
@@ -181,7 +181,7 @@ pub fn triangle(
                 v,
                 shading,
                 semi_transparent,
-                global_semi_transparency_mode,
+                global_texpage.semi_transparency_mode,
                 &texture_params,
                 texture_mode,
                 draw_settings.dithering_enabled,
@@ -196,10 +196,10 @@ fn triangle_swapped_vertices(
     v: [Vertex; 3],
     shading: Shading,
     semi_transparent: bool,
-    global_semi_transparency_mode: SemiTransparencyMode,
     texture_params: TextureParameters,
     texture_mode: TextureMode,
     draw_settings: &DrawSettings,
+    global_texpage: &TexturePage,
     vram: &mut Vram,
 ) {
     let vertices = [v[1], v[0], v[2]];
@@ -223,7 +223,6 @@ fn triangle_swapped_vertices(
             vertices,
             shading,
             semi_transparent,
-            global_semi_transparency_mode,
             texture_params: TextureParameters {
                 u: texture_u,
                 v: texture_v,
@@ -232,6 +231,7 @@ fn triangle_swapped_vertices(
             texture_mode,
         },
         draw_settings,
+        global_texpage,
         vram,
     );
 }

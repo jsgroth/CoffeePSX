@@ -619,14 +619,21 @@ impl Gpu {
     }
 
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
-        let (first_params, second_params) = parse_draw_polygon_parameters(
-            command_parameters,
-            &self.gp0.parameters,
+        let (first_params, second_params) =
+            parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
+        rasterize::triangle(
+            first_params,
+            &self.gp0.draw_settings,
             &self.gp0.global_texture_page,
+            &mut self.vram,
         );
-        rasterize::triangle(first_params, &self.gp0.draw_settings, &mut self.vram);
         if let Some(second_params) = second_params {
-            rasterize::triangle(second_params, &self.gp0.draw_settings, &mut self.vram);
+            rasterize::triangle(
+                second_params,
+                &self.gp0.draw_settings,
+                &self.gp0.global_texture_page,
+                &mut self.vram,
+            );
         }
     }
 
@@ -727,7 +734,6 @@ pub struct DrawPolygonParameters {
     vertices: [Vertex; 3],
     shading: Shading,
     semi_transparent: bool,
-    global_semi_transparency_mode: SemiTransparencyMode,
     texture_params: TextureParameters,
     texture_mode: TextureMode,
 }
@@ -735,7 +741,6 @@ pub struct DrawPolygonParameters {
 fn parse_draw_polygon_parameters(
     command_parameters: PolygonCommandParameters,
     mut parameters: &[u32],
-    global_texpage: &TexturePage,
 ) -> (DrawPolygonParameters, Option<DrawPolygonParameters>) {
     let mut vertices = [Vertex::default(); 4];
     let mut colors = [Color::default(); 4];
@@ -784,7 +789,6 @@ fn parse_draw_polygon_parameters(
             Shading::Flat(colors[0])
         },
         semi_transparent: command_parameters.semi_transparent,
-        global_semi_transparency_mode: global_texpage.semi_transparency_mode,
         texture_params: TextureParameters {
             texpage: texpage.clone(),
             clut_x,
@@ -806,7 +810,6 @@ fn parse_draw_polygon_parameters(
                     Shading::Flat(colors[0])
                 },
                 semi_transparent: command_parameters.semi_transparent,
-                global_semi_transparency_mode: global_texpage.semi_transparency_mode,
                 texture_params: TextureParameters {
                     texpage,
                     clut_x,
