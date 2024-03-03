@@ -346,7 +346,7 @@ pub struct DrawSettings {
     pub check_mask_bit: bool,
 }
 
-const PARAMETERS_LEN: usize = 8;
+const PARAMETERS_LEN: usize = 11;
 
 #[derive(Debug, Clone)]
 pub struct Gp0State {

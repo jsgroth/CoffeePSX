@@ -387,6 +387,11 @@ fn interpolate_uv_coordinates(
     u: [u8; 3],
     v: [u8; 3],
 ) -> (u8, u8) {
+    let vertices = vertices.map(|vertex| VertexFloat {
+        x: vertex.x + 0.5,
+        y: vertex.y + 0.5,
+    });
+
     // Similar to Gouraud shading, interpolate the U/V coordinates between vertices by using
     // Barycentric/affine coordinates
     let (alpha, beta, gamma) = compute_affine_coordinates(p, vertices[0], vertices[1], vertices[2]);
@@ -396,8 +401,8 @@ fn interpolate_uv_coordinates(
     let v = alpha * v[0] as f64 + beta * v[1] as f64 + gamma * v[2] as f64;
 
     // Floor rather than round because rounding looks smoother than what the PS1 GPU outputs
-    let u = u.floor() as u8;
-    let v = v.floor() as u8;
+    let u = u.round() as u8;
+    let v = v.round() as u8;
 
     (u, v)
 }
@@ -450,7 +455,21 @@ fn sample_texture(
 
             u16::from_le_bytes([vram[clut_addr as usize], vram[(clut_addr + 1) as usize]])
         }
-        _ => todo!("color depth {:?}", texpage.color_depth),
+        TextureColorDepthBits::Eight => {
+            let vram_x_bytes = (2 * 64 * texpage.x_base + u32::from(u)) & 0x7FF;
+            let vram_addr = 2048 * y + vram_x_bytes;
+            let clut_index: u32 = vram[vram_addr as usize].into();
+
+            let clut_base_addr = 2048 * clut_y + 2 * 16 * clut_x;
+            let clut_addr = clut_base_addr + 2 * clut_index;
+
+            u16::from_le_bytes([vram[clut_addr as usize], vram[(clut_addr + 1) as usize]])
+        }
+        TextureColorDepthBits::Fifteen => {
+            let vram_x_pixels = (64 * texpage.x_base + u32::from(u)) & 0x3FF;
+            let vram_addr = (2048 * y + 2 * vram_x_pixels) as usize;
+            u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]])
+        }
     }
 }
 
