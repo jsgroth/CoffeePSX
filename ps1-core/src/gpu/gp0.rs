@@ -95,6 +95,7 @@ pub enum DrawCommand {
         raw_texture: bool,
         color: Color,
     },
+    VramToVramBlit,
     CpuToVramBlit,
     VramToCpuBlit,
 }
@@ -158,6 +159,12 @@ impl Default for Gp0CommandState {
 }
 
 impl Gp0CommandState {
+    const VRAM_TO_VRAM_BLIT: Self = Self::WaitingForParameters {
+        command: DrawCommand::VramToVramBlit,
+        index: 0,
+        remaining: 3,
+    };
+
     const CPU_TO_VRAM_BLIT: Self = Self::WaitingForParameters {
         command: DrawCommand::CpuToVramBlit,
         index: 0,
@@ -415,6 +422,7 @@ impl Gpu {
                 }
                 1 => Gp0CommandState::draw_polygon(value),
                 3 => Gp0CommandState::draw_rectangle(value),
+                4 => Gp0CommandState::VRAM_TO_VRAM_BLIT,
                 5 => Gp0CommandState::CPU_TO_VRAM_BLIT,
                 6 => Gp0CommandState::VRAM_TO_CPU_BLIT,
                 7 => {
@@ -482,6 +490,11 @@ impl Gpu {
                 }
 
                 self.draw_pixel(color);
+
+                Gp0CommandState::WaitingForCommand
+            }
+            DrawCommand::VramToVramBlit => {
+                self.execute_vram_copy();
 
                 Gp0CommandState::WaitingForCommand
             }
@@ -626,6 +639,36 @@ impl Gpu {
         let [lsb, msb] = color.truncate_to_15_bit().to_le_bytes();
         self.vram[vram_addr] = lsb;
         self.vram[vram_addr + 1] = msb;
+    }
+
+    fn execute_vram_copy(&mut self) {
+        let source_x_base = self.gp0.parameters[0] & 0x3FF;
+        let mut source_y = (self.gp0.parameters[0] >> 16) & 0x1FF;
+        let dest_x_base = self.gp0.parameters[1] & 0x3FF;
+        let mut dest_y = (self.gp0.parameters[1] >> 16) & 0x1FF;
+        let width = (self.gp0.parameters[2].wrapping_sub(1) & 0x3FF) + 1;
+        let height = ((self.gp0.parameters[2] >> 16).wrapping_sub(1) & 0x1FF) + 1;
+
+        log::trace!("Executing VRAM copy from X={source_x_base} / Y={source_y} to X={dest_x_base} / Y={dest_y}, width={width} and height={height}");
+
+        for _ in 0..height {
+            let mut source_x = source_x_base;
+            let mut dest_x = dest_x_base;
+
+            for _ in 0..width {
+                let source_addr = (2048 * source_y + 2 * source_x) as usize;
+                let dest_addr = (2048 * dest_y + 2 * dest_x) as usize;
+
+                self.vram[dest_addr] = self.vram[source_addr];
+                self.vram[dest_addr + 1] = self.vram[source_addr + 1];
+
+                source_x = source_x.wrapping_add(1) & 0x3FF;
+                dest_x = dest_x.wrapping_add(1) & 0x3FF;
+            }
+
+            source_y = source_y.wrapping_add(1) & 0x1FF;
+            dest_y = dest_y.wrapping_add(1) & 0x1FF;
+        }
     }
 
     fn receive_vram_word_from_cpu(
