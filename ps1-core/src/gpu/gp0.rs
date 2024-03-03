@@ -470,10 +470,6 @@ impl Gpu {
                 Gp0CommandState::WaitingForCommand
             }
             DrawCommand::DrawPolygon(parameters) => {
-                if parameters.semi_transparent || parameters.raw_texture {
-                    todo!("draw polygon {command:?}");
-                }
-
                 self.draw_polygon(parameters);
 
                 Gp0CommandState::WaitingForCommand
@@ -622,8 +618,11 @@ impl Gpu {
     }
 
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
-        let (first_params, second_params) =
-            parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
+        let (first_params, second_params) = parse_draw_polygon_parameters(
+            command_parameters,
+            &self.gp0.parameters,
+            &self.gp0.global_texture_page,
+        );
         rasterize::triangle(first_params, &self.gp0.draw_settings, &mut self.vram);
         if let Some(second_params) = second_params {
             rasterize::triangle(second_params, &self.gp0.draw_settings, &mut self.vram);
@@ -726,6 +725,8 @@ fn parse_signed_11_bit(word: u32) -> i32 {
 pub struct DrawPolygonParameters {
     vertices: [Vertex; 3],
     shading: Shading,
+    semi_transparent: bool,
+    global_semi_transparency_mode: SemiTransparencyMode,
     texture_params: TextureParameters,
     texture_mode: TextureMode,
 }
@@ -733,6 +734,7 @@ pub struct DrawPolygonParameters {
 fn parse_draw_polygon_parameters(
     command_parameters: PolygonCommandParameters,
     mut parameters: &[u32],
+    global_texpage: &TexturePage,
 ) -> (DrawPolygonParameters, Option<DrawPolygonParameters>) {
     let mut vertices = [Vertex::default(); 4];
     let mut colors = [Color::default(); 4];
@@ -780,13 +782,14 @@ fn parse_draw_polygon_parameters(
         } else {
             Shading::Flat(colors[0])
         },
+        semi_transparent: command_parameters.semi_transparent,
+        global_semi_transparency_mode: global_texpage.semi_transparency_mode,
         texture_params: TextureParameters {
             texpage: texpage.clone(),
             clut_x,
             clut_y,
             u: [u[0], u[1], u[2]],
             v: [v[0], v[1], v[2]],
-            semi_transparent: command_parameters.semi_transparent,
         },
         texture_mode,
     };
@@ -801,13 +804,14 @@ fn parse_draw_polygon_parameters(
                 } else {
                     Shading::Flat(colors[0])
                 },
+                semi_transparent: command_parameters.semi_transparent,
+                global_semi_transparency_mode: global_texpage.semi_transparency_mode,
                 texture_params: TextureParameters {
                     texpage,
                     clut_x,
                     clut_y,
                     u: [u[1], u[2], u[3]],
                     v: [v[1], v[2], v[3]],
-                    semi_transparent: command_parameters.semi_transparent,
                 },
                 texture_mode,
             };

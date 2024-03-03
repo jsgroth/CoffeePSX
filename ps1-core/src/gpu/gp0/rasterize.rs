@@ -1,6 +1,6 @@
 use crate::gpu::gp0::{
-    Color, DrawPolygonParameters, DrawSettings, PolygonCommandParameters, TextureColorDepthBits,
-    TexturePage, Vertex,
+    Color, DrawPolygonParameters, DrawSettings, PolygonCommandParameters, SemiTransparencyMode,
+    TextureColorDepthBits, TexturePage, Vertex,
 };
 use crate::gpu::Vram;
 use std::cmp;
@@ -28,11 +28,50 @@ impl Vertex {
 }
 
 impl Color {
+    fn from_15_bit(color: u16) -> Self {
+        let r = color & 0x1F;
+        let g = (color >> 5) & 0x1F;
+        let b = (color >> 10) & 0x1F;
+
+        let r = (r as f64 * 255.0 / 31.0).round() as u8;
+        let g = (g as f64 * 255.0 / 31.0).round() as u8;
+        let b = (b as f64 * 255.0 / 31.0).round() as u8;
+
+        Self { r, g, b }
+    }
+
     fn dither(self, dither_value: i8) -> Self {
         Self {
             r: self.r.saturating_add_signed(dither_value),
             g: self.g.saturating_add_signed(dither_value),
             b: self.b.saturating_add_signed(dither_value),
+        }
+    }
+}
+
+impl SemiTransparencyMode {
+    fn apply(self, back: Color, front: Color) -> Color {
+        match self {
+            Self::Average => Color {
+                r: ((u16::from(back.r) + u16::from(front.r)) / 2) as u8,
+                g: ((u16::from(back.g) + u16::from(front.g)) / 2) as u8,
+                b: ((u16::from(back.b) + u16::from(front.b)) / 2) as u8,
+            },
+            Self::Add => Color {
+                r: (u16::from(back.r) + u16::from(front.r)).clamp(0, 255) as u8,
+                g: (u16::from(back.g) + u16::from(front.g)).clamp(0, 255) as u8,
+                b: (u16::from(back.b) + u16::from(front.b)).clamp(0, 255) as u8,
+            },
+            Self::Subtract => Color {
+                r: (i16::from(back.r) - i16::from(front.r)).clamp(0, 255) as u8,
+                g: (i16::from(back.g) - i16::from(front.g)).clamp(0, 255) as u8,
+                b: (i16::from(back.b) - i16::from(front.b)).clamp(0, 255) as u8,
+            },
+            Self::AddQuarter => Color {
+                r: (u16::from(back.r) + u16::from(front.r / 4)).clamp(0, 255) as u8,
+                g: (u16::from(back.g) + u16::from(front.g / 4)).clamp(0, 255) as u8,
+                b: (u16::from(back.b) + u16::from(front.b / 4)).clamp(0, 255) as u8,
+            },
         }
     }
 }
@@ -50,7 +89,6 @@ pub struct TextureParameters {
     pub clut_y: u16,
     pub u: [u8; 3],
     pub v: [u8; 3],
-    pub semi_transparent: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +112,8 @@ pub fn triangle(
     DrawPolygonParameters {
         vertices: v,
         shading,
+        semi_transparent,
+        global_semi_transparency_mode,
         texture_params,
         texture_mode,
     }: DrawPolygonParameters,
@@ -85,6 +125,8 @@ pub fn triangle(
         triangle_swapped_vertices(
             v,
             shading,
+            semi_transparent,
+            global_semi_transparency_mode,
             texture_params,
             texture_mode,
             draw_settings,
@@ -109,6 +151,9 @@ pub fn triangle(
         y: vertex.y + y_offset,
     });
 
+    log::trace!("Triangle vertices: {v:?}");
+    log::trace!("Bounding box: ({draw_min_x}, {draw_min_y}) to ({draw_max_x}, {draw_max_y}");
+
     // Compute bounding box, clamped to display area
     let min_x =
         cmp::min(v[0].x, cmp::min(v[1].x, v[2].x)).clamp(draw_min_x as i32, draw_max_x as i32);
@@ -130,6 +175,8 @@ pub fn triangle(
                 py,
                 v,
                 shading,
+                semi_transparent,
+                global_semi_transparency_mode,
                 &texture_params,
                 texture_mode,
                 draw_settings.dithering_enabled,
@@ -142,6 +189,8 @@ pub fn triangle(
 fn triangle_swapped_vertices(
     v: [Vertex; 3],
     shading: Shading,
+    semi_transparent: bool,
+    global_semi_transparency_mode: SemiTransparencyMode,
     texture_params: TextureParameters,
     texture_mode: TextureMode,
     draw_settings: &DrawSettings,
@@ -167,6 +216,8 @@ fn triangle_swapped_vertices(
         DrawPolygonParameters {
             vertices,
             shading,
+            semi_transparent,
+            global_semi_transparency_mode,
             texture_params: TextureParameters {
                 u: texture_u,
                 v: texture_v,
@@ -184,6 +235,8 @@ fn rasterize_pixel(
     py: i32,
     v: [VertexFloat; 3],
     shading: Shading,
+    semi_transparent: bool,
+    global_semi_transparency_mode: SemiTransparencyMode,
     texture_params: &TextureParameters,
     texture_mode: TextureMode,
     dithering: bool,
@@ -279,19 +332,35 @@ fn rasterize_pixel(
         }
     };
 
+    let vram_addr = (2048 * py + 2 * px) as usize;
+    let masked_color = if semi_transparent && (texture_mode == TextureMode::None || mask_bit) {
+        let existing_pixel = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
+        let existing_color = Color::from_15_bit(existing_pixel);
+
+        let semi_transparency_mode = match texture_mode {
+            TextureMode::None => global_semi_transparency_mode,
+            TextureMode::Raw | TextureMode::Modulated => {
+                texture_params.texpage.semi_transparency_mode
+            }
+        };
+
+        semi_transparency_mode.apply(existing_color, textured_color)
+    } else {
+        textured_color
+    };
+
     // Dithering is applied if the dither flag is set and either Gouraud shading or texture
     // modulation is used
     let dithered_color = if dithering
         && (matches!(shading, Shading::Gouraud(..)) || texture_mode == TextureMode::Modulated)
     {
         let dither_value = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
-        textured_color.dither(dither_value)
+        masked_color.dither(dither_value)
     } else {
-        textured_color
+        masked_color
     };
 
     let [color_lsb, color_msb] = dithered_color.truncate_to_15_bit().to_le_bytes();
-    let vram_addr = (2048 * py + 2 * px) as usize;
     vram[vram_addr] = color_lsb;
     vram[vram_addr + 1] = color_msb | (u8::from(mask_bit) << 7);
 }
