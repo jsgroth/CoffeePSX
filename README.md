@@ -8,3 +8,5 @@ To run a PS1 EXE (sideloaded after the BIOS is initialized):
 ```
 cargo run --release -- -b <bios_path> -e <exe_path>
 ```
+
+The `-t` flag enables TTY output, printed to stdout.
