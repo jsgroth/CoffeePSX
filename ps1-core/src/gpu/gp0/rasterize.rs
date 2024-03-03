@@ -52,27 +52,30 @@ impl Color {
 impl SemiTransparencyMode {
     fn apply(self, back: Color, front: Color) -> Color {
         match self {
-            Self::Average => Color {
-                r: ((u16::from(back.r) + u16::from(front.r)) / 2) as u8,
-                g: ((u16::from(back.g) + u16::from(front.g)) / 2) as u8,
-                b: ((u16::from(back.b) + u16::from(front.b)) / 2) as u8,
-            },
-            Self::Add => Color {
-                r: (u16::from(back.r) + u16::from(front.r)).clamp(0, 255) as u8,
-                g: (u16::from(back.g) + u16::from(front.g)).clamp(0, 255) as u8,
-                b: (u16::from(back.b) + u16::from(front.b)).clamp(0, 255) as u8,
-            },
-            Self::Subtract => Color {
-                r: (i16::from(back.r) - i16::from(front.r)).clamp(0, 255) as u8,
-                g: (i16::from(back.g) - i16::from(front.g)).clamp(0, 255) as u8,
-                b: (i16::from(back.b) - i16::from(front.b)).clamp(0, 255) as u8,
-            },
-            Self::AddQuarter => Color {
-                r: (u16::from(back.r) + u16::from(front.r / 4)).clamp(0, 255) as u8,
-                g: (u16::from(back.g) + u16::from(front.g / 4)).clamp(0, 255) as u8,
-                b: (u16::from(back.b) + u16::from(front.b / 4)).clamp(0, 255) as u8,
-            },
+            Self::Average => apply_semi_transparency(back, front, |b, f| {
+                ((u16::from(b) + u16::from(f)) / 2) as u8
+            }),
+            Self::Add => apply_semi_transparency(back, front, |b, f| {
+                cmp::min(255, u16::from(b) + u16::from(f)) as u8
+            }),
+            Self::Subtract => apply_semi_transparency(back, front, |b, f| {
+                cmp::max(0, i16::from(b) - i16::from(f)) as u8
+            }),
+            Self::AddQuarter => apply_semi_transparency(back, front, |b, f| {
+                cmp::min(255, u16::from(b) + u16::from(f / 4)) as u8
+            }),
         }
+    }
+}
+
+fn apply_semi_transparency<F>(back: Color, front: Color, op: F) -> Color
+where
+    F: Fn(u8, u8) -> u8,
+{
+    Color {
+        r: op(back.r, front.r),
+        g: op(back.g, front.g),
+        b: op(back.b, front.b),
     }
 }
 
