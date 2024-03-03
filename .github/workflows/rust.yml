@@ -1,0 +1,41 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install latest stable Rust toolchain
+      run: |
+        rustup update
+
+    - name: Install latest nightly Rust toolchain
+      run: |
+        rustup toolchain add nightly --component rustfmt --component rust-src
+
+    - name: Check formatting
+      run: |
+        cargo +nightly fmt --check
+
+    - name: Build
+      run: |
+        cargo build
+
+    - name: Check Clippy warnings
+      run: |
+        cargo clippy -- -D warnings
+
+    - name: Run tests
+      run: |
+        cargo test
