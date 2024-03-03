@@ -1,9 +1,9 @@
 use crate::gpu::gp0::{
-    Color, DrawPolygonParameters, PolygonCommandParameters, TextureColorDepthBits, TexturePage,
-    Vertex,
+    Color, DrawPolygonParameters, DrawSettings, PolygonCommandParameters, TextureColorDepthBits,
+    TexturePage, Vertex,
 };
-use crate::gpu::{Gpu, Vram};
-use std::{cmp, mem};
+use crate::gpu::Vram;
+use std::cmp;
 
 const DITHER_TABLE: &[[i8; 4]; 4] = &[
     [-4, 0, -3, 1],
@@ -23,6 +23,16 @@ impl Vertex {
         VertexFloat {
             x: self.x as f64,
             y: self.y as f64,
+        }
+    }
+}
+
+impl Color {
+    fn dither(self, dither_value: i8) -> Self {
+        Self {
+            r: self.r.saturating_add_signed(dither_value),
+            g: self.g.saturating_add_signed(dither_value),
+            b: self.b.saturating_add_signed(dither_value),
         }
     }
 }
@@ -60,199 +70,267 @@ impl TextureMode {
     }
 }
 
-impl Gpu {
-    // TODO rewrite this, code is terrible
-    pub(super) fn rasterize_triangle(
-        &mut self,
-        DrawPolygonParameters {
-            vertices,
+pub fn triangle(
+    DrawPolygonParameters {
+        vertices: v,
+        shading,
+        texture_params,
+        texture_mode,
+    }: DrawPolygonParameters,
+    draw_settings: &DrawSettings,
+    vram: &mut Vram,
+) {
+    // Determine if the vertices are in clockwise order; if not, swap the first 2
+    if cross_product_z(v[0].to_float(), v[1].to_float(), v[2].to_float()) < 0.0 {
+        triangle_swapped_vertices(
+            v,
             shading,
             texture_params,
             texture_mode,
-        }: DrawPolygonParameters,
-    ) {
-        let (draw_min_x, draw_min_y) = self.gp0.draw_settings.draw_area_top_left;
-        let (draw_max_x, draw_max_y) = self.gp0.draw_settings.draw_area_bottom_right;
+            draw_settings,
+            vram,
+        );
+        return;
+    }
 
-        if draw_min_x > draw_max_x || draw_min_y > draw_max_y {
+    let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
+    let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
+
+    if draw_min_x > draw_max_x || draw_min_y > draw_max_y {
+        // Invalid drawing area; do nothing
+        return;
+    }
+
+    let (x_offset, y_offset) = draw_settings.draw_offset;
+
+    // Apply drawing offset to vertices
+    let v = v.map(|vertex| Vertex {
+        x: vertex.x + x_offset,
+        y: vertex.y + y_offset,
+    });
+
+    // Compute bounding box, clamped to display area
+    let min_x =
+        cmp::min(v[0].x, cmp::min(v[1].x, v[2].x)).clamp(draw_min_x as i32, draw_max_x as i32);
+    let max_x =
+        cmp::max(v[0].x, cmp::max(v[1].x, v[2].x)).clamp(draw_min_x as i32, draw_max_x as i32);
+    let min_y =
+        cmp::min(v[0].y, cmp::min(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
+    let max_y =
+        cmp::max(v[0].y, cmp::max(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
+
+    // Operate in floating-point from here on
+    let v = v.map(|vertex| vertex.to_float());
+
+    // Iterate over every pixel in the bounding box to determine which ones to rasterize
+    for py in min_y..=max_y {
+        for px in min_x..=max_x {
+            rasterize_pixel(
+                px,
+                py,
+                v,
+                shading,
+                &texture_params,
+                texture_mode,
+                draw_settings.dithering_enabled,
+                vram,
+            );
+        }
+    }
+}
+
+fn triangle_swapped_vertices(
+    v: [Vertex; 3],
+    shading: Shading,
+    texture_params: TextureParameters,
+    texture_mode: TextureMode,
+    draw_settings: &DrawSettings,
+    vram: &mut Vram,
+) {
+    let vertices = [v[1], v[0], v[2]];
+    let texture_u = [
+        texture_params.u[1],
+        texture_params.u[0],
+        texture_params.u[2],
+    ];
+    let texture_v = [
+        texture_params.v[1],
+        texture_params.v[0],
+        texture_params.v[2],
+    ];
+    let shading = match shading {
+        Shading::Flat(color) => Shading::Flat(color),
+        Shading::Gouraud(color0, color1, color2) => Shading::Gouraud(color1, color0, color2),
+    };
+
+    triangle(
+        DrawPolygonParameters {
+            vertices,
+            shading,
+            texture_params: TextureParameters {
+                u: texture_u,
+                v: texture_v,
+                ..texture_params
+            },
+            texture_mode,
+        },
+        draw_settings,
+        vram,
+    );
+}
+
+fn rasterize_pixel(
+    px: i32,
+    py: i32,
+    v: [VertexFloat; 3],
+    shading: Shading,
+    texture_params: &TextureParameters,
+    texture_mode: TextureMode,
+    dithering: bool,
+    vram: &mut Vram,
+) {
+    // The sampling point is in the center of the pixel, so add 0.5 to both coordinates
+    let p = VertexFloat {
+        x: px as f64 + 0.5,
+        y: py as f64 + 0.5,
+    };
+
+    // A given point is contained within the triangle if the cross-product of v0->p and
+    // v0->v1 is non-negative for each edge v0->v1
+    for edge in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+        let cpz = cross_product_z(edge.0, edge.1, p);
+        if cpz < 0.0 {
             return;
         }
 
-        let (x_offset, y_offset) = self.gp0.draw_settings.draw_offset;
+        // If the cross product is 0, the point is collinear with these two vertices.
+        // The PS1 GPU does not draw edges on the bottom of the triangle when this happens,
+        // nor does it draw a vertical right edge
+        if cpz.abs() < 1e-3 {
+            // Since the vertices are clockwise, decreasing X means this edge is on the
+            // bottom of the triangle.
+            if edge.1.x < edge.0.x {
+                return;
+            }
 
-        let [v0, v1, v2] = vertices;
-        let v0 = Vertex {
-            x: v0.x + x_offset,
-            y: v0.y + y_offset,
-        };
-        let v1 = Vertex {
-            x: v1.x + x_offset,
-            y: v1.y + y_offset,
-        };
-        let v2 = Vertex {
-            x: v2.x + x_offset,
-            y: v2.y + y_offset,
-        };
-
-        let min_x =
-            cmp::min(v0.x, cmp::min(v1.x, v2.x)).clamp(draw_min_x as i32, draw_max_x as i32);
-        let max_x =
-            cmp::max(v0.x, cmp::max(v1.x, v2.x)).clamp(draw_min_x as i32, draw_max_x as i32);
-        let min_y =
-            cmp::min(v0.y, cmp::min(v1.y, v2.y)).clamp(draw_min_y as i32, draw_max_y as i32);
-        let max_y =
-            cmp::max(v0.y, cmp::max(v1.y, v2.y)).clamp(draw_min_y as i32, draw_max_y as i32);
-
-        log::trace!("Vertices: {v0:?}, {v1:?}, {v2:?}");
-        log::trace!("Shading: {shading:?}");
-        log::trace!("Texpage: {:?}", texture_params.texpage);
-        log::trace!(
-            "U/V coordinates: {:?} {:?}",
-            texture_params.u,
-            texture_params.v
-        );
-        log::trace!("Bounding box: X=[{min_x}, {max_x}], Y=[{min_y}, {max_y}]");
-
-        let mut v0 = v0.to_float();
-        let mut v1 = v1.to_float();
-        let v2 = v2.to_float();
-
-        let mut tex_u = texture_params.u;
-        let mut tex_v = texture_params.v;
-
-        // Ensure vertices are ordered correctly; the PS1 GPU does not cull based on facing
-        let mut swapped = false;
-        if cross_product_z(v0, v1, v2) < 0.0 {
-            mem::swap(&mut v0, &mut v1);
-            tex_u.swap(0, 1);
-            tex_v.swap(0, 1);
-            swapped = true;
-        }
-
-        for py in min_y..=max_y {
-            'x: for px in min_x..=max_x {
-                // The sampling point is in the center of the pixel (add 0.5 to both coordinates)
-                let p = VertexFloat {
-                    x: px as f64 + 0.5,
-                    y: py as f64 + 0.5,
-                };
-
-                for (edge_0, edge_1) in [(v0, v1), (v1, v2), (v2, v0)] {
-                    let cpz = cross_product_z(edge_0, edge_1, p);
-                    if cpz < 0.0 {
-                        continue 'x;
-                    }
-
-                    if cpz.abs() < 1e-3 {
-                        if (edge_0.x - edge_1.x).abs() < 1e-3 && edge_1.y > edge_0.y {
-                            continue 'x;
-                        }
-
-                        if edge_1.x < edge_0.x {
-                            continue 'x;
-                        }
-                    }
-                }
-
-                let mut shading_color = match shading {
-                    Shading::Flat(color) => color,
-                    Shading::Gouraud(mut color0, mut color1, color2) => {
-                        if swapped {
-                            mem::swap(&mut color0, &mut color1);
-                        }
-
-                        let (alpha, beta, gamma) = compute_affine_coordinates(p, v0, v1, v2);
-                        let r = alpha * color0.r as f64
-                            + beta * color1.r as f64
-                            + gamma * color2.r as f64;
-                        let g = alpha * color0.g as f64
-                            + beta * color1.g as f64
-                            + gamma * color2.g as f64;
-                        let b = alpha * color0.b as f64
-                            + beta * color1.b as f64
-                            + gamma * color2.b as f64;
-
-                        let color = Color {
-                            r: r.round() as u8,
-                            g: g.round() as u8,
-                            b: b.round() as u8,
-                        };
-
-                        color
-                    }
-                };
-
-                if self.gp0.draw_settings.dithering_enabled
-                    && (matches!(shading, Shading::Gouraud(..))
-                        || texture_mode == TextureMode::Modulated)
-                {
-                    let dither = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
-                    shading_color.r = shading_color.r.saturating_add_signed(dither);
-                    shading_color.g = shading_color.g.saturating_add_signed(dither);
-                    shading_color.b = shading_color.b.saturating_add_signed(dither);
-                }
-
-                let truncated_color = match texture_mode {
-                    TextureMode::None => shading_color.truncate_to_15_bit(),
-                    TextureMode::Raw | TextureMode::Modulated => {
-                        let (alpha, beta, gamma) = compute_affine_coordinates(p, v0, v1, v2);
-
-                        let u = alpha * tex_u[0] as f64
-                            + beta * tex_u[1] as f64
-                            + gamma * tex_u[2] as f64;
-
-                        let v = alpha * tex_v[0] as f64
-                            + beta * tex_v[1] as f64
-                            + gamma * tex_v[2] as f64;
-
-                        let u = u.floor() as u8;
-                        let v = v.floor() as u8;
-
-                        let tex_pixel = sample_texture(
-                            &self.vram,
-                            &texture_params.texpage,
-                            texture_params.clut_x.into(),
-                            texture_params.clut_y.into(),
-                            u.into(),
-                            v.into(),
-                        );
-                        if tex_pixel == 0 {
-                            continue;
-                        }
-
-                        let tex_r = tex_pixel & 0x1F;
-                        let tex_g = (tex_pixel >> 5) & 0x1F;
-                        let tex_b = (tex_pixel >> 10) & 0x1F;
-
-                        match texture_mode {
-                            TextureMode::Raw => tex_r | (tex_g << 5) | (tex_b << 10),
-                            TextureMode::Modulated => {
-                                let r = tex_r as f64 * shading_color.r as f64 / 128.0;
-                                let g = tex_g as f64 * shading_color.g as f64 / 128.0;
-                                let b = tex_b as f64 * shading_color.b as f64 / 128.0;
-
-                                let r = r.round().clamp(0.0, 31.0) as u16;
-                                let g = g.round().clamp(0.0, 31.0) as u16;
-                                let b = b.round().clamp(0.0, 31.0) as u16;
-
-                                r | (g << 5) | (b << 10)
-                            }
-                            TextureMode::None => unreachable!(),
-                        }
-                    }
-                };
-
-                if texture_mode != TextureMode::None && truncated_color == 0 {
-                    continue;
-                }
-
-                let [color_lsb, color_msb] = truncated_color.to_le_bytes();
-                let vram_addr = (2048 * py + 2 * px) as usize;
-                self.vram[vram_addr] = color_lsb;
-                self.vram[vram_addr + 1] = color_msb;
+            // If the X values are equal and Y is increasing, this is a vertical right edge
+            if (edge.1.x - edge.0.x) < 1e-3 && edge.1.y > edge.0.y {
+                return;
             }
         }
     }
+
+    let shading_color = match shading {
+        Shading::Flat(color) => color,
+        Shading::Gouraud(color0, color1, color2) => {
+            apply_gouraud_shading(p, v, [color0, color1, color2])
+        }
+    };
+
+    let (textured_color, mask_bit) = match texture_mode {
+        TextureMode::None => (shading_color, false),
+        TextureMode::Raw | TextureMode::Modulated => {
+            let (tex_u, tex_v) =
+                interpolate_uv_coordinates(p, v, texture_params.u, texture_params.v);
+
+            let texture_pixel = sample_texture(
+                vram,
+                &texture_params.texpage,
+                texture_params.clut_x.into(),
+                texture_params.clut_y.into(),
+                tex_u.into(),
+                tex_v.into(),
+            );
+            if texture_pixel == 0x0000 {
+                // Pixel values of $0000 are fully transparent and are not written to VRAM
+                return;
+            }
+
+            // TODO semi-transparency / mask bit
+
+            let r = texture_pixel & 0x1F;
+            let g = (texture_pixel >> 5) & 0x1F;
+            let b = (texture_pixel >> 10) & 0x1F;
+
+            let texture_color = match texture_mode {
+                TextureMode::Raw => Color {
+                    r: (r as f64 * 255.0 / 31.0).round() as u8,
+                    g: (g as f64 * 255.0 / 31.0).round() as u8,
+                    b: (b as f64 * 255.0 / 31.0).round() as u8,
+                },
+                TextureMode::Modulated => {
+                    // Apply modulation: multiply the texture color by the shading color / 128
+                    let r = (r as f64 * 255.0 / 31.0 * shading_color.r as f64 / 128.0)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+                    let g = (g as f64 * 255.0 / 31.0 * shading_color.g as f64 / 128.0)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+                    let b = (b as f64 * 255.0 / 31.0 * shading_color.b as f64 / 128.0)
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+
+                    Color { r, g, b }
+                }
+                TextureMode::None => unreachable!("nested match expressions"),
+            };
+
+            (texture_color, texture_pixel & 0x8000 != 0)
+        }
+    };
+
+    // Dithering is applied if the dither flag is set and either Gouraud shading or texture
+    // modulation is used
+    let dithered_color = if dithering
+        && (matches!(shading, Shading::Gouraud(..)) || texture_mode == TextureMode::Modulated)
+    {
+        let dither_value = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
+        textured_color.dither(dither_value)
+    } else {
+        textured_color
+    };
+
+    let [color_lsb, color_msb] = dithered_color.truncate_to_15_bit().to_le_bytes();
+    let vram_addr = (2048 * py + 2 * px) as usize;
+    vram[vram_addr] = color_lsb;
+    vram[vram_addr + 1] = color_msb | (u8::from(mask_bit) << 7);
+}
+
+fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]) -> Color {
+    // Interpolate between the color of each vertex using Barycentric/affine coordinates
+    let (alpha, beta, gamma) = compute_affine_coordinates(p, v[0], v[1], v[2]);
+    let r = alpha * colors[0].r as f64 + beta * colors[1].r as f64 + gamma * colors[2].r as f64;
+    let g = alpha * colors[0].g as f64 + beta * colors[1].g as f64 + gamma * colors[2].g as f64;
+    let b = alpha * colors[0].b as f64 + beta * colors[1].b as f64 + gamma * colors[2].b as f64;
+
+    let color = Color {
+        r: r.round() as u8,
+        g: g.round() as u8,
+        b: b.round() as u8,
+    };
+
+    color
+}
+
+fn interpolate_uv_coordinates(
+    p: VertexFloat,
+    vertices: [VertexFloat; 3],
+    u: [u8; 3],
+    v: [u8; 3],
+) -> (u8, u8) {
+    // Similar to Gouraud shading, interpolate the U/V coordinates between vertices by using
+    // Barycentric/affine coordinates
+    let (alpha, beta, gamma) = compute_affine_coordinates(p, vertices[0], vertices[1], vertices[2]);
+
+    let u = alpha * u[0] as f64 + beta * u[1] as f64 + gamma * u[2] as f64;
+
+    let v = alpha * v[0] as f64 + beta * v[1] as f64 + gamma * v[2] as f64;
+
+    // Floor rather than round because rounding looks smoother than what the PS1 GPU outputs
+    let u = u.floor() as u8;
+    let v = v.floor() as u8;
+
+    (u, v)
 }
 
 // Z component of the cross product between v0->v1 and v0->v2

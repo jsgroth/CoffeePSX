@@ -581,9 +581,9 @@ impl Gpu {
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
         let (first_params, second_params) =
             parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
-        self.rasterize_triangle(first_params);
+        rasterize::triangle(first_params, &self.gp0.draw_settings, &mut self.vram);
         if let Some(second_params) = second_params {
-            self.rasterize_triangle(second_params);
+            rasterize::triangle(second_params, &self.gp0.draw_settings, &mut self.vram);
         }
     }
 
