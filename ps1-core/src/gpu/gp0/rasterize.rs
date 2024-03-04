@@ -346,20 +346,7 @@ fn rasterize_pixel(
 
             let texture_color = match texture_mode {
                 TextureMode::Raw => raw_texture_color,
-                TextureMode::Modulated => {
-                    // Apply modulation: multiply the texture color by the shading color / 128
-                    let r = (f64::from(raw_texture_color.r) * f64::from(shading_color.r) / 128.0)
-                        .round()
-                        .clamp(0.0, 255.0) as u8;
-                    let g = (f64::from(raw_texture_color.g) * f64::from(shading_color.g) / 128.0)
-                        .round()
-                        .clamp(0.0, 255.0) as u8;
-                    let b = (f64::from(raw_texture_color.b) * f64::from(shading_color.b) / 128.0)
-                        .round()
-                        .clamp(0.0, 255.0) as u8;
-
-                    Color { r, g, b }
-                }
+                TextureMode::Modulated => modulate_color(raw_texture_color, shading_color),
                 TextureMode::None => unreachable!("nested match expressions"),
             };
 
@@ -397,6 +384,18 @@ fn rasterize_pixel(
     let [color_lsb, color_msb] = dithered_color.truncate_to_15_bit().to_le_bytes();
     vram[vram_addr] = color_lsb;
     vram[vram_addr + 1] = color_msb | (u8::from(mask_bit || force_mask_bit) << 7);
+}
+
+fn modulate(texture_color: u8, shading_color: u8) -> u8 {
+    (f64::from(texture_color) * f64::from(shading_color) / 128.0).clamp(0.0, 255.0) as u8
+}
+
+fn modulate_color(texture_color: Color, shading_color: Color) -> Color {
+    Color {
+        r: modulate(texture_color.r, shading_color.r),
+        g: modulate(texture_color.g, shading_color.g),
+        b: modulate(texture_color.b, shading_color.b),
+    }
 }
 
 fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]) -> Color {
@@ -537,7 +536,7 @@ pub fn rectangle(
         height,
         color,
         semi_transparent,
-        texture_params: _texture_params,
+        texture_params,
         texture_mode,
     }: DrawRectangleParameters,
     draw_settings: &DrawSettings,
@@ -565,23 +564,32 @@ pub fn rectangle(
         return;
     }
 
+    let args = RectangleArgs {
+        x_range: (min_x as u32, max_x as u32),
+        y_range: (min_y as u32, max_y as u32),
+        color,
+        semi_transparent,
+        semi_transparency_mode: global_texpage.semi_transparency_mode,
+        force_mask_bit: draw_settings.force_mask_bit,
+        check_mask_bit: draw_settings.check_mask_bit,
+    };
     match texture_mode {
-        TextureMode::None => rectangle_solid_color(
-            (min_x as u32, max_x as u32),
-            (min_y as u32, max_y as u32),
-            color,
-            semi_transparent,
-            global_texpage.semi_transparency_mode,
-            draw_settings.force_mask_bit,
-            draw_settings.check_mask_bit,
+        TextureMode::None => rectangle_solid_color(args, vram),
+        TextureMode::Raw | TextureMode::Modulated => rectangle_textured(
+            args,
+            RectangleTextureParameters {
+                u: texture_params.u.wrapping_add((min_x - position.x) as u8),
+                v: texture_params.v.wrapping_add((min_y - position.y) as u8),
+                ..texture_params
+            },
+            global_texpage,
+            texture_mode,
             vram,
         ),
-        _ => todo!("draw rectangle with texture mode {texture_mode:?}"),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn rectangle_solid_color(
+struct RectangleArgs {
     x_range: (u32, u32),
     y_range: (u32, u32),
     color: Color,
@@ -589,6 +597,18 @@ fn rectangle_solid_color(
     semi_transparency_mode: SemiTransparencyMode,
     force_mask_bit: bool,
     check_mask_bit: bool,
+}
+
+fn rectangle_solid_color(
+    RectangleArgs {
+        x_range,
+        y_range,
+        color,
+        semi_transparent,
+        semi_transparency_mode,
+        force_mask_bit,
+        check_mask_bit,
+    }: RectangleArgs,
     vram: &mut Vram,
 ) {
     for y in y_range.0..=y_range.1 {
@@ -609,6 +629,66 @@ fn rectangle_solid_color(
             let [color_lsb, color_msb] = color.truncate_to_15_bit().to_le_bytes();
             vram[vram_addr] = color_lsb;
             vram[vram_addr + 1] = color_msb | (u8::from(force_mask_bit) << 7);
+        }
+    }
+}
+
+fn rectangle_textured(
+    RectangleArgs {
+        x_range,
+        y_range,
+        color: rectangle_color,
+        semi_transparent,
+        semi_transparency_mode,
+        force_mask_bit,
+        check_mask_bit,
+    }: RectangleArgs,
+    texture_params: RectangleTextureParameters,
+    global_texpage: TexturePage,
+    texture_mode: TextureMode,
+    vram: &mut Vram,
+) {
+    for y in y_range.0..=y_range.1 {
+        let v = texture_params.v.wrapping_add((y - y_range.0) as u8);
+        for x in x_range.0..=x_range.1 {
+            let vram_addr = (2048 * y + 2 * x) as usize;
+            if check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+                continue;
+            }
+
+            let u = texture_params.u.wrapping_add((x - x_range.0) as u8);
+            let texture_pixel = sample_texture(
+                vram,
+                &global_texpage,
+                texture_params.clut_x.into(),
+                texture_params.clut_y.into(),
+                u.into(),
+                v.into(),
+            );
+            if texture_pixel == 0x0000 {
+                continue;
+            }
+
+            let raw_texture_color = Color::from_15_bit(texture_pixel);
+
+            let texture_color = if texture_mode == TextureMode::Modulated {
+                modulate_color(raw_texture_color, rectangle_color)
+            } else {
+                raw_texture_color
+            };
+
+            let texture_mask_bit = texture_pixel & 0x8000 != 0;
+            let masked_color = if semi_transparent && texture_mask_bit {
+                let existing_color =
+                    Color::from_15_bit(u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]));
+                semi_transparency_mode.apply(existing_color, texture_color)
+            } else {
+                texture_color
+            };
+
+            let [color_lsb, color_msb] = masked_color.truncate_to_15_bit().to_le_bytes();
+            vram[vram_addr] = color_lsb;
+            vram[vram_addr + 1] = color_msb | (u8::from(texture_mask_bit || force_mask_bit) << 7);
         }
     }
 }
