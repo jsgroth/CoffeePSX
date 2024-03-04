@@ -280,8 +280,9 @@ fn rasterize_pixel(
         y: f64::from(py) + 0.5,
     };
 
-    // A given point is contained within the triangle if the cross-product of v0->p and
-    // v0->v1 is non-negative for each edge v0->v1
+    // A given point is contained within the triangle if the Z component of the cross-product of
+    // v0->p and v0->v1 is non-negative for each edge v0->v1 (assuming the vertices are ordered
+    // clockwise)
     for edge in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
         let cpz = cross_product_z(edge.0, edge.1, p);
         if cpz < 0.0 {
