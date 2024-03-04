@@ -1,8 +1,8 @@
 #![allow(clippy::many_single_char_names)]
 
 use crate::gpu::gp0::{
-    Color, DrawPolygonParameters, DrawSettings, PolygonCommandParameters,
-    RectangleCommandParameters, SemiTransparencyMode, TextureColorDepthBits, TexturePage, Vertex,
+    Color, DrawSettings, PolygonCommandParameters, RectangleCommandParameters,
+    SemiTransparencyMode, TextureColorDepthBits, TexturePage, Vertex,
 };
 use crate::gpu::Vram;
 use std::cmp;
@@ -82,9 +82,172 @@ where
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Shading {
+pub enum LineShading {
+    Flat(Color),
+    Gouraud(Color, Color),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PolygonShading {
     Flat(Color),
     Gouraud(Color, Color, Color),
+}
+
+#[derive(Debug, Clone)]
+pub struct DrawLineParameters {
+    pub vertices: [Vertex; 2],
+    pub shading: LineShading,
+    pub semi_transparent: bool,
+}
+
+pub fn line(
+    DrawLineParameters {
+        vertices,
+        shading,
+        semi_transparent,
+    }: DrawLineParameters,
+    draw_settings: &DrawSettings,
+    global_texpage: TexturePage,
+    vram: &mut Vram,
+) {
+    if !draw_settings.is_drawing_area_valid() {
+        return;
+    }
+
+    // Apply drawing offset
+    let vertices = vertices.map(|vertex| Vertex {
+        x: vertex.x + draw_settings.draw_offset.0,
+        y: vertex.y + draw_settings.draw_offset.1,
+    });
+
+    let x_diff = vertices[1].x - vertices[0].x;
+    let y_diff = vertices[1].y - vertices[0].y;
+
+    if x_diff == 0 && y_diff == 0 {
+        // Draw a single pixel with the color of the first vertex (if it's inside the drawing area)
+        let color = match shading {
+            LineShading::Flat(color) | LineShading::Gouraud(color, _) => color,
+        };
+        draw_line_pixel(
+            vertices[0],
+            color,
+            semi_transparent,
+            global_texpage.semi_transparency_mode,
+            draw_settings,
+            vram,
+        );
+        return;
+    }
+
+    let (r_diff, g_diff, b_diff) = match shading {
+        LineShading::Flat(_) => (0, 0, 0),
+        LineShading::Gouraud(color0, color1) => (
+            i32::from(color1.r) - i32::from(color0.r),
+            i32::from(color1.g) - i32::from(color0.g),
+            i32::from(color1.b) - i32::from(color0.b),
+        ),
+    };
+
+    let (x_step, y_step, r_step, g_step, b_step) = if x_diff.abs() >= y_diff.abs() {
+        let y_step = f64::from(y_diff) / f64::from(x_diff.abs());
+        let r_step = f64::from(r_diff) / f64::from(x_diff.abs());
+        let g_step = f64::from(g_diff) / f64::from(x_diff.abs());
+        let b_step = f64::from(b_diff) / f64::from(x_diff.abs());
+        (f64::from(x_diff.signum()), y_step, r_step, g_step, b_step)
+    } else {
+        let x_step = f64::from(x_diff) / f64::from(y_diff.abs());
+        let r_step = f64::from(r_diff) / f64::from(y_diff.abs());
+        let g_step = f64::from(g_diff) / f64::from(y_diff.abs());
+        let b_step = f64::from(b_diff) / f64::from(y_diff.abs());
+        (x_step, f64::from(y_diff.signum()), r_step, g_step, b_step)
+    };
+
+    let first_color = match shading {
+        LineShading::Flat(color) | LineShading::Gouraud(color, _) => color,
+    };
+    let mut r = f64::from(first_color.r);
+    let mut g = f64::from(first_color.g);
+    let mut b = f64::from(first_color.b);
+
+    let mut x = f64::from(vertices[0].x);
+    let mut y = f64::from(vertices[0].y);
+    while x.round() as i32 != vertices[1].x || y.round() as i32 != vertices[1].y {
+        let vertex = Vertex {
+            x: x.round() as i32,
+            y: y.round() as i32,
+        };
+        let color = Color {
+            r: r.round() as u8,
+            g: g.round() as u8,
+            b: b.round() as u8,
+        };
+        draw_line_pixel(
+            vertex,
+            color,
+            semi_transparent,
+            global_texpage.semi_transparency_mode,
+            draw_settings,
+            vram,
+        );
+
+        x += x_step;
+        y += y_step;
+        r += r_step;
+        g += g_step;
+        b += b_step;
+    }
+
+    // Draw the last pixel
+    let color = Color {
+        r: r.round() as u8,
+        g: g.round() as u8,
+        b: b.round() as u8,
+    };
+    draw_line_pixel(
+        vertices[1],
+        color,
+        semi_transparent,
+        global_texpage.semi_transparency_mode,
+        draw_settings,
+        vram,
+    );
+}
+
+fn draw_line_pixel(
+    v: Vertex,
+    raw_color: Color,
+    semi_transparency: bool,
+    semi_transparency_mode: SemiTransparencyMode,
+    draw_settings: &DrawSettings,
+    vram: &mut Vram,
+) {
+    if !draw_settings.drawing_area_contains_vertex(v) {
+        return;
+    }
+
+    let vram_addr = (2048 * v.y + 2 * v.x) as usize;
+    if draw_settings.check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+        return;
+    }
+
+    let color = if semi_transparency {
+        let existing_color =
+            Color::from_15_bit(u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]));
+        semi_transparency_mode.apply(existing_color, raw_color)
+    } else {
+        raw_color
+    };
+
+    let dithered_color = if draw_settings.dithering_enabled {
+        let dither_value = DITHER_TABLE[(v.y & 3) as usize][(v.x & 3) as usize];
+        color.dither(dither_value)
+    } else {
+        color
+    };
+
+    let [color_lsb, color_msb] = dithered_color.truncate_to_15_bit().to_le_bytes();
+    vram[vram_addr] = color_lsb;
+    vram[vram_addr + 1] = color_msb | (u8::from(draw_settings.force_mask_bit) << 7);
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +284,15 @@ impl TextureMode {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct DrawPolygonParameters {
+    pub vertices: [Vertex; 3],
+    pub shading: PolygonShading,
+    pub semi_transparent: bool,
+    pub texture_params: PolygonTextureParameters,
+    pub texture_mode: TextureMode,
+}
+
 pub fn triangle(
     DrawPolygonParameters {
         vertices: v,
@@ -148,13 +320,12 @@ pub fn triangle(
         return;
     }
 
-    let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
-    let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
-
-    if draw_min_x > draw_max_x || draw_min_y > draw_max_y {
-        // Invalid drawing area; do nothing
+    if !draw_settings.is_drawing_area_valid() {
         return;
     }
+
+    let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
+    let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
 
     let (x_offset, y_offset) = draw_settings.draw_offset;
 
@@ -206,7 +377,7 @@ pub fn triangle(
 #[allow(clippy::too_many_arguments)]
 fn triangle_swapped_vertices(
     v: [Vertex; 3],
-    shading: Shading,
+    shading: PolygonShading,
     semi_transparent: bool,
     texture_params: PolygonTextureParameters,
     texture_mode: TextureMode,
@@ -226,8 +397,10 @@ fn triangle_swapped_vertices(
         texture_params.v[2],
     ];
     let shading = match shading {
-        Shading::Flat(color) => Shading::Flat(color),
-        Shading::Gouraud(color0, color1, color2) => Shading::Gouraud(color1, color0, color2),
+        PolygonShading::Flat(color) => PolygonShading::Flat(color),
+        PolygonShading::Gouraud(color0, color1, color2) => {
+            PolygonShading::Gouraud(color1, color0, color2)
+        }
     };
 
     triangle(
@@ -250,7 +423,7 @@ fn triangle_swapped_vertices(
 
 struct RasterizePixelArgs<'a> {
     v: [VertexFloat; 3],
-    shading: Shading,
+    shading: PolygonShading,
     semi_transparent: bool,
     global_semi_transparency_mode: SemiTransparencyMode,
     texture_params: &'a PolygonTextureParameters,
@@ -315,8 +488,8 @@ fn rasterize_pixel(
     }
 
     let shading_color = match shading {
-        Shading::Flat(color) => color,
-        Shading::Gouraud(color0, color1, color2) => {
+        PolygonShading::Flat(color) => color,
+        PolygonShading::Gouraud(color0, color1, color2) => {
             apply_gouraud_shading(p, v, [color0, color1, color2])
         }
     };
@@ -373,7 +546,8 @@ fn rasterize_pixel(
     // Dithering is applied if the dither flag is set and either Gouraud shading or texture
     // modulation is used
     let dithered_color = if dithering
-        && (matches!(shading, Shading::Gouraud(..)) || texture_mode == TextureMode::Modulated)
+        && (matches!(shading, PolygonShading::Gouraud(..))
+            || texture_mode == TextureMode::Modulated)
     {
         let dither_value = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
         masked_color.dither(dither_value)

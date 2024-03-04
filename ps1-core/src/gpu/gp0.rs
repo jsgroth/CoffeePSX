@@ -1,8 +1,8 @@
 mod rasterize;
 
 use crate::gpu::gp0::rasterize::{
-    DrawRectangleParameters, PolygonTextureParameters, RectangleTextureParameters, Shading,
-    TextureMode,
+    DrawLineParameters, DrawPolygonParameters, DrawRectangleParameters, LineShading,
+    PolygonShading, PolygonTextureParameters, RectangleTextureParameters, TextureMode,
 };
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
@@ -78,6 +78,14 @@ impl RectangleSize {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct LineCommandParameters {
+    pub gouraud_shading: bool,
+    pub polyline: bool,
+    pub semi_transparent: bool,
+    pub color: Color,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct PolygonCommandParameters {
     pub vertices: PolygonVertices,
     pub gouraud_shading: bool,
@@ -99,6 +107,7 @@ pub struct RectangleCommandParameters {
 #[derive(Debug, Clone, Copy)]
 pub enum DrawCommand {
     Fill(Color),
+    DrawLine(LineCommandParameters),
     DrawPolygon(PolygonCommandParameters),
     DrawRectangle(RectangleCommandParameters),
     VramToVramBlit,
@@ -154,6 +163,7 @@ pub enum Gp0CommandState {
         index: u8,
         remaining: u8,
     },
+    WaitingForPolyline(LineCommandParameters),
     ReceivingFromCpu(VramTransferFields),
     SendingToCpu(VramTransferFields),
 }
@@ -189,6 +199,27 @@ impl Gp0CommandState {
             command: DrawCommand::Fill(color),
             index: 0,
             remaining: 2,
+        }
+    }
+
+    fn draw_line(value: u32) -> Self {
+        let color = parse_command_color(value);
+
+        let gouraud_shading = value.bit(28);
+        let polyline = value.bit(27);
+        let semi_transparent = value.bit(25);
+
+        let parameters = 2 + u8::from(gouraud_shading);
+
+        Self::WaitingForParameters {
+            command: DrawCommand::DrawLine(LineCommandParameters {
+                gouraud_shading,
+                polyline,
+                semi_transparent,
+                color,
+            }),
+            index: 0,
+            remaining: parameters,
         }
     }
 
@@ -352,6 +383,20 @@ pub struct DrawSettings {
     pub check_mask_bit: bool,
 }
 
+impl DrawSettings {
+    fn is_drawing_area_valid(&self) -> bool {
+        self.draw_area_top_left.0 <= self.draw_area_bottom_right.0
+            && self.draw_area_top_left.1 <= self.draw_area_bottom_right.1
+    }
+
+    fn drawing_area_contains_vertex(&self, vertex: Vertex) -> bool {
+        (self.draw_area_top_left.0 as i32..=self.draw_area_bottom_right.0 as i32)
+            .contains(&vertex.x)
+            && (self.draw_area_top_left.1 as i32..=self.draw_area_bottom_right.1 as i32)
+                .contains(&vertex.y)
+    }
+}
+
 const PARAMETERS_LEN: usize = 11;
 
 #[derive(Debug, Clone)]
@@ -428,6 +473,7 @@ impl Gpu {
                     }
                 }
                 1 => Gp0CommandState::draw_polygon(value),
+                2 => Gp0CommandState::draw_line(value),
                 3 => Gp0CommandState::draw_rectangle(value),
                 4 => Gp0CommandState::VRAM_TO_VRAM_BLIT,
                 5 => Gp0CommandState::CPU_TO_VRAM_BLIT,
@@ -437,10 +483,7 @@ impl Gpu {
                     self.execute_settings_command(value);
                     Gp0CommandState::WaitingForCommand
                 }
-                _ => {
-                    log::error!("unimplemented GP0 command {value:08X}");
-                    Gp0CommandState::WaitingForCommand
-                }
+                _ => unreachable!("highest 3 bits must be <= 7"),
             },
             Gp0CommandState::WaitingForParameters {
                 command,
@@ -455,6 +498,24 @@ impl Gpu {
                         command,
                         index: index + 1,
                         remaining: remaining - 1,
+                    }
+                }
+            }
+            Gp0CommandState::WaitingForPolyline(parameters) => {
+                if value & 0xF000F000 == 0x50005000 {
+                    // Polyline command end marker
+                    Gp0CommandState::WaitingForCommand
+                } else {
+                    self.gp0.parameters[1] = value;
+                    if parameters.gouraud_shading {
+                        // Need to read one more word for the second vertex coordinate
+                        Gp0CommandState::WaitingForParameters {
+                            command: DrawCommand::DrawLine(parameters),
+                            index: 2,
+                            remaining: 1,
+                        }
+                    } else {
+                        self.draw_line(parameters)
                     }
                 }
             }
@@ -476,6 +537,7 @@ impl Gpu {
 
                 Gp0CommandState::WaitingForCommand
             }
+            DrawCommand::DrawLine(parameters) => self.draw_line(parameters),
             DrawCommand::DrawPolygon(parameters) => {
                 self.draw_polygon(parameters);
 
@@ -614,6 +676,36 @@ impl Gpu {
         rasterize::fill(x, y, width, height, color, &mut self.vram);
     }
 
+    fn draw_line(&mut self, command_parameters: LineCommandParameters) -> Gp0CommandState {
+        let parameters = parse_draw_line_parameters(command_parameters, &self.gp0.parameters);
+
+        log::trace!("Executing draw line command: {parameters:?}");
+
+        let v1 = parameters.vertices[1];
+        let shading = parameters.shading;
+
+        rasterize::line(
+            parameters,
+            &self.gp0.draw_settings,
+            self.gp0.global_texture_page,
+            &mut self.vram,
+        );
+
+        if command_parameters.polyline {
+            // Pretend that the previous second vertex/color is now the first vertex/color
+            self.gp0.parameters[0] = ((v1.x & 0xFFFF) | (v1.y << 16)) as u32;
+            let new_first_color = match shading {
+                LineShading::Flat(color) | LineShading::Gouraud(_, color) => color,
+            };
+            return Gp0CommandState::WaitingForPolyline(LineCommandParameters {
+                color: new_first_color,
+                ..command_parameters
+            });
+        }
+
+        Gp0CommandState::WaitingForCommand
+    }
+
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
         let (first_params, second_params) =
             parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
@@ -727,19 +819,50 @@ fn parse_signed_11_bit(word: u32) -> i32 {
     ((word as i32) << 21) >> 21
 }
 
-#[derive(Debug, Clone)]
-pub struct DrawPolygonParameters {
-    vertices: [Vertex; 3],
-    shading: Shading,
-    semi_transparent: bool,
-    texture_params: PolygonTextureParameters,
-    texture_mode: TextureMode,
+struct Gp0Parameters<'a>(&'a [u32]);
+
+impl<'a> Gp0Parameters<'a> {
+    fn next(&mut self) -> u32 {
+        let value = self.0[0];
+        self.0 = &self.0[1..];
+        value
+    }
+
+    fn peek(&self) -> u32 {
+        self.0[0]
+    }
+}
+
+fn parse_draw_line_parameters(
+    command_parameters: LineCommandParameters,
+    parameters: &[u32],
+) -> DrawLineParameters {
+    let mut parameters = Gp0Parameters(parameters);
+
+    let v0 = parse_vertex_coordinates(parameters.next());
+
+    let shading = if command_parameters.gouraud_shading {
+        let second_color = parse_command_color(parameters.next());
+        LineShading::Gouraud(command_parameters.color, second_color)
+    } else {
+        LineShading::Flat(command_parameters.color)
+    };
+
+    let v1 = parse_vertex_coordinates(parameters.next());
+
+    DrawLineParameters {
+        vertices: [v0, v1],
+        shading,
+        semi_transparent: command_parameters.semi_transparent,
+    }
 }
 
 fn parse_draw_polygon_parameters(
     command_parameters: PolygonCommandParameters,
-    mut parameters: &[u32],
+    parameters: &[u32],
 ) -> (DrawPolygonParameters, Option<DrawPolygonParameters>) {
+    let mut parameters = Gp0Parameters(parameters);
+
     let mut vertices = [Vertex::default(); 4];
     let mut colors = [Color::default(); 4];
     let mut u = [0; 4];
@@ -752,28 +875,26 @@ fn parse_draw_polygon_parameters(
 
     for vertex_idx in 0..command_parameters.vertices.into() {
         if vertex_idx != 0 && command_parameters.gouraud_shading {
-            colors[vertex_idx as usize] = parse_command_color(parameters[0]);
-            parameters = &parameters[1..];
+            colors[vertex_idx as usize] = parse_command_color(parameters.next());
         }
 
-        vertices[vertex_idx as usize] = parse_vertex_coordinates(parameters[0]);
-        parameters = &parameters[1..];
+        vertices[vertex_idx as usize] = parse_vertex_coordinates(parameters.next());
 
         if command_parameters.textured {
             match vertex_idx {
                 0 => {
-                    clut_x = ((parameters[0] >> 16) & 0x3F) as u16;
-                    clut_y = ((parameters[0] >> 22) & 0x1FF) as u16;
+                    clut_x = ((parameters.peek() >> 16) & 0x3F) as u16;
+                    clut_y = ((parameters.peek() >> 22) & 0x1FF) as u16;
                 }
                 1 => {
-                    texpage = TexturePage::from_command_word(parameters[0] >> 16);
+                    texpage = TexturePage::from_command_word(parameters.peek() >> 16);
                 }
                 _ => {}
             }
 
-            u[vertex_idx as usize] = parameters[0] as u8;
-            v[vertex_idx as usize] = (parameters[0] >> 8) as u8;
-            parameters = &parameters[1..];
+            u[vertex_idx as usize] = parameters.peek() as u8;
+            v[vertex_idx as usize] = (parameters.peek() >> 8) as u8;
+            parameters.next();
         }
     }
 
@@ -782,9 +903,9 @@ fn parse_draw_polygon_parameters(
     let first_parameters = DrawPolygonParameters {
         vertices: [vertices[0], vertices[1], vertices[2]],
         shading: if command_parameters.gouraud_shading {
-            Shading::Gouraud(colors[0], colors[1], colors[2])
+            PolygonShading::Gouraud(colors[0], colors[1], colors[2])
         } else {
-            Shading::Flat(colors[0])
+            PolygonShading::Flat(colors[0])
         },
         semi_transparent: command_parameters.semi_transparent,
         texture_params: PolygonTextureParameters {
@@ -803,9 +924,9 @@ fn parse_draw_polygon_parameters(
             let second_parameters = DrawPolygonParameters {
                 vertices: [vertices[1], vertices[2], vertices[3]],
                 shading: if command_parameters.gouraud_shading {
-                    Shading::Gouraud(colors[1], colors[2], colors[3])
+                    PolygonShading::Gouraud(colors[1], colors[2], colors[3])
                 } else {
-                    Shading::Flat(colors[0])
+                    PolygonShading::Flat(colors[0])
                 },
                 semi_transparent: command_parameters.semi_transparent,
                 texture_params: PolygonTextureParameters {
@@ -825,20 +946,21 @@ fn parse_draw_polygon_parameters(
 
 fn parse_draw_rectangle_parameters(
     command_parameters: RectangleCommandParameters,
-    mut parameters: &[u32],
+    parameters: &[u32],
 ) -> DrawRectangleParameters {
-    let position = parse_vertex_coordinates(parameters[0]);
-    parameters = &parameters[1..];
+    let mut parameters = Gp0Parameters(parameters);
+
+    let position = parse_vertex_coordinates(parameters.next());
 
     let mut texture_params = RectangleTextureParameters::default();
     if command_parameters.textured {
         texture_params = RectangleTextureParameters {
-            clut_x: ((parameters[0] >> 16) & 0x3FF) as u16,
-            clut_y: ((parameters[0] >> 22) & 0x1FF) as u16,
-            u: parameters[0] as u8,
-            v: (parameters[0] >> 8) as u8,
+            clut_x: ((parameters.peek() >> 16) & 0x3FF) as u16,
+            clut_y: ((parameters.peek() >> 22) & 0x1FF) as u16,
+            u: parameters.peek() as u8,
+            v: (parameters.peek() >> 8) as u8,
         };
-        parameters = &parameters[1..];
+        parameters.next();
     }
 
     let (width, height) = match command_parameters.size {
@@ -846,8 +968,8 @@ fn parse_draw_rectangle_parameters(
         RectangleSize::Eight => (8, 8),
         RectangleSize::Sixteen => (16, 16),
         RectangleSize::Variable => {
-            let width = parameters[0] & 0x3FF;
-            let height = (parameters[0] >> 16) & 0x1FF;
+            let width = parameters.peek() & 0x3FF;
+            let height = (parameters.peek() >> 16) & 0x1FF;
             (width, height)
         }
     };
