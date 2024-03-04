@@ -1,8 +1,8 @@
 #![allow(clippy::many_single_char_names)]
 
 use crate::gpu::gp0::{
-    Color, DrawPolygonParameters, DrawSettings, PolygonCommandParameters, SemiTransparencyMode,
-    TextureColorDepthBits, TexturePage, Vertex,
+    Color, DrawPolygonParameters, DrawSettings, PolygonCommandParameters,
+    RectangleCommandParameters, SemiTransparencyMode, TextureColorDepthBits, TexturePage, Vertex,
 };
 use crate::gpu::Vram;
 use std::cmp;
@@ -88,7 +88,7 @@ pub enum Shading {
 }
 
 #[derive(Debug, Clone)]
-pub struct TextureParameters {
+pub struct PolygonTextureParameters {
     pub texpage: TexturePage,
     pub clut_x: u16,
     pub clut_y: u16,
@@ -104,8 +104,16 @@ pub enum TextureMode {
 }
 
 impl TextureMode {
-    pub fn from_command_params(params: PolygonCommandParameters) -> Self {
-        match (params.textured, params.raw_texture) {
+    pub fn from_polygon_params(params: PolygonCommandParameters) -> Self {
+        Self::from_flags(params.textured, params.raw_texture)
+    }
+
+    pub fn from_rectangle_params(params: RectangleCommandParameters) -> Self {
+        Self::from_flags(params.textured, params.raw_texture)
+    }
+
+    fn from_flags(textured: bool, raw_texture: bool) -> Self {
+        match (textured, raw_texture) {
             (false, _) => Self::None,
             (true, false) => Self::Modulated,
             (true, true) => Self::Raw,
@@ -200,7 +208,7 @@ fn triangle_swapped_vertices(
     v: [Vertex; 3],
     shading: Shading,
     semi_transparent: bool,
-    texture_params: TextureParameters,
+    texture_params: PolygonTextureParameters,
     texture_mode: TextureMode,
     draw_settings: &DrawSettings,
     global_texpage: &TexturePage,
@@ -227,7 +235,7 @@ fn triangle_swapped_vertices(
             vertices,
             shading,
             semi_transparent,
-            texture_params: TextureParameters {
+            texture_params: PolygonTextureParameters {
                 u: texture_u,
                 v: texture_v,
                 ..texture_params
@@ -245,7 +253,7 @@ struct RasterizePixelArgs<'a> {
     shading: Shading,
     semi_transparent: bool,
     global_semi_transparency_mode: SemiTransparencyMode,
-    texture_params: &'a TextureParameters,
+    texture_params: &'a PolygonTextureParameters,
     texture_mode: TextureMode,
     dithering: bool,
     force_mask_bit: bool,
@@ -499,6 +507,108 @@ fn sample_texture(
             let vram_x_pixels = (64 * texpage.x_base + u) & 0x3FF;
             let vram_addr = (2048 * y + 2 * vram_x_pixels) as usize;
             u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]])
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RectangleTextureParameters {
+    pub clut_x: u16,
+    pub clut_y: u16,
+    pub u: u8,
+    pub v: u8,
+}
+
+#[derive(Debug, Clone)]
+pub struct DrawRectangleParameters {
+    pub position: Vertex,
+    pub width: u32,
+    pub height: u32,
+    pub color: Color,
+    pub semi_transparent: bool,
+    pub texture_params: RectangleTextureParameters,
+    pub texture_mode: TextureMode,
+}
+
+pub fn rectangle(
+    DrawRectangleParameters {
+        position,
+        width,
+        height,
+        color,
+        semi_transparent,
+        texture_params: _texture_params,
+        texture_mode,
+    }: DrawRectangleParameters,
+    draw_settings: &DrawSettings,
+    global_texpage: TexturePage,
+    vram: &mut Vram,
+) {
+    let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
+    let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
+    if draw_min_x > draw_max_x || draw_min_y > draw_max_y {
+        return;
+    }
+
+    // Apply drawing offset
+    let position = Vertex {
+        x: position.x + draw_settings.draw_offset.0,
+        y: position.y + draw_settings.draw_offset.1,
+    };
+
+    let min_x = cmp::max(draw_min_x as i32, position.x);
+    let max_x = cmp::min(draw_max_x as i32, position.x + width as i32 - 1);
+    let min_y = cmp::max(draw_min_y as i32, position.y);
+    let max_y = cmp::min(draw_max_y as i32, position.y + height as i32 - 1);
+    if min_x > max_x || min_y > max_y {
+        // Drawing area is invalid (or size is 0 in one or both dimensions); do nothing
+        return;
+    }
+
+    match texture_mode {
+        TextureMode::None => rectangle_solid_color(
+            (min_x as u32, max_x as u32),
+            (min_y as u32, max_y as u32),
+            color,
+            semi_transparent,
+            global_texpage.semi_transparency_mode,
+            draw_settings.force_mask_bit,
+            draw_settings.check_mask_bit,
+            vram,
+        ),
+        _ => todo!("draw rectangle with texture mode {texture_mode:?}"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rectangle_solid_color(
+    x_range: (u32, u32),
+    y_range: (u32, u32),
+    color: Color,
+    semi_transparent: bool,
+    semi_transparency_mode: SemiTransparencyMode,
+    force_mask_bit: bool,
+    check_mask_bit: bool,
+    vram: &mut Vram,
+) {
+    for y in y_range.0..=y_range.1 {
+        for x in x_range.0..=x_range.1 {
+            let vram_addr = (2048 * y + 2 * x) as usize;
+            if check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+                continue;
+            }
+
+            let color = if semi_transparent {
+                let existing_color =
+                    Color::from_15_bit(u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]));
+                semi_transparency_mode.apply(existing_color, color)
+            } else {
+                color
+            };
+
+            let [color_lsb, color_msb] = color.truncate_to_15_bit().to_le_bytes();
+            vram[vram_addr] = color_lsb;
+            vram[vram_addr + 1] = color_msb | (u8::from(force_mask_bit) << 7);
         }
     }
 }

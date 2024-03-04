@@ -1,6 +1,9 @@
 mod rasterize;
 
-use crate::gpu::gp0::rasterize::{Shading, TextureMode, TextureParameters};
+use crate::gpu::gp0::rasterize::{
+    DrawRectangleParameters, PolygonTextureParameters, RectangleTextureParameters, Shading,
+    TextureMode,
+};
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
 use std::array;
@@ -85,16 +88,19 @@ pub struct PolygonCommandParameters {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub struct RectangleCommandParameters {
+    pub size: RectangleSize,
+    pub textured: bool,
+    pub semi_transparent: bool,
+    pub raw_texture: bool,
+    pub color: Color,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum DrawCommand {
     Fill(Color),
     DrawPolygon(PolygonCommandParameters),
-    DrawRectangle {
-        size: RectangleSize,
-        textured: bool,
-        semi_transparent: bool,
-        raw_texture: bool,
-        color: Color,
-    },
+    DrawRectangle(RectangleCommandParameters),
     VramToVramBlit,
     CpuToVramBlit,
     VramToCpuBlit,
@@ -229,13 +235,13 @@ impl Gp0CommandState {
 
         let parameters = 1 + u8::from(textured) + u8::from(size == RectangleSize::Variable);
 
-        let command = DrawCommand::DrawRectangle {
+        let command = DrawCommand::DrawRectangle(RectangleCommandParameters {
             size,
             textured,
             semi_transparent,
             raw_texture,
             color,
-        };
+        });
 
         Self::WaitingForParameters {
             command,
@@ -290,7 +296,7 @@ impl TextureColorDepthBits {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct TexturePage {
     // In 64-halfword steps
     pub x_base: u32,
@@ -475,18 +481,8 @@ impl Gpu {
 
                 Gp0CommandState::WaitingForCommand
             }
-            DrawCommand::DrawRectangle {
-                size,
-                textured,
-                semi_transparent,
-                raw_texture,
-                color,
-            } => {
-                if textured || semi_transparent || raw_texture || size != RectangleSize::One {
-                    todo!("draw rectangle {command:?}");
-                }
-
-                self.draw_pixel(color);
+            DrawCommand::DrawRectangle(parameters) => {
+                self.draw_rectangle(parameters);
 
                 Gp0CommandState::WaitingForCommand
             }
@@ -637,15 +633,17 @@ impl Gpu {
         }
     }
 
-    fn draw_pixel(&mut self, color: Color) {
-        let (x, y) = parse_vram_position(self.gp0.parameters[0]);
+    fn draw_rectangle(&mut self, command_parameters: RectangleCommandParameters) {
+        let parameters = parse_draw_rectangle_parameters(command_parameters, &self.gp0.parameters);
 
-        log::trace!("Drawing pixel at X={x}, Y={y} with color {color:02X?}");
+        log::trace!("Drawing rectangle with parameters {parameters:?}");
 
-        let vram_addr = (2048 * y + 2 * x) as usize;
-        let [lsb, msb] = color.truncate_to_15_bit().to_le_bytes();
-        self.vram[vram_addr] = lsb;
-        self.vram[vram_addr + 1] = msb;
+        rasterize::rectangle(
+            parameters,
+            &self.gp0.draw_settings,
+            self.gp0.global_texture_page,
+            &mut self.vram,
+        );
     }
 
     fn execute_vram_copy(&mut self) {
@@ -734,7 +732,7 @@ pub struct DrawPolygonParameters {
     vertices: [Vertex; 3],
     shading: Shading,
     semi_transparent: bool,
-    texture_params: TextureParameters,
+    texture_params: PolygonTextureParameters,
     texture_mode: TextureMode,
 }
 
@@ -779,7 +777,7 @@ fn parse_draw_polygon_parameters(
         }
     }
 
-    let texture_mode = TextureMode::from_command_params(command_parameters);
+    let texture_mode = TextureMode::from_polygon_params(command_parameters);
 
     let first_parameters = DrawPolygonParameters {
         vertices: [vertices[0], vertices[1], vertices[2]],
@@ -789,8 +787,8 @@ fn parse_draw_polygon_parameters(
             Shading::Flat(colors[0])
         },
         semi_transparent: command_parameters.semi_transparent,
-        texture_params: TextureParameters {
-            texpage: texpage.clone(),
+        texture_params: PolygonTextureParameters {
+            texpage,
             clut_x,
             clut_y,
             u: [u[0], u[1], u[2]],
@@ -810,7 +808,7 @@ fn parse_draw_polygon_parameters(
                     Shading::Flat(colors[0])
                 },
                 semi_transparent: command_parameters.semi_transparent,
-                texture_params: TextureParameters {
+                texture_params: PolygonTextureParameters {
                     texpage,
                     clut_x,
                     clut_y,
@@ -822,5 +820,45 @@ fn parse_draw_polygon_parameters(
 
             (first_parameters, Some(second_parameters))
         }
+    }
+}
+
+fn parse_draw_rectangle_parameters(
+    command_parameters: RectangleCommandParameters,
+    mut parameters: &[u32],
+) -> DrawRectangleParameters {
+    let position = parse_vertex_coordinates(parameters[0]);
+    parameters = &parameters[1..];
+
+    let mut texture_params = RectangleTextureParameters::default();
+    if command_parameters.textured {
+        texture_params = RectangleTextureParameters {
+            clut_x: ((parameters[0] >> 16) & 0x3FF) as u16,
+            clut_y: ((parameters[0] >> 22) & 0x1FF) as u16,
+            u: parameters[0] as u8,
+            v: (parameters[0] >> 8) as u8,
+        };
+        parameters = &parameters[1..];
+    }
+
+    let (width, height) = match command_parameters.size {
+        RectangleSize::One => (1, 1),
+        RectangleSize::Eight => (8, 8),
+        RectangleSize::Sixteen => (16, 16),
+        RectangleSize::Variable => {
+            let width = parameters[0] & 0x3FF;
+            let height = (parameters[0] >> 16) & 0x1FF;
+            (width, height)
+        }
+    };
+
+    DrawRectangleParameters {
+        position,
+        width,
+        height,
+        color: command_parameters.color,
+        semi_transparent: command_parameters.semi_transparent,
+        texture_params,
+        texture_mode: TextureMode::from_rectangle_params(command_parameters),
     }
 }
