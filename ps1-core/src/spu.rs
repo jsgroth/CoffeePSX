@@ -1,9 +1,11 @@
 mod envelope;
+mod reverb;
 mod voice;
 
 use crate::cpu::OpSize;
 use crate::num::U32Ext;
 use crate::spu::envelope::VolumeControl;
+use crate::spu::reverb::ReverbSettings;
 use crate::spu::voice::Voice;
 use std::array;
 
@@ -73,7 +75,6 @@ impl DataPort {
 struct ControlRegisters {
     spu_enabled: bool,
     amplifier_enabled: bool,
-    reverb_enabled: bool,
     external_audio_enabled: bool,
     cd_audio_enabled: bool,
     external_audio_reverb_enabled: bool,
@@ -91,7 +92,6 @@ impl ControlRegisters {
         Self {
             spu_enabled: false,
             amplifier_enabled: false,
-            reverb_enabled: false,
             external_audio_enabled: false,
             cd_audio_enabled: false,
             external_audio_reverb_enabled: false,
@@ -105,12 +105,12 @@ impl ControlRegisters {
     }
 
     // $1F801DAA: SPU control register (SPUCNT)
-    fn read_spucnt(&self, data_port: &DataPort) -> u32 {
+    fn read_spucnt(&self, data_port: &DataPort, reverb: &ReverbSettings) -> u32 {
         (u32::from(self.spu_enabled) << 15)
             | (u32::from(self.amplifier_enabled) << 14)
             | (u32::from(self.noise_shift) << 10)
             | (u32::from(self.noise_step) << 8)
-            | (u32::from(self.reverb_enabled) << 7)
+            | (u32::from(reverb.writes_enabled) << 7)
             | (u32::from(self.irq_enabled) << 6)
             | ((data_port.mode as u32) << 4)
             | (u32::from(self.external_audio_reverb_enabled) << 3)
@@ -120,12 +120,12 @@ impl ControlRegisters {
     }
 
     // $1F801DAA: SPU control register (SPUCNT)
-    fn write_spucnt(&mut self, value: u32, data_port: &mut DataPort) {
+    fn write_spucnt(&mut self, value: u32, data_port: &mut DataPort, reverb: &mut ReverbSettings) {
         self.spu_enabled = value.bit(15);
         self.amplifier_enabled = value.bit(14);
         self.noise_shift = ((value >> 10) & 0xF) as u8;
         self.noise_step = ((value >> 8) & 3) as u8;
-        self.reverb_enabled = value.bit(7);
+        reverb.writes_enabled = value.bit(7);
         self.irq_enabled = value.bit(6);
         data_port.mode = DataPortMode::from_bits(value >> 4);
         self.external_audio_reverb_enabled = value.bit(3);
@@ -138,7 +138,7 @@ impl ControlRegisters {
         log::trace!("  Amplifier enabled: {}", self.amplifier_enabled);
         log::trace!("  Noise shift: {}", self.noise_shift);
         log::trace!("  Noise step: {}", self.noise_step + 4);
-        log::trace!("  Reverb enabled: {}", self.reverb_enabled);
+        log::trace!("  Reverb writes enabled: {}", reverb.writes_enabled);
         log::trace!("  IRQ enabled: {}", self.irq_enabled);
         log::trace!("  Data port mode: {:?}", data_port.mode);
         log::trace!(
@@ -177,6 +177,7 @@ pub struct Spu {
     control: ControlRegisters,
     volume: VolumeControl,
     data_port: DataPort,
+    reverb: ReverbSettings,
 }
 
 impl Spu {
@@ -190,6 +191,7 @@ impl Spu {
             control: ControlRegisters::new(),
             volume: VolumeControl::new(),
             data_port: DataPort::new(),
+            reverb: ReverbSettings::default(),
         }
     }
 
@@ -208,7 +210,7 @@ impl Spu {
             0x1D8A => self.control.last_key_on_write >> 16,
             0x1D8C => self.control.last_key_off_write & 0xFFFF,
             0x1D8E => self.control.last_key_off_write >> 16,
-            0x1DAA => self.control.read_spucnt(&self.data_port),
+            0x1DAA => self.control.read_spucnt(&self.data_port, &self.reverb),
             // TODO return an actual value for sound RAM data transfer control?
             0x1DAC => 0x0004,
             0x1DAE => self.read_status_register(),
@@ -250,8 +252,8 @@ impl Spu {
             0x1C00..=0x1D7F => self.write_voice_register(address, value),
             0x1D80 => self.volume.write_main_l(value),
             0x1D82 => self.volume.write_main_r(value),
-            0x1D84 => log::warn!("Unimplemented reverb output L volume write: {value:04X}"),
-            0x1D86 => log::warn!("Unimplemented reverb output R volume write: {value:04X}"),
+            0x1D84 => self.reverb.write_output_volume_l(value),
+            0x1D86 => self.reverb.write_output_volume_r(value),
             0x1D88 => self.key_on_low(value),
             0x1D8A => self.key_on_high(value),
             0x1D8C => self.key_off_low(value),
@@ -262,10 +264,12 @@ impl Spu {
             0x1D96 => log::warn!("Unimplemented noise mode write (high halfword): {value:04X}"),
             0x1D98 => log::warn!("Unimplemented voice reverb enabled write (0-15): {value:04X}"),
             0x1D9A => log::warn!("Unimplemented voice reverb enabled write (16-23): {value:04X}"),
-            0x1DA2 => log::warn!("Unimplemented reverb start address write: {value:04X}"),
+            0x1DA2 => self.reverb.write_buffer_start_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
             0x1DA8 => self.write_data_port(value),
-            0x1DAA => self.control.write_spucnt(value, &mut self.data_port),
+            0x1DAA => self
+                .control
+                .write_spucnt(value, &mut self.data_port, &mut self.reverb),
             0x1DAC => {
                 // Sound RAM data transfer control register; writing any value other than $0004
                 // would be highly unexpected
@@ -277,9 +281,7 @@ impl Spu {
             0x1DB2 => self.volume.write_cd_r(value),
             0x1DB4 => log::warn!("Unimplemented external audio volume L write: {value:04X}"),
             0x1DB6 => log::warn!("Unimplemented external audio volume R write: {value:04X}"),
-            0x1DC0..=0x1DFF => {
-                log::warn!("Unimplemented reverb-related write: {address:08X} {value:04X}");
-            }
+            0x1DC0..=0x1DFF => self.reverb.write_register(address, value),
             _ => todo!("SPU write {address:08X} {value:08X}"),
         }
     }
