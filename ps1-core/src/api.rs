@@ -17,6 +17,15 @@ pub trait Renderer {
     fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err>;
 }
 
+pub trait AudioOutput {
+    type Err;
+
+    /// # Errors
+    ///
+    /// Should propagate any error encountered while queueing the samples.
+    fn queue_samples(&mut self, samples: &[(i16, i16)]) -> Result<(), Self::Err>;
+}
+
 #[derive(Debug, Error)]
 pub enum Ps1Error {
     #[error("Incorrect BIOS ROM size; expected 512KB, was {bios_len}")]
@@ -27,11 +36,20 @@ pub enum Ps1Error {
 
 pub type Ps1Result<T> = Result<T, Ps1Error>;
 
+#[derive(Debug, Error)]
+pub enum TickError<RErr, AErr> {
+    #[error("Error rendering frame: {0}")]
+    Render(RErr),
+    #[error("Error queueing audio samples: {0}")]
+    Audio(AErr),
+}
+
 #[derive(Debug)]
 pub struct Ps1Emulator {
     cpu: R3000,
     gpu: Gpu,
     spu: Spu,
+    audio_buffer: Vec<(i16, i16)>,
     memory: Memory,
     dma_controller: DmaController,
     control_registers: ControlRegisters,
@@ -87,6 +105,7 @@ impl Ps1Emulator {
             cpu: R3000::new(),
             gpu: Gpu::new(),
             spu: Spu::new(),
+            audio_buffer: Vec::with_capacity(1600),
             memory,
             dma_controller: DmaController::new(),
             control_registers: ControlRegisters::new(),
@@ -142,7 +161,11 @@ impl Ps1Emulator {
     /// # Errors
     ///
     /// Will propagate any error encountered while rendering a frame.
-    pub fn tick<R: Renderer>(&mut self, renderer: &mut R) -> Result<(), R::Err> {
+    pub fn tick<R: Renderer, A: AudioOutput>(
+        &mut self,
+        renderer: &mut R,
+        audio_output: &mut A,
+    ) -> Result<(), TickError<R::Err, A::Err>> {
         self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
             spu: &mut self.spu,
@@ -160,12 +183,23 @@ impl Ps1Emulator {
         // On actual hardware, timing varies depending on what memory was accessed (if any),
         // whether the opcode read hit in I-cache, and whether the instruction wrote to memory
         // while the write queue was full.
+        let cpu_cycles = 2;
+
+        self.spu.tick(cpu_cycles, &mut self.audio_buffer);
+
         if self
             .gpu
-            .tick(2, &mut self.control_registers, &mut self.timers)
+            .tick(cpu_cycles, &mut self.control_registers, &mut self.timers)
             == TickEffect::RenderFrame
         {
-            renderer.render_frame(self.gpu.vram())?;
+            renderer
+                .render_frame(self.gpu.vram())
+                .map_err(TickError::Render)?;
+
+            audio_output
+                .queue_samples(&self.audio_buffer)
+                .map_err(TickError::Audio)?;
+            self.audio_buffer.clear();
         }
 
         Ok(())

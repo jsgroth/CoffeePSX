@@ -10,9 +10,11 @@ ps1-core = { path = "../ps1-core" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+cpal = "0.15"
 env_logger = "0.11"
 log = "0.4"
 minifb = "0.25"
+rand = "0.8"
 
 [lints]
 workspace = true

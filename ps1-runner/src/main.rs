@@ -1,8 +1,13 @@
+use anyhow::anyhow;
 use clap::Parser;
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
-use ps1_core::api::{Ps1Emulator, Renderer};
+use ps1_core::api::{AudioOutput, Ps1Emulator, Renderer};
+use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{fs, thread};
 
@@ -56,6 +61,70 @@ fn rgb_5_to_8(color: u16) -> u32 {
     (255.0 * f64::from(color) / 31.0).round() as u32
 }
 
+struct CpalAudioOutput {
+    audio_queue: Arc<Mutex<VecDeque<(i16, i16)>>>,
+}
+
+impl AudioOutput for CpalAudioOutput {
+    type Err = anyhow::Error;
+
+    fn queue_samples(&mut self, samples: &[(i16, i16)]) -> Result<(), Self::Err> {
+        let wait_for_audio = {
+            let mut audio_queue = self.audio_queue.lock().unwrap();
+            for &sample in samples {
+                audio_queue.push_back(sample);
+            }
+            audio_queue.len() >= 1200
+        };
+
+        if wait_for_audio {
+            loop {
+                if self.audio_queue.lock().unwrap().len() < 1200 {
+                    break;
+                }
+                thread::sleep(Duration::from_micros(250));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> {
+    let audio_queue = Arc::new(Mutex::new(VecDeque::with_capacity(1600)));
+    let audio_output = CpalAudioOutput {
+        audio_queue: Arc::clone(&audio_queue),
+    };
+
+    let audio_host = cpal::default_host();
+    let audio_device = audio_host
+        .default_output_device()
+        .ok_or_else(|| anyhow!("No audio output device found"))?;
+    let audio_stream = audio_device.build_output_stream(
+        &StreamConfig {
+            channels: 2,
+            sample_rate: SampleRate(44100),
+            buffer_size: BufferSize::Fixed(1024),
+        },
+        move |data: &mut [i16], _: &OutputCallbackInfo| {
+            let mut audio_queue = audio_queue.lock().unwrap();
+            for chunk in data.chunks_exact_mut(2) {
+                let Some((sample_l, sample_r)) = audio_queue.pop_front() else {
+                    return;
+                };
+                chunk[0] = sample_l;
+                chunk[1] = sample_r;
+            }
+        },
+        move |err| {
+            log::error!("CPAL audio stream error: {err}");
+        },
+        None,
+    )?;
+
+    Ok((audio_output, audio_stream))
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
@@ -79,7 +148,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut window = Window::new(&window_title, 1024, 512, WindowOptions::default())?;
 
-    window.limit_update_rate(Some(Duration::from_micros(16667)));
+    let (mut audio_output, audio_stream) = create_audio_output()?;
+    audio_stream.play()?;
 
     if let Some(exe_path) = &args.exe_path {
         log::info!("Sideloading EXE from '{exe_path}'");
@@ -90,11 +160,14 @@ fn main() -> anyhow::Result<()> {
         // it jumps to $80030000 to begin shell execution.
         // Sideload EXEs by stealing execution from the BIOS once it reaches this point.
         loop {
-            emulator.tick(&mut MiniFbRenderer {
-                window: &mut window,
-                frame_buffer: &mut frame_buffer,
-                paused: &mut false,
-            })?;
+            emulator.tick(
+                &mut MiniFbRenderer {
+                    window: &mut window,
+                    frame_buffer: &mut frame_buffer,
+                    paused: &mut false,
+                },
+                &mut audio_output,
+            )?;
             if emulator.cpu_pc() == 0x80030000 {
                 emulator.sideload_exe(&exe)?;
                 log::info!("EXE sideloaded");
@@ -106,11 +179,14 @@ fn main() -> anyhow::Result<()> {
     let mut paused = false;
     while window.is_open() && !window.is_key_down(Key::Escape) {
         if !paused {
-            emulator.tick(&mut MiniFbRenderer {
-                window: &mut window,
-                frame_buffer: &mut frame_buffer,
-                paused: &mut paused,
-            })?;
+            emulator.tick(
+                &mut MiniFbRenderer {
+                    window: &mut window,
+                    frame_buffer: &mut frame_buffer,
+                    paused: &mut paused,
+                },
+                &mut audio_output,
+            )?;
         } else {
             thread::sleep(Duration::from_micros(16667));
             window.update();
