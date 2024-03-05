@@ -4,6 +4,7 @@ use crate::cpu::R3000;
 use crate::dma::DmaController;
 use crate::gpu::{Gpu, TickEffect};
 use crate::memory::Memory;
+use crate::spu::Spu;
 use crate::timers::Timers;
 use thiserror::Error;
 
@@ -30,6 +31,7 @@ pub type Ps1Result<T> = Result<T, Ps1Error>;
 pub struct Ps1Emulator {
     cpu: R3000,
     gpu: Gpu,
+    spu: Spu,
     memory: Memory,
     dma_controller: DmaController,
     control_registers: ControlRegisters,
@@ -84,6 +86,7 @@ impl Ps1Emulator {
         Ok(Self {
             cpu: R3000::new(),
             gpu: Gpu::new(),
+            spu: Spu::new(),
             memory,
             dma_controller: DmaController::new(),
             control_registers: ControlRegisters::new(),
@@ -142,6 +145,7 @@ impl Ps1Emulator {
     pub fn tick<R: Renderer>(&mut self, renderer: &mut R) -> Result<(), R::Err> {
         self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
+            spu: &mut self.spu,
             memory: &mut self.memory,
             dma_controller: &mut self.dma_controller,
             control_registers: &mut self.control_registers,

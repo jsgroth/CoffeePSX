@@ -3,10 +3,12 @@ use crate::cpu::OpSize;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::memory::Memory;
+use crate::spu::Spu;
 use crate::timers::Timers;
 
 pub struct Bus<'a> {
     pub gpu: &'a mut Gpu,
+    pub spu: &'a mut Spu,
     pub memory: &'a mut Memory,
     pub dma_controller: &'a mut DmaController,
     pub control_registers: &'a mut ControlRegisters,
@@ -75,10 +77,7 @@ impl<'a> Bus<'a> {
             0x1800..=0x1803 => unimplemented_register_read("CD-ROM", address, size),
             0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(),
-            0x1C00..=0x1FFF => {
-                // TODO SPU registers
-                0
-            }
+            0x1C00..=0x1FFF => self.spu.read_register(address, size),
             _ => panic!("I/O register read {address:08X} {size:?}"),
         }
     }
@@ -127,9 +126,7 @@ impl<'a> Bus<'a> {
             0x1800..=0x1803 => unimplemented_register_write("CD-ROM", address, value, size),
             0x1810 => self.gpu.write_gp0_command(value),
             0x1814 => self.gpu.write_gp1_command(value),
-            0x1C00..=0x1FFF => {
-                // TODO SPU registers
-            }
+            0x1C00..=0x1FFF => self.spu.write_register(address, value, size),
             _ => panic!("I/O register write {address:08X} {value:08X} {size:?}"),
         }
     }
