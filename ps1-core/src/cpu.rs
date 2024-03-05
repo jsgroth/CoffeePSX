@@ -45,24 +45,25 @@ impl Registers {
     fn write_gpr(&mut self, register: u32, value: u32) {
         if register != 0 {
             self.gpr[register as usize] = value;
+
+            // A non-load register write should discard any in-progress delayed load to that
+            // register. Not doing this causes the BIOS to boot incorrectly
+            if self.delayed_load_register_is(register) {
+                self.delayed_load = None;
+            }
         }
     }
 
-    #[allow(unreachable_code)]
-    fn write_gpr_delayed(&mut self, register: u32, value: u32) {
-        // TODO remove this after fixing load delay implementation
-        // non-delayed writes to a register must override any delayed write to a register, including
-        // in JAL and JALR instructions
-        self.write_gpr(register, value);
-        return;
+    fn delayed_load_register_is(&self, register: u32) -> bool {
+        self.delayed_load
+            .is_some_and(|(delayed_register, _)| register == delayed_register)
+    }
 
+    fn write_gpr_delayed(&mut self, register: u32, value: u32) {
         if register != 0 {
             // Undocumented: If two consecutive load instructions write to the same register, the
             // first delayed load is canceled
-            if self
-                .delayed_load
-                .is_some_and(|(delayed_register, _)| register == delayed_register)
-            {
+            if self.delayed_load_register_is(register) {
                 self.delayed_load = None;
             }
             self.delayed_load_next = Some((register, value));
@@ -167,7 +168,7 @@ impl R3000 {
     }
 
     pub fn set_gpr(&mut self, register: u32, value: u32) {
-        self.registers.gpr[register as usize] = value;
+        self.registers.write_gpr(register, value);
     }
 
     pub fn execute_instruction(&mut self, bus: &mut Bus<'_>) {

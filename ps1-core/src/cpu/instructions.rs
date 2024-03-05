@@ -19,7 +19,7 @@ macro_rules! impl_branch {
 
             $(
                 if $link {
-                    self.registers.gpr[31] = self.registers.pc.wrapping_add(4);
+                    self.registers.write_gpr(31, self.registers.pc.wrapping_add(4));
                 }
             )?
         }
@@ -260,7 +260,8 @@ impl R3000 {
     // JAL: Jump and link
     fn jal(&mut self, opcode: u32) {
         self.registers.delayed_branch = Some(compute_jump_address(self.registers.pc, opcode));
-        self.registers.gpr[31] = self.registers.pc.wrapping_add(4);
+        self.registers
+            .write_gpr(31, self.registers.pc.wrapping_add(4));
     }
 
     // JALR: Jump and link register
