@@ -24,6 +24,10 @@ jobs:
       run: |
         rustup toolchain add nightly --component rustfmt --component rust-src
 
+    - name: Install required system libraries
+      run: |
+        sudo apt update && sudo apt install -y libasound2-dev
+
     - name: Check formatting
       run: |
         cargo +nightly fmt --check
