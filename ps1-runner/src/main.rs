@@ -62,13 +62,13 @@ fn rgb_5_to_8(color: u16) -> u32 {
 }
 
 struct CpalAudioOutput {
-    audio_queue: Arc<Mutex<VecDeque<(i16, i16)>>>,
+    audio_queue: Arc<Mutex<VecDeque<(f64, f64)>>>,
 }
 
 impl AudioOutput for CpalAudioOutput {
     type Err = anyhow::Error;
 
-    fn queue_samples(&mut self, samples: &[(i16, i16)]) -> Result<(), Self::Err> {
+    fn queue_samples(&mut self, samples: &[(f64, f64)]) -> Result<(), Self::Err> {
         let wait_for_audio = {
             let mut audio_queue = self.audio_queue.lock().unwrap();
             for &sample in samples {
@@ -106,14 +106,14 @@ fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> 
             sample_rate: SampleRate(44100),
             buffer_size: BufferSize::Fixed(1024),
         },
-        move |data: &mut [i16], _: &OutputCallbackInfo| {
+        move |data: &mut [f32], _: &OutputCallbackInfo| {
             let mut audio_queue = audio_queue.lock().unwrap();
             for chunk in data.chunks_exact_mut(2) {
                 let Some((sample_l, sample_r)) = audio_queue.pop_front() else {
                     return;
                 };
-                chunk[0] = sample_l;
-                chunk[1] = sample_r;
+                chunk[0] = sample_l as f32;
+                chunk[1] = sample_r as f32;
             }
         },
         move |err| {

@@ -1,3 +1,4 @@
+mod adpcm;
 mod envelope;
 mod reverb;
 mod voice;
@@ -201,7 +202,7 @@ impl Spu {
         }
     }
 
-    pub fn tick(&mut self, cpu_cycles: u32, audio_queue: &mut Vec<(i16, i16)>) {
+    pub fn tick(&mut self, cpu_cycles: u32, audio_queue: &mut Vec<(f64, f64)>) {
         self.cpu_cycles += cpu_cycles;
         while self.cpu_cycles >= SPU_CLOCK_DIVIDER {
             self.cpu_cycles -= SPU_CLOCK_DIVIDER;
@@ -209,16 +210,23 @@ impl Spu {
         }
     }
 
-    fn clock(&mut self) -> (i16, i16) {
+    fn clock(&mut self) -> (f64, f64) {
         self.volume.main_l.clock();
         self.volume.main_r.clock();
 
         for voice in &mut self.voices {
-            voice.clock();
+            voice.clock(&self.audio_ram);
         }
 
-        // TODO actually generate samples
-        (0, 0)
+        let mut sample_l = 0;
+        let mut sample_r = 0;
+        for voice in &self.voices {
+            let (voice_sample_l, voice_sample_r) = voice.sample();
+            sample_l += i32::from(multiply_volume(voice_sample_l, self.volume.main_l.volume));
+            sample_r += i32::from(multiply_volume(voice_sample_r, self.volume.main_r.volume));
+        }
+
+        (f64::from(sample_l) / 24.0, f64::from(sample_r) / 24.0)
     }
 
     pub fn read_register(&mut self, address: u32, size: OpSize) -> u32 {
@@ -428,7 +436,7 @@ impl Spu {
         for voice in 0..16 {
             if value.bit(voice) {
                 log::trace!("Keying on voice {voice}");
-                self.voices[voice as usize].key_on();
+                self.voices[voice as usize].key_on(&self.audio_ram);
             }
         }
 
@@ -442,7 +450,7 @@ impl Spu {
         for voice in 16..24 {
             if value.bit(voice - 16) {
                 log::trace!("Keying on voice {voice}");
-                self.voices[voice as usize].key_on();
+                self.voices[voice as usize].key_on(&self.audio_ram);
             }
         }
 
@@ -480,4 +488,8 @@ impl Spu {
 
 fn get_voice_number(address: u32) -> usize {
     ((address >> 4) & 0x1F) as usize
+}
+
+fn multiply_volume(sample: i16, volume: i16) -> i16 {
+    ((i32::from(sample) * i32::from(volume)) >> 15) as i16
 }

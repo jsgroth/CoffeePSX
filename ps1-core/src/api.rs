@@ -23,7 +23,7 @@ pub trait AudioOutput {
     /// # Errors
     ///
     /// Should propagate any error encountered while queueing the samples.
-    fn queue_samples(&mut self, samples: &[(i16, i16)]) -> Result<(), Self::Err>;
+    fn queue_samples(&mut self, samples: &[(f64, f64)]) -> Result<(), Self::Err>;
 }
 
 #[derive(Debug, Error)]
@@ -49,7 +49,7 @@ pub struct Ps1Emulator {
     cpu: R3000,
     gpu: Gpu,
     spu: Spu,
-    audio_buffer: Vec<(i16, i16)>,
+    audio_buffer: Vec<(f64, f64)>,
     memory: Memory,
     dma_controller: DmaController,
     control_registers: ControlRegisters,

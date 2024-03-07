@@ -1,4 +1,8 @@
-use crate::spu::envelope::{AdsrEnvelope, SweepEnvelope};
+use crate::spu;
+use crate::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
+use crate::spu::envelope::{AdsrEnvelope, AdsrState, SweepEnvelope};
+use crate::spu::{adpcm, multiply_volume, AudioRam};
+use std::cmp;
 
 #[derive(Debug, Clone)]
 pub struct Voice {
@@ -7,7 +11,10 @@ pub struct Voice {
     pub sample_rate: u16,
     pub start_address: u32,
     pub repeat_address: u32,
+    current_address: u32,
     pub adsr: AdsrEnvelope,
+    adpcm_buffer: SpuAdpcmBuffer,
+    pitch_counter: u16,
 }
 
 impl Voice {
@@ -18,14 +25,38 @@ impl Voice {
             sample_rate: 0,
             start_address: 0,
             repeat_address: 0,
+            current_address: 0,
             adsr: AdsrEnvelope::new(),
+            adpcm_buffer: SpuAdpcmBuffer::new(),
+            pitch_counter: 0,
         }
     }
 
-    pub fn clock(&mut self) {
+    pub fn clock(&mut self, audio_ram: &AudioRam) {
         self.volume_l.clock();
         self.volume_r.clock();
         self.adsr.clock();
+
+        // Pitch counter cannot step at greater than $4000 per clock (4 * 44100 Hz)
+        // TODO pitch modulation
+        let pitch_counter_step = cmp::min(0x4000, self.sample_rate);
+        self.pitch_counter += pitch_counter_step;
+        while self.pitch_counter >= 0x1000 {
+            self.pitch_counter -= 0x1000;
+            self.adpcm_buffer.advance();
+            if self.adpcm_buffer.at_end_of_block() {
+                self.decode_adpcm_block(audio_ram);
+            }
+        }
+    }
+
+    pub fn sample(&self) -> (i16, i16) {
+        // TODO Gaussian interpolation
+        let sample = multiply_volume(self.adpcm_buffer.current_sample(), self.adsr.level);
+        let sample_l = multiply_volume(sample, self.volume_l.volume);
+        let sample_r = multiply_volume(sample, self.volume_r.volume);
+
+        (sample_l, sample_r)
     }
 
     pub fn write_volume_l(&mut self, value: u32) {
@@ -57,11 +88,43 @@ impl Voice {
         self.adsr.level as u32
     }
 
-    pub fn key_on(&mut self) {
+    pub fn key_on(&mut self, audio_ram: &AudioRam) {
         self.adsr.key_on();
 
         // Keying on copies start address to repeat address
         self.repeat_address = self.start_address;
+        self.current_address = self.start_address;
+
+        // Immediately decode first ADPCM block and reset ADPCM state
+        self.adpcm_buffer.reset();
+        self.pitch_counter = 0;
+        self.decode_adpcm_block(audio_ram);
+    }
+
+    fn decode_adpcm_block(&mut self, audio_ram: &AudioRam) {
+        // TODO this can wrap since address is in 8-byte units
+        let block = &audio_ram[self.current_address as usize..(self.current_address + 16) as usize];
+        adpcm::decode_spu_block(block, &mut self.adpcm_buffer);
+
+        let AdpcmHeader {
+            loop_start,
+            loop_end,
+            loop_repeat,
+            ..
+        } = self.adpcm_buffer.header;
+        if loop_start {
+            self.repeat_address = self.current_address;
+        }
+
+        if loop_end {
+            self.current_address = self.repeat_address;
+            if !loop_repeat {
+                self.adsr.state = AdsrState::Release;
+                self.adsr.level = 0;
+            }
+        } else {
+            self.current_address = (self.current_address + 16) & spu::AUDIO_RAM_MASK;
+        }
     }
 
     pub fn key_off(&mut self) {
