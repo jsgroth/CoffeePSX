@@ -209,9 +209,15 @@ impl Spu {
         }
     }
 
-    #[allow(clippy::unused_self)]
     fn clock(&mut self) -> (i16, i16) {
-        // TODO actually clock the SPU
+        self.volume.main_l.clock();
+        self.volume.main_r.clock();
+
+        for voice in &mut self.voices {
+            voice.clock();
+        }
+
+        // TODO actually generate samples
         (0, 0)
     }
 
@@ -225,6 +231,7 @@ impl Spu {
         }
 
         let value = match address & 0xFFFE {
+            0x1C00..=0x1D7F => self.read_voice_register(address),
             // KON/KOFF are normally write-only, but reads return the last written value
             0x1D88 => self.control.last_key_on_write & 0xFFFF,
             0x1D8A => self.control.last_key_on_write >> 16,
@@ -306,7 +313,24 @@ impl Spu {
         }
     }
 
-    // $1F801C00-$1F801D7F: Individual voice registers
+    // $1F801C00-$1F801D7F: Individual voice registers (read)
+    fn read_voice_register(&self, address: u32) -> u32 {
+        let voice = get_voice_number(address);
+        if voice >= NUM_VOICES {
+            log::error!("Invalid voice register read: {address:08X}");
+            return 0;
+        }
+
+        match address & 0xF {
+            0xC => {
+                // $1F801C0C + N*$10: Current ADSR level
+                self.voices[voice].read_adsr_level()
+            }
+            _ => todo!("SPU voice {voice} register read: {address:08X}"),
+        }
+    }
+
+    // $1F801C00-$1F801D7F: Individual voice registers (write)
     fn write_voice_register(&mut self, address: u32, value: u32) {
         let voice = get_voice_number(address);
         if voice >= NUM_VOICES {
@@ -316,17 +340,17 @@ impl Spu {
 
         match address & 0xF {
             0x0 => {
-                // $1F801C00: Voice volume L
+                // $1F801C00 + N*$10: Voice volume L
                 self.voices[voice].write_volume_l(value);
                 log::trace!("Voice {voice} volume L: {:?}", self.voices[voice].volume_l);
             }
             0x2 => {
-                // $1F801C02: Voice volume R
+                // $1F801C02 + N*$10: Voice volume R
                 self.voices[voice].write_volume_r(value);
                 log::trace!("Voice {voice} volume R: {:?}", self.voices[voice].volume_r);
             }
             0x4 => {
-                // $1F801C04: Voice sample rate
+                // $1F801C04 + N*$10: Voice sample rate
                 self.voices[voice].write_sample_rate(value);
                 log::trace!(
                     "Voice {voice} sample rate: {:04X}",
@@ -334,7 +358,7 @@ impl Spu {
                 );
             }
             0x6 => {
-                // $1F801C06: ADPCM start address
+                // $1F801C06 + N*$10: ADPCM start address
                 self.voices[voice].write_start_address(value);
                 log::trace!(
                     "Voice {voice} start address: {:05X}",
@@ -342,16 +366,16 @@ impl Spu {
                 );
             }
             0x8 => {
-                // $1F801C08: ADSR settings, low halfword
-                self.voices[voice].adsr.write_low(value);
+                // $1F801C08 + N*$10: ADSR settings, low halfword
+                self.voices[voice].write_adsr_low(value);
                 log::trace!(
                     "Voice {voice} ADSR settings (low): {:?}",
                     self.voices[voice].adsr
                 );
             }
             0xA => {
-                // $1F801C0A: ADSR settings, high halfword
-                self.voices[voice].adsr.write_high(value);
+                // $1F801C0A + N*$10: ADSR settings, high halfword
+                self.voices[voice].write_adsr_high(value);
                 log::trace!(
                     "Voice {voice} ADSR settings (high): {:?}",
                     self.voices[voice].adsr

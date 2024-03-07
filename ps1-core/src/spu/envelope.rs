@@ -34,12 +34,46 @@ impl EnvelopeDirection {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct EnvelopeSettings {
     pub step: u8,
     pub shift: u8,
     pub direction: EnvelopeDirection,
     pub mode: EnvelopeMode,
+}
+
+impl EnvelopeSettings {
+    pub fn wait_cycles(self, current_volume_magnitude: u16) -> u32 {
+        let cycles = 1 << self.shift.saturating_sub(11);
+
+        // Exponential increase is faked by increasing volume at a 4x slower rate when volume is
+        // greater than $6000 out of $7FFF
+        if self.mode == EnvelopeMode::Exponential
+            && self.direction == EnvelopeDirection::Increasing
+            && current_volume_magnitude > 0x6000
+        {
+            4 * cycles
+        } else {
+            cycles
+        }
+    }
+
+    pub fn next_step(self, current_volume_magnitude: u16) -> i16 {
+        let base_step = match self.direction {
+            // 0-3 maps to +7 to +4
+            EnvelopeDirection::Increasing => i32::from(7 - self.step),
+            // 0-3 maps to -8 to -5
+            EnvelopeDirection::Decreasing => -i32::from(8 - self.step),
+        };
+        let step = base_step << 11_u8.saturating_sub(self.shift);
+
+        if self.mode == EnvelopeMode::Exponential && self.direction == EnvelopeDirection::Decreasing
+        {
+            ((step * i32::from(current_volume_magnitude)) >> 15) as i16
+        } else {
+            step as i16
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,35 +92,24 @@ impl SweepPhase {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum VolumeSetting {
-    Fixed(i16),
-    Sweep(i16, EnvelopeSettings, SweepPhase),
+#[derive(Debug, Clone, Copy)]
+pub enum SweepSetting {
+    Fixed,
+    Sweep(EnvelopeSettings, SweepPhase),
 }
 
-impl Default for VolumeSetting {
+impl Default for SweepSetting {
     fn default() -> Self {
-        Self::Fixed(0)
+        Self::Fixed
     }
 }
 
-impl VolumeSetting {
-    pub fn current_volume(&self) -> i16 {
-        match *self {
-            Self::Fixed(volume) | Self::Sweep(volume, ..) => volume,
+impl SweepSetting {
+    fn parse(value: u32) -> Self {
+        if !value.bit(15) {
+            return Self::Fixed;
         }
-    }
 
-    pub fn write(&mut self, value: u32) {
-        *self = if value.bit(15) {
-            Self::parse_sweep(value, self.current_volume())
-        } else {
-            let volume = (value << 1) as i16;
-            Self::Fixed(volume)
-        };
-    }
-
-    fn parse_sweep(value: u32, initial_volume: i16) -> Self {
         let envelope_settings = EnvelopeSettings {
             step: (value & 3) as u8,
             shift: ((value >> 2) & 0x1F) as u8,
@@ -95,14 +118,67 @@ impl VolumeSetting {
         };
         let sweep_phase = SweepPhase::from_bit(value.bit(12));
 
-        Self::Sweep(initial_volume, envelope_settings, sweep_phase)
+        Self::Sweep(envelope_settings, sweep_phase)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SweepEnvelope {
+    pub volume: i16,
+    pub setting: SweepSetting,
+    pub wait_cycles_remaining: u32,
+    pub next_step: i16,
+}
+
+impl SweepEnvelope {
+    pub fn new() -> Self {
+        Self {
+            volume: 0,
+            setting: SweepSetting::default(),
+            wait_cycles_remaining: 1,
+            next_step: 0,
+        }
+    }
+
+    pub fn write(&mut self, value: u32) {
+        self.setting = SweepSetting::parse(value);
+
+        // Writing a fixed volume (bit 15 = 0) also sets current volume
+        if !value.bit(15) {
+            self.volume = (value << 1) as i16;
+        }
+
+        self.wait_cycles_remaining = 1;
+        self.next_step = 0;
+    }
+
+    pub fn clock(&mut self) {
+        let SweepSetting::Sweep(envelope_settings, sweep_phase) = self.setting else {
+            return;
+        };
+
+        self.wait_cycles_remaining -= 1;
+        if self.wait_cycles_remaining == 0 {
+            self.volume = match sweep_phase {
+                SweepPhase::Positive => {
+                    (i32::from(self.volume) + i32::from(self.next_step)).clamp(0, 0x7FFF) as i16
+                }
+                SweepPhase::Negative => {
+                    (i32::from(self.volume) - i32::from(self.next_step)).clamp(-0x7FFF, 0) as i16
+                }
+            };
+
+            let current_volume_magnitude = self.volume.saturating_abs() as u16;
+            self.wait_cycles_remaining = envelope_settings.wait_cycles(current_volume_magnitude);
+            self.next_step = envelope_settings.next_step(current_volume_magnitude);
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct VolumeControl {
-    pub main_l: VolumeSetting,
-    pub main_r: VolumeSetting,
+    pub main_l: SweepEnvelope,
+    pub main_r: SweepEnvelope,
     pub cd_l: i16,
     pub cd_r: i16,
 }
@@ -110,8 +186,8 @@ pub struct VolumeControl {
 impl VolumeControl {
     pub fn new() -> Self {
         Self {
-            main_l: VolumeSetting::default(),
-            main_r: VolumeSetting::default(),
+            main_l: SweepEnvelope::new(),
+            main_r: SweepEnvelope::new(),
             cd_l: 0,
             cd_r: 0,
         }
@@ -174,7 +250,7 @@ impl AdsrSettings {
         }
     }
 
-    // $1F801C08: ADSR settings, low halfword
+    // $1F801C08 + N*$10: ADSR settings, low halfword
     pub fn write_low(&mut self, value: u32) {
         self.attack_mode = EnvelopeMode::from_bit(value.bit(15));
         self.attack_shift = ((value >> 10) & 0x1F) as u8;
@@ -183,7 +259,7 @@ impl AdsrSettings {
         self.sustain_level = parse_sustain_level(value & 0xF);
     }
 
-    // $1F801C0A: ADSR settings, high halfword
+    // $1F801C0A + N*$10: ADSR settings, high halfword
     pub fn write_high(&mut self, value: u32) {
         self.sustain_mode = EnvelopeMode::from_bit(value.bit(15));
         self.sustain_direction = EnvelopeDirection::from_bit(value.bit(14));
@@ -196,4 +272,101 @@ impl AdsrSettings {
 
 fn parse_sustain_level(value: u32) -> u16 {
     (((value & 0xF) + 1) << 11) as u16
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AdsrState {
+    Attack,
+    Decay,
+    Sustain,
+    #[default]
+    Release,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdsrEnvelope {
+    pub level: i16,
+    pub settings: AdsrSettings,
+    pub state: AdsrState,
+    pub wait_cycles_remaining: u32,
+    pub next_step: i16,
+}
+
+impl AdsrEnvelope {
+    pub fn new() -> Self {
+        Self {
+            level: 0,
+            settings: AdsrSettings::new(),
+            state: AdsrState::default(),
+            wait_cycles_remaining: 1,
+            next_step: 0,
+        }
+    }
+
+    pub fn clock(&mut self) {
+        self.wait_cycles_remaining -= 1;
+        if self.wait_cycles_remaining != 0 {
+            return;
+        }
+
+        let min_level: i32 = match self.state {
+            AdsrState::Sustain => self.settings.sustain_level.into(),
+            AdsrState::Attack | AdsrState::Decay | AdsrState::Release => 0,
+        };
+
+        self.level = (i32::from(self.level) + i32::from(self.next_step))
+            .clamp(min_level, i16::MAX.into()) as i16;
+
+        if self.state == AdsrState::Attack && self.level == i16::MAX {
+            self.state = AdsrState::Decay;
+        }
+
+        if self.state == AdsrState::Decay && self.level == self.settings.sustain_level as i16 {
+            self.state = AdsrState::Sustain;
+        }
+
+        let envelope_settings = match self.state {
+            AdsrState::Attack => EnvelopeSettings {
+                step: self.settings.attack_step,
+                shift: self.settings.attack_shift,
+                direction: EnvelopeDirection::Increasing,
+                mode: self.settings.attack_mode,
+            },
+            AdsrState::Decay => EnvelopeSettings {
+                step: 0,
+                shift: self.settings.decay_shift,
+                direction: EnvelopeDirection::Decreasing,
+                mode: EnvelopeMode::Exponential,
+            },
+            AdsrState::Sustain => EnvelopeSettings {
+                step: self.settings.sustain_step,
+                shift: self.settings.sustain_shift,
+                direction: self.settings.sustain_direction,
+                mode: self.settings.sustain_mode,
+            },
+            AdsrState::Release => EnvelopeSettings {
+                step: 0,
+                shift: self.settings.release_shift,
+                direction: EnvelopeDirection::Decreasing,
+                mode: self.settings.release_mode,
+            },
+        };
+        self.wait_cycles_remaining = envelope_settings.wait_cycles(self.level as u16);
+        self.next_step = envelope_settings.next_step(self.level as u16);
+    }
+
+    pub fn key_on(&mut self) {
+        self.state = AdsrState::Attack;
+        self.level = 0;
+
+        self.wait_cycles_remaining = 1;
+        self.next_step = 0;
+    }
+
+    pub fn key_off(&mut self) {
+        self.state = AdsrState::Release;
+
+        self.wait_cycles_remaining = 1;
+        self.next_step = 0;
+    }
 }
