@@ -15,40 +15,104 @@ pub struct Bus<'a> {
     pub timers: &'a mut Timers,
 }
 
+macro_rules! memory_map {
+    ($address:expr, [
+        main_ram => $main_ram:expr,
+        expansion_1 => $expansion_1:expr,
+        scratchpad => $scratchpad:expr,
+        io_registers => $io_registers:expr,
+        $(expansion_2 => $expansion_2:expr,)?
+        $(bios => $bios:expr,)?
+        _ => $default:expr $(,)?
+    ]) => {
+        match $address {
+            0x00000000..=0x007FFFFF => $main_ram,
+            0x1F000000..=0x1F7FFFFF => $expansion_1,
+            0x1F800000..=0x1F800FFF => $scratchpad,
+            0x1F801000..=0x1F801FFF => $io_registers,
+            $(0x1F802000..=0x1F803FFF => $expansion_2,)?
+            $(0x1FC00000..=0x1FFFFFFF => $bios,)?
+            _ => $default
+        }
+    }
+}
+
 impl<'a> Bus<'a> {
     // TODO memory control for main RAM and BIOS ROM
     // TODO I-cache for opcode reads
-    pub fn read(&mut self, address: u32, size: OpSize) -> u32 {
-        match address {
-            0x00000000..=0x007FFFFF => self.memory.read_main_ram(address, size),
-            0x1F000000..=0x1F7FFFFF => {
-                log::warn!("Unhandled expansion 1 read {address:08X} {size:?}");
+    pub fn read_u8(&mut self, address: u32) -> u32 {
+        memory_map!(address, [
+            main_ram => self.memory.read_main_ram_u8(address).into(),
+            expansion_1 => {
+                log::warn!("Unhandled 8-bit expansion 1 read {address:08X}");
                 0
-            }
-            0x1F800000..=0x1F800FFF => self.memory.read_scratchpad_ram(address, size),
-            0x1F801000..=0x1F801FFF => self.read_io_register(address, size),
-            0x1FC00000..=0x1FFFFFFF => self.memory.read_bios_rom(address, size),
-            _ => todo!("read {address:08X} {size:?}"),
-        }
+            },
+            scratchpad => self.memory.read_scratchpad_u8(address).into(),
+            io_registers => self.read_io_register(address, OpSize::Byte),
+            bios => self.memory.read_bios_u8(address).into(),
+            _ => todo!("8-bit read {address:08X}")
+        ])
     }
 
-    pub fn write(&mut self, address: u32, value: u32, size: OpSize) {
-        match address {
-            0x00000000..=0x007FFFFF => {
-                self.memory.write_main_ram(address, value, size);
-            }
-            0x1F000000..=0x1F7FFFFF => {
-                unimplemented_register_write("Expansion Device 1", address, value, size);
-            }
-            0x1F800000..=0x1F800FFF => {
-                self.memory.write_scratchpad_ram(address, value, size);
-            }
-            0x1F801000..=0x1F801FFF => {
-                self.write_io_register(address, value, size);
-            }
-            0x1F802041 => log::warn!("Unhandled POST write {value:08X} {size:?}"),
-            _ => todo!("write {address:08X} {size:?}"),
-        }
+    pub fn read_u16(&mut self, address: u32) -> u32 {
+        memory_map!(address, [
+            main_ram => self.memory.read_main_ram_u16(address).into(),
+            expansion_1 => {
+                log::warn!("Unhandled 16-bit expansion 1 read {address:08X}");
+                0
+            },
+            scratchpad => self.memory.read_scratchpad_u16(address).into(),
+            io_registers => self.read_io_register(address, OpSize::HalfWord),
+            bios => self.memory.read_bios_u16(address).into(),
+            _ => todo!("16-bit read {address:08X}")
+        ])
+    }
+
+    pub fn read_u32(&mut self, address: u32) -> u32 {
+        memory_map!(address, [
+            main_ram => self.memory.read_main_ram_u32(address),
+            expansion_1 => {
+                log::warn!("Unhandled 32-bit expansion 1 read {address:08X}");
+                0
+            },
+            scratchpad => self.memory.read_scratchpad_u32(address),
+            io_registers => self.read_io_register(address, OpSize::Word),
+            bios => self.memory.read_bios_u32(address),
+            _ => todo!("32-bit read {address:08X}")
+        ])
+    }
+
+    pub fn write_u8(&mut self, address: u32, value: u32) {
+        memory_map!(address, [
+            main_ram => self.memory.write_main_ram_u8(address, value as u8),
+            expansion_1 => unimplemented_register_write("Expansion Device 1", address, value, OpSize::Byte),
+            scratchpad => self.memory.write_scratchpad_u8(address, value as u8),
+            io_registers => self.write_io_register(address, value, OpSize::Byte),
+            expansion_2 => unimplemented_register_write("Expansion Device 2", address, value, OpSize::Byte),
+            _ => todo!("8-bit write {address:08X} {value:08X}")
+        ]);
+    }
+
+    pub fn write_u16(&mut self, address: u32, value: u32) {
+        memory_map!(address, [
+            main_ram => self.memory.write_main_ram_u16(address, value as u16),
+            expansion_1 => unimplemented_register_write("Expansion Device 1", address, value, OpSize::HalfWord),
+            scratchpad => self.memory.write_scratchpad_u16(address, value as u16),
+            io_registers => self.write_io_register(address, value, OpSize::HalfWord),
+            expansion_2 => unimplemented_register_write("Expansion Device 2", address, value, OpSize::HalfWord),
+            _ => todo!("16-bit write {address:08X} {value:08X}")
+        ]);
+    }
+
+    pub fn write_u32(&mut self, address: u32, value: u32) {
+        memory_map!(address, [
+            main_ram => self.memory.write_main_ram_u32(address, value),
+            expansion_1 => unimplemented_register_write("Expansion Device 1", address, value, OpSize::Word),
+            scratchpad => self.memory.write_scratchpad_u32(address, value),
+            io_registers => self.write_io_register(address, value, OpSize::Word),
+            expansion_2 => unimplemented_register_write("Expansion Device 2", address, value, OpSize::Word),
+            _ => todo!("32-bit write {address:08X} {value:08X}")
+        ]);
     }
 
     pub fn hardware_interrupt_pending(&self) -> bool {

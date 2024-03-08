@@ -1,5 +1,4 @@
 use crate::control::{ControlRegisters, InterruptType};
-use crate::cpu::OpSize;
 use crate::gpu::Gpu;
 use crate::memory::Memory;
 use crate::num::U32Ext;
@@ -337,7 +336,7 @@ fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &Memory)
         DmaDirection::FromRam => {
             let mut address = config.start_address & !3;
             for _ in 0..config.block_size * config.num_blocks {
-                let word = memory.read_main_ram(address, OpSize::Word);
+                let word = memory.read_main_ram_u32(address);
                 gpu.write_gp0_command(word);
 
                 address = match config.step {
@@ -358,12 +357,12 @@ fn run_gpu_linked_list_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &M
             let mut address = config.start_address & !3;
             loop {
                 // TODO timing, don't do all at once
-                let node = memory.read_main_ram(address, OpSize::Word);
+                let node = memory.read_main_ram_u32(address);
 
                 let word_count = node >> 24;
                 for i in 0..word_count {
                     let word_addr = address.wrapping_add(4 * (i + 1));
-                    let word = memory.read_main_ram(word_addr, OpSize::Word);
+                    let word = memory.read_main_ram_u32(word_addr);
                     gpu.write_gp0_command(word);
                 }
 
@@ -393,7 +392,7 @@ fn run_otc_dma(config: &ChannelConfig, memory: &mut Memory) {
             address.wrapping_sub(4) & 0x1FFFFF
         };
 
-        memory.write_main_ram(address, next_addr, OpSize::Word);
+        memory.write_main_ram_u32(address, next_addr);
 
         address = next_addr;
     }

@@ -110,40 +110,31 @@ pub enum OpSize {
     Word,
 }
 
-impl OpSize {
-    pub fn read_memory(self, memory: &[u8], address: u32) -> u32 {
-        let address = address as usize;
-        match self {
-            Self::Byte => memory[address].into(),
-            Self::HalfWord => {
-                u16::from_le_bytes(memory[address..address + 2].try_into().unwrap()).into()
-            }
-            Self::Word => u32::from_le_bytes(memory[address..address + 4].try_into().unwrap()),
-        }
-    }
-
-    pub fn write_memory(self, memory: &mut [u8], address: u32, value: u32) {
-        let address = address as usize;
-        match self {
-            Self::Byte => {
-                memory[address] = value as u8;
-            }
-            Self::HalfWord => {
-                let bytes = (value as u16).to_le_bytes();
-                memory[address..address + 2].copy_from_slice(&bytes);
-            }
-            Self::Word => {
-                let bytes = value.to_le_bytes();
-                memory[address..address + 4].copy_from_slice(&bytes);
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct R3000 {
     registers: Registers,
     cp0: SystemControlCoprocessor,
+}
+
+macro_rules! impl_bus_write {
+    ($name:ident, $write_fn:ident) => {
+        fn $name(&mut self, bus: &mut Bus<'_>, address: u32, value: u32) {
+            if self.cp0.status.isolate_cache {
+                // If cache is isolated, send writes directly to scratchpad RAM
+                // The BIOS isolates cache on startup to zero out scratchpad
+                bus.$write_fn(0x1F800000 | (address & 0x3FF), value);
+                return;
+            }
+
+            if address == 0xFFFE0130 {
+                self.cp0.cache_control.write(value);
+                return;
+            }
+
+            validate_address(address);
+            bus.$write_fn(address & 0x1FFFFFFF, value);
+        }
+    };
 }
 
 impl R3000 {
@@ -198,7 +189,7 @@ impl R3000 {
             return;
         }
 
-        let opcode = self.bus_read(bus, pc, OpSize::Word);
+        let opcode = self.bus_read_u32(bus, pc);
         let (in_delay_slot, next_pc) = match self.registers.delayed_branch.take() {
             Some(address) => (true, address),
             None => (false, pc.wrapping_add(4)),
@@ -212,44 +203,28 @@ impl R3000 {
         self.registers.process_delayed_loads();
     }
 
-    #[allow(clippy::match_same_arms)]
-    fn bus_read(&mut self, bus: &mut Bus<'_>, address: u32, size: OpSize) -> u32 {
-        match address {
-            // kuseg (only first 512MB are valid addresses)
-            0x00000000..=0x1FFFFFFF => bus.read(address, size),
-            // kseg0
-            0x80000000..=0x9FFFFFFF => bus.read(address & 0x1FFFFFFF, size),
-            // kseg1
-            0xA0000000..=0xBFFFFFFF => bus.read(address & 0x1FFFFFFF, size),
-            // cache control register in kseg2
-            0xFFFE0130 => todo!("cache control read {address:08X} {size:?}"),
-            // other addresses in kuseg and kseg2 are invalid
-            _ => todo!("invalid address read {address:08X} {size:?}"),
-        }
+    // TODO handle kuseg vs. kseg0 vs. kseg1
+    #[allow(clippy::unused_self)]
+    fn bus_read_u8(&self, bus: &mut Bus<'_>, address: u32) -> u32 {
+        validate_address(address);
+        bus.read_u8(address & 0x1FFFFFFF)
     }
 
-    #[allow(clippy::match_same_arms)]
-    fn bus_write(&mut self, bus: &mut Bus<'_>, address: u32, value: u32, size: OpSize) {
-        if self.cp0.status.isolate_cache {
-            // If cache is isolated, send writes directly to scratchpad RAM
-            // The BIOS isolates cache on startup to zero out scratchpad
-            bus.write(0x1F800000 | (address & 0x3FF), value, size);
-            return;
-        }
-
-        match address {
-            // kuseg (only first 512MB are valid addresses)
-            0x00000000..=0x1FFFFFFF => bus.write(address, value, size),
-            // kseg0
-            0x80000000..=0x9FFFFFFF => bus.write(address & 0x1FFFFFFF, value, size),
-            // kseg1
-            0xA0000000..=0xBFFFFFFF => bus.write(address & 0x1FFFFFFF, value, size),
-            // cache control register in kseg2
-            0xFFFE0130 => self.cp0.cache_control.write(value),
-            // other addresses in kuseg and kseg2 are invalid
-            _ => todo!("invalid address write {address:08X} {value:08X} {size:?}"),
-        }
+    #[allow(clippy::unused_self)]
+    fn bus_read_u16(&self, bus: &mut Bus<'_>, address: u32) -> u32 {
+        validate_address(address);
+        bus.read_u16(address & 0x1FFFFFFF)
     }
+
+    #[allow(clippy::unused_self)]
+    fn bus_read_u32(&self, bus: &mut Bus<'_>, address: u32) -> u32 {
+        validate_address(address);
+        bus.read_u32(address & 0x1FFFFFFF)
+    }
+
+    impl_bus_write!(bus_write_u8, write_u8);
+    impl_bus_write!(bus_write_u16, write_u16);
+    impl_bus_write!(bus_write_u32, write_u32);
 
     fn handle_exception(&mut self, exception: Exception, pc: u32, in_delay_slot: bool) {
         log::trace!(
@@ -265,5 +240,11 @@ impl R3000 {
             EXCEPTION_VECTOR
         };
         self.registers.delayed_branch = None;
+    }
+}
+
+fn validate_address(address: u32) {
+    if (0x20000000..0x80000000).contains(&address) || address >= 0xC0000000 {
+        todo!("unimplemented bus address {address:08X}");
     }
 }
