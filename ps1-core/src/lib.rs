@@ -1,5 +1,6 @@
 pub mod api;
 mod bus;
+mod cd;
 mod control;
 mod cpu;
 mod dma;

@@ -1,3 +1,4 @@
+use crate::cd::CdController;
 use crate::control::ControlRegisters;
 use crate::cpu::OpSize;
 use crate::dma::DmaController;
@@ -9,6 +10,7 @@ use crate::timers::Timers;
 pub struct Bus<'a> {
     pub gpu: &'a mut Gpu,
     pub spu: &'a mut Spu,
+    pub cd_controller: &'a mut CdController,
     pub memory: &'a mut Memory,
     pub dma_controller: &'a mut DmaController,
     pub control_registers: &'a mut ControlRegisters,
@@ -138,11 +140,11 @@ impl<'a> Bus<'a> {
             },
             0x10F4 => self.dma_controller.read_interrupt(),
             0x1110 => self.timers.timer_1.counter.into(),
-            0x1800..=0x1803 => unimplemented_register_read("CD-ROM", address, size),
+            0x1800..=0x1803 => read_cd_controller(self.cd_controller, address, size),
             0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(),
             0x1C00..=0x1FFF => self.spu.read_register(address, size),
-            _ => panic!("I/O register read {address:08X} {size:?}"),
+            _ => todo!("I/O register read {address:08X} {size:?}"),
         }
     }
 
@@ -187,11 +189,30 @@ impl<'a> Bus<'a> {
                 .dma_controller
                 .write_interrupt(value, self.control_registers),
             0x1100..=0x112F => self.timers.write_register(address, value),
-            0x1800..=0x1803 => unimplemented_register_write("CD-ROM", address, value, size),
+            0x1800..=0x1803 => self.cd_controller.write_port(address, value as u8),
             0x1810 => self.gpu.write_gp0_command(value),
             0x1814 => self.gpu.write_gp1_command(value),
             0x1C00..=0x1FFF => self.spu.write_register(address, value, size),
-            _ => panic!("I/O register write {address:08X} {value:08X} {size:?}"),
+            _ => todo!("I/O register write {address:08X} {value:08X} {size:?}"),
+        }
+    }
+}
+
+fn read_cd_controller(cd_controller: &mut CdController, address: u32, size: OpSize) -> u32 {
+    match size {
+        OpSize::Byte => cd_controller.read_port(address).into(),
+        OpSize::HalfWord => {
+            // 16-bit reads simply perform two consecutive 8-bit reads
+            let lsb = cd_controller.read_port(address);
+            let msb = cd_controller.read_port(address);
+            u16::from_le_bytes([lsb, msb]).into()
+        }
+        OpSize::Word => {
+            // 32-bit reads simply perform four consecutive 8-bit reads.
+            // Due to alignment, 32-bit reads can only access the status register which should not
+            // change between reads. Simply duplicate the byte four times
+            let byte = cd_controller.read_port(address);
+            u32::from_le_bytes([byte, byte, byte, byte])
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::bus::Bus;
+use crate::cd::CdController;
 use crate::control::ControlRegisters;
 use crate::cpu::R3000;
 use crate::dma::DmaController;
@@ -50,6 +51,7 @@ pub struct Ps1Emulator {
     gpu: Gpu,
     spu: Spu,
     audio_buffer: Vec<(f64, f64)>,
+    cd_controller: CdController,
     memory: Memory,
     dma_controller: DmaController,
     control_registers: ControlRegisters,
@@ -106,6 +108,7 @@ impl Ps1Emulator {
             gpu: Gpu::new(),
             spu: Spu::new(),
             audio_buffer: Vec::with_capacity(1600),
+            cd_controller: CdController::new(),
             memory,
             dma_controller: DmaController::new(),
             control_registers: ControlRegisters::new(),
@@ -169,6 +172,7 @@ impl Ps1Emulator {
         self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
             spu: &mut self.spu,
+            cd_controller: &mut self.cd_controller,
             memory: &mut self.memory,
             dma_controller: &mut self.dma_controller,
             control_registers: &mut self.control_registers,
@@ -186,6 +190,8 @@ impl Ps1Emulator {
         let cpu_cycles = 2;
 
         self.spu.tick(cpu_cycles, &mut self.audio_buffer);
+        self.cd_controller
+            .tick(cpu_cycles, &mut self.control_registers);
 
         if self
             .gpu

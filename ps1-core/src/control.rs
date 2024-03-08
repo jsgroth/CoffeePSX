@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptType {
     VBlank,
+    CdRom,
     Dma,
 }
 
@@ -8,6 +9,7 @@ impl InterruptType {
     const fn bit_mask(self) -> u16 {
         match self {
             Self::VBlank => 1,
+            Self::CdRom => 1 << 2,
             Self::Dma => 1 << 3,
         }
     }
