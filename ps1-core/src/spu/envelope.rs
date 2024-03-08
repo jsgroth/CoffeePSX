@@ -310,8 +310,8 @@ impl AdsrEnvelope {
         }
 
         let min_level: i32 = match self.state {
-            AdsrState::Sustain => self.settings.sustain_level.into(),
-            AdsrState::Attack | AdsrState::Decay | AdsrState::Release => 0,
+            AdsrState::Decay => self.settings.sustain_level.into(),
+            AdsrState::Attack | AdsrState::Sustain | AdsrState::Release => 0,
         };
 
         self.level = (i32::from(self.level) + i32::from(self.next_step))
