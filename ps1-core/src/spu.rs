@@ -222,11 +222,20 @@ impl Spu {
         let mut sample_r = 0;
         for voice in &self.voices {
             let (voice_sample_l, voice_sample_r) = voice.sample();
-            sample_l += i32::from(multiply_volume(voice_sample_l, self.volume.main_l.volume));
-            sample_r += i32::from(multiply_volume(voice_sample_r, self.volume.main_r.volume));
+            sample_l += i32::from(voice_sample_l);
+            sample_r += i32::from(voice_sample_r);
         }
 
-        (f64::from(sample_l) / 24.0, f64::from(sample_r) / 24.0)
+        let sample_l = sample_l.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+        let sample_r = sample_r.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+
+        let sample_l = multiply_volume(sample_l, self.volume.main_l.volume);
+        let sample_r = multiply_volume(sample_r, self.volume.main_r.volume);
+
+        let sample_l = f64::from(sample_l) / -f64::from(i16::MIN);
+        let sample_r = f64::from(sample_r) / -f64::from(i16::MIN);
+
+        (sample_l, sample_r)
     }
 
     pub fn read_register(&mut self, address: u32, size: OpSize) -> u32 {
