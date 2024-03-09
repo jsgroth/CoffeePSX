@@ -3,7 +3,7 @@ use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use minifb::{Window, WindowOptions};
 use ps1_core::api::{AudioOutput, Ps1Emulator, Renderer};
 use std::collections::VecDeque;
 use std::path::Path;
@@ -24,7 +24,6 @@ struct Args {
 struct MiniFbRenderer<'a> {
     window: &'a mut Window,
     frame_buffer: &'a mut [u32],
-    paused: &'a mut bool,
 }
 
 impl<'a> Renderer for MiniFbRenderer<'a> {
@@ -48,10 +47,6 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
 
         self.window
             .update_with_buffer(self.frame_buffer, 1024, 512)?;
-
-        if self.window.is_key_pressed(Key::P, KeyRepeat::No) {
-            *self.paused = !*self.paused;
-        }
 
         Ok(())
     }
@@ -164,7 +159,6 @@ fn main() -> anyhow::Result<()> {
                 &mut MiniFbRenderer {
                     window: &mut window,
                     frame_buffer: &mut frame_buffer,
-                    paused: &mut false,
                 },
                 &mut audio_output,
             )?;
@@ -176,25 +170,14 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut paused = false;
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        if !paused {
-            emulator.tick(
-                &mut MiniFbRenderer {
-                    window: &mut window,
-                    frame_buffer: &mut frame_buffer,
-                    paused: &mut paused,
-                },
-                &mut audio_output,
-            )?;
-        } else {
-            thread::sleep(Duration::from_micros(16667));
-            window.update();
-
-            if window.is_key_pressed(Key::P, KeyRepeat::No) {
-                paused = !paused;
-            }
-        }
+    while window.is_open() {
+        emulator.tick(
+            &mut MiniFbRenderer {
+                window: &mut window,
+                frame_buffer: &mut frame_buffer,
+            },
+            &mut audio_output,
+        )?;
     }
 
     Ok(())

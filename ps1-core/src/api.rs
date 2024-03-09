@@ -118,6 +118,7 @@ impl Ps1Emulator {
         })
     }
 
+    #[inline]
     #[must_use]
     pub fn cpu_pc(&self) -> u32 {
         self.cpu.pc()
@@ -164,6 +165,7 @@ impl Ps1Emulator {
     /// # Errors
     ///
     /// Will propagate any error encountered while rendering a frame.
+    #[inline]
     pub fn tick<R: Renderer, A: AudioOutput>(
         &mut self,
         renderer: &mut R,
