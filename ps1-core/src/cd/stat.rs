@@ -11,8 +11,8 @@ pub struct ErrorFlags(u8);
 impl ErrorFlags {
     pub const NONE: Self = Self(0);
     pub const ERROR: Self = Self(1);
-    pub const SEEK_ERROR: Self = Self(1 << 2);
-    pub const ID_ERROR: Self = Self(1 << 3);
+    // pub const SEEK_ERROR: Self = Self(1 << 2);
+    // pub const ID_ERROR: Self = Self(1 << 3);
 }
 
 impl BitOr for ErrorFlags {

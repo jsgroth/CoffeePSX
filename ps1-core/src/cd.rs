@@ -46,7 +46,7 @@ impl InterruptRegisters {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ZeroFill {
     Yes,
-    No,
+    // No,
 }
 
 #[derive(Debug, Clone)]
