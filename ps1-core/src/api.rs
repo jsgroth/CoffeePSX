@@ -222,17 +222,15 @@ impl Ps1Emulator {
         // A($3C) and B($3D) are both the putchar() function, which prints the ASCII character
         // in R4 to the TTY.
         let pc = self.cpu.pc() & 0x1FFFFFFF;
-        if pc == 0xA0 || pc == 0xB0 {
-            let r9 = self.cpu.get_gpr(9);
-            if (pc == 0xA0 && r9 == 0x3C) || (pc == 0xB0 && r9 == 0x3D) {
-                let r4 = self.cpu.get_gpr(4);
-                let c = r4 as u8 as char;
-                if c == '\n' {
-                    println!("TTY: {}", self.tty_buffer);
-                    self.tty_buffer.clear();
-                } else {
-                    self.tty_buffer.push(c);
-                }
+        let r9 = self.cpu.get_gpr(9);
+        if (pc == 0xA0 && r9 == 0x3C) || (pc == 0xB0 && r9 == 0x3D) {
+            let r4 = self.cpu.get_gpr(4);
+            let c = r4 as u8 as char;
+            if c == '\n' {
+                println!("TTY: {}", self.tty_buffer);
+                self.tty_buffer.clear();
+            } else {
+                self.tty_buffer.push(c);
             }
         }
     }
