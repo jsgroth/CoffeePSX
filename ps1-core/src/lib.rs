@@ -5,6 +5,7 @@ mod control;
 mod cpu;
 mod dma;
 mod gpu;
+pub mod input;
 mod memory;
 mod num;
 mod spu;

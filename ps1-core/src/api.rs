@@ -4,6 +4,7 @@ use crate::control::ControlRegisters;
 use crate::cpu::R3000;
 use crate::dma::DmaController;
 use crate::gpu::{Gpu, TickEffect};
+use crate::input::Ps1Inputs;
 use crate::memory::Memory;
 use crate::spu::Spu;
 use crate::timers::Timers;
@@ -168,6 +169,7 @@ impl Ps1Emulator {
     #[inline]
     pub fn tick<R: Renderer, A: AudioOutput>(
         &mut self,
+        _inputs: Ps1Inputs,
         renderer: &mut R,
         audio_output: &mut A,
     ) -> Result<(), TickError<R::Err, A::Err>> {

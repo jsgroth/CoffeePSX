@@ -3,8 +3,9 @@ use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
-use minifb::{Window, WindowOptions};
+use minifb::{Key, Window, WindowOptions};
 use ps1_core::api::{AudioOutput, Ps1Emulator, Renderer};
+use ps1_core::input::Ps1Inputs;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -24,6 +25,7 @@ struct Args {
 struct MiniFbRenderer<'a> {
     window: &'a mut Window,
     frame_buffer: &'a mut [u32],
+    inputs: &'a mut Ps1Inputs,
 }
 
 impl<'a> Renderer for MiniFbRenderer<'a> {
@@ -48,8 +50,29 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
         self.window
             .update_with_buffer(self.frame_buffer, 1024, 512)?;
 
+        update_inputs(self.window, self.inputs);
+
         Ok(())
     }
+}
+
+fn update_inputs(window: &Window, inputs: &mut Ps1Inputs) {
+    inputs.p1 = inputs
+        .p1
+        .with_up(window.is_key_down(Key::Up))
+        .with_left(window.is_key_down(Key::Left))
+        .with_right(window.is_key_down(Key::Right))
+        .with_down(window.is_key_down(Key::Down))
+        .with_cross(window.is_key_down(Key::X))
+        .with_circle(window.is_key_down(Key::S))
+        .with_square(window.is_key_down(Key::Z))
+        .with_triangle(window.is_key_down(Key::A))
+        .with_l1(window.is_key_down(Key::W))
+        .with_l2(window.is_key_down(Key::Q))
+        .with_r1(window.is_key_down(Key::E))
+        .with_r2(window.is_key_down(Key::R))
+        .with_start(window.is_key_down(Key::Enter))
+        .with_select(window.is_key_down(Key::RightShift));
 }
 
 fn rgb_5_to_8(color: u16) -> u32 {
@@ -146,6 +169,8 @@ fn main() -> anyhow::Result<()> {
     let (mut audio_output, audio_stream) = create_audio_output()?;
     audio_stream.play()?;
 
+    let mut inputs = Ps1Inputs::default();
+
     if let Some(exe_path) = &args.exe_path {
         log::info!("Sideloading EXE from '{exe_path}'");
 
@@ -156,9 +181,11 @@ fn main() -> anyhow::Result<()> {
         // Sideload EXEs by stealing execution from the BIOS once it reaches this point.
         loop {
             emulator.tick(
+                inputs,
                 &mut MiniFbRenderer {
                     window: &mut window,
                     frame_buffer: &mut frame_buffer,
+                    inputs: &mut inputs,
                 },
                 &mut audio_output,
             )?;
@@ -170,11 +197,13 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    while window.is_open() {
+    while window.is_open() && !window.is_key_down(Key::Escape) {
         emulator.tick(
+            inputs,
             &mut MiniFbRenderer {
                 window: &mut window,
                 frame_buffer: &mut frame_buffer,
+                inputs: &mut inputs,
             },
             &mut audio_output,
         )?;
