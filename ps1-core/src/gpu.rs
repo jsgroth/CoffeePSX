@@ -1,3 +1,5 @@
+//! PS1 GPU (Graphics Processing Unit)
+
 mod gp0;
 mod gp1;
 mod registers;

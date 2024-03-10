@@ -1,3 +1,5 @@
+//! PS1 public interface and main loop
+
 use crate::bus::Bus;
 use crate::cd::CdController;
 use crate::control::ControlRegisters;

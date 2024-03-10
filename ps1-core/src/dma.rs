@@ -1,3 +1,5 @@
+//! PS1 DMA registers and transfers
+
 use crate::control::{ControlRegisters, InterruptType};
 use crate::gpu::Gpu;
 use crate::memory::Memory;

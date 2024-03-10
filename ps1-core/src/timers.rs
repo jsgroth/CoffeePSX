@@ -1,3 +1,5 @@
+//! PS1 hardware timers
+
 #[derive(Debug, Clone)]
 pub struct Timer {
     pub counter: u16,

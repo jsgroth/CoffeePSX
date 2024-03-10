@@ -1,3 +1,7 @@
+//! LSI CW33300, the PS1 CPU
+//!
+//! Uses the MIPS I instruction set and is binary-compatible with the R3000
+
 mod cp0;
 mod instructions;
 

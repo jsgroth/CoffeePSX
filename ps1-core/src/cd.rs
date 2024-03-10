@@ -1,3 +1,5 @@
+//! PS1 CD-ROM controller and drive
+
 mod macros;
 mod stat;
 

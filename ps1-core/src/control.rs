@@ -1,3 +1,5 @@
+//! PS1 control registers (e.g. interrupt registers)
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptType {
     VBlank,

@@ -1,3 +1,5 @@
+//! PS1 memory map
+
 use crate::cd::CdController;
 use crate::control::ControlRegisters;
 use crate::cpu::OpSize;

@@ -1,3 +1,5 @@
+//! PS1 system memory (main RAM / scratchpad / BIOS ROM)
+
 use crate::api::{Ps1Error, Ps1Result};
 
 const BIOS_ROM_LEN: usize = 512 * 1024;
