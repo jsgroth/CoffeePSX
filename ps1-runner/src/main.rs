@@ -6,6 +6,7 @@ use env_logger::Env;
 use minifb::{Key, Window, WindowOptions};
 use ps1_core::api::{AudioOutput, Ps1Emulator, Renderer};
 use ps1_core::input::Ps1Inputs;
+use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -32,20 +33,21 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
     type Err = anyhow::Error;
 
     fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err> {
-        for y in 0..512 {
-            for x in 0..1024 {
-                let vram_addr = (2048 * y + 2 * x) as usize;
-                let color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
+        self.frame_buffer
+            .par_chunks_exact_mut(1024)
+            .enumerate()
+            .for_each(|(y, row)| {
+                for (x, fb_color) in row.iter_mut().enumerate() {
+                    let vram_addr = 2048 * y + 2 * x;
+                    let color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
 
-                let r = color & 0x1F;
-                let g = (color >> 5) & 0x1F;
-                let b = (color >> 10) & 0x1F;
+                    let r = color & 0x1F;
+                    let g = (color >> 5) & 0x1F;
+                    let b = (color >> 10) & 0x1F;
 
-                let color_u32 = rgb_5_to_8(b) | (rgb_5_to_8(g) << 8) | (rgb_5_to_8(r) << 16);
-
-                self.frame_buffer[1024 * y as usize + x as usize] = color_u32;
-            }
-        }
+                    *fb_color = rgb_5_to_8(b) | (rgb_5_to_8(g) << 8) | (rgb_5_to_8(r) << 16);
+                }
+            });
 
         self.window
             .update_with_buffer(self.frame_buffer, 1024, 512)?;
@@ -75,8 +77,13 @@ fn update_inputs(window: &Window, inputs: &mut Ps1Inputs) {
         .with_select(window.is_key_down(Key::RightShift));
 }
 
+const RGB_5_TO_8: &[u32; 32] = &[
+    0, 8, 16, 25, 33, 41, 49, 58, 66, 74, 82, 90, 99, 107, 115, 123, 132, 140, 148, 156, 165, 173,
+    181, 189, 197, 206, 214, 222, 230, 239, 247, 255,
+];
+
 fn rgb_5_to_8(color: u16) -> u32 {
-    (255.0 * f64::from(color) / 31.0).round() as u32
+    RGB_5_TO_8[color as usize]
 }
 
 struct CpalAudioOutput {
