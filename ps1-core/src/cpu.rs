@@ -3,10 +3,12 @@
 //! Uses the MIPS I instruction set and is binary-compatible with the R3000
 
 mod cp0;
+mod gte;
 mod instructions;
 
 use crate::bus::Bus;
 use crate::cpu::cp0::ExceptionCode;
+use crate::cpu::gte::GeometryTransformationEngine;
 use cp0::SystemControlCoprocessor;
 
 const RESET_VECTOR: u32 = 0xBFC0_0000;
@@ -118,6 +120,7 @@ pub enum OpSize {
 pub struct R3000 {
     registers: Registers,
     cp0: SystemControlCoprocessor,
+    gte: GeometryTransformationEngine,
 }
 
 macro_rules! impl_bus_write {
@@ -146,6 +149,7 @@ impl R3000 {
         Self {
             registers: Registers::new(),
             cp0: SystemControlCoprocessor::new(),
+            gte: GeometryTransformationEngine::new(),
         }
     }
 

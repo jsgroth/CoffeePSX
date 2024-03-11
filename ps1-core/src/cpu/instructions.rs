@@ -106,7 +106,7 @@ impl R3000 {
                 0x00 => self.mfcz(opcode),
                 0x02 => todo!("CFCz opcode {opcode:08X}"),
                 0x04 => self.mtcz(opcode),
-                0x06 => todo!("CTCz opcode {opcode:08X}"),
+                0x06 => self.ctcz(opcode),
                 0x10..=0x1F => self.copz(opcode),
                 _ => todo!("coprocessor opcode {opcode:08X}"),
             },
@@ -629,6 +629,16 @@ impl R3000 {
         match parse_coprocessor(opcode) {
             0 => self.cp0.write_register(register, value),
             cp => todo!("MTC{cp} {register} {value:08X}"),
+        }
+    }
+
+    // CTCz: Move control to coprocessor
+    fn ctcz(&mut self, opcode: u32) {
+        let register = parse_rd(opcode);
+        let value = self.registers.gpr[parse_rt(opcode) as usize];
+        match parse_coprocessor(opcode) {
+            2 => self.gte.write_control_register(register, value),
+            cp => todo!("CTC{cp} {register} {value:08X}"),
         }
     }
 
