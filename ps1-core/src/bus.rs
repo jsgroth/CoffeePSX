@@ -130,11 +130,10 @@ impl<'a> Bus<'a> {
         log::trace!("I/O register read: {address:08X} {size:?}");
 
         match address & 0xFFFF {
-            0x1040 => unimplemented_register_read("Joypad TX Data", address, size),
-            0x104A => {
-                // TODO
-                0
-            }
+            // SIO0_TX_DATA is supposedly not readable?
+            0x1040 => unimplemented_register_read("SIO0_TX_DATA", address, size),
+            0x1044 => self.sio0.read_status(),
+            0x104A => self.sio0.read_control(),
             0x1070 => self.control_registers.read_interrupt_status(),
             0x1074 => self.control_registers.read_interrupt_mask(),
             0x10F0 => self.dma_controller.read_control(),
@@ -171,6 +170,7 @@ impl<'a> Bus<'a> {
                 unimplemented_register_write("Expansion 2 Memory Control", address, value, size);
             }
             0x1020 => unimplemented_register_write("Common Delay", address, value, size),
+            0x1040 => self.sio0.write_tx_data(value),
             0x1048 => self.sio0.write_mode(value),
             0x104A => self.sio0.write_control(value),
             0x104E => self.sio0.write_baudrate_reload(value),

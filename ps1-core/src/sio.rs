@@ -1,6 +1,9 @@
 //! PS1 serial I/O port 0 (SIO0), used to communicate with controllers and memory cards
 
+mod rxfifo;
+
 use crate::num::U32Ext;
+use crate::sio::rxfifo::RxFifo;
 use std::cmp;
 
 #[derive(Debug, Clone, Copy)]
@@ -72,8 +75,27 @@ impl Port {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TxFifoState {
+    Empty,
+    Queued(u8),
+    Transferring {
+        value: u8,
+        bits_remaining: u8,
+        next: Option<u8>,
+    },
+}
+
+impl TxFifoState {
+    fn ready_for_new_byte(self) -> bool {
+        matches!(self, Self::Empty | Self::Transferring { next: None, .. })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SerialPort {
+    tx_fifo: TxFifoState,
+    rx_fifo: RxFifo,
     tx_enabled: bool,
     dtr_on: bool,
     rx_enabled: bool,
@@ -88,6 +110,8 @@ pub struct SerialPort {
 impl SerialPort {
     pub fn new() -> Self {
         Self {
+            tx_fifo: TxFifoState::Empty,
+            rx_fifo: RxFifo::new(),
             tx_enabled: false,
             dtr_on: false,
             rx_enabled: false,
@@ -102,6 +126,38 @@ impl SerialPort {
 
     pub fn tick(&mut self, cpu_cycles: u32) {
         self.baudrate_timer.tick(cpu_cycles);
+    }
+
+    pub fn write_tx_data(&mut self, tx_data: u32) {
+        let tx_data = tx_data as u8;
+
+        self.tx_fifo = match self.tx_fifo {
+            TxFifoState::Empty | TxFifoState::Queued(_) => TxFifoState::Queued(tx_data),
+            TxFifoState::Transferring {
+                value,
+                bits_remaining,
+                ..
+            } => TxFifoState::Transferring {
+                value,
+                bits_remaining,
+                next: Some(tx_data),
+            },
+        };
+
+        log::debug!("SIO0_TX_DATA write: {tx_data:02X}");
+    }
+
+    // $1F801044: SIO0_STAT
+    pub fn read_status(&self) -> u32 {
+        // TODO Bit 7: DSR input level (/ACK)
+        // TODO Bit 9: IRQ
+        let value = u32::from(self.tx_fifo.ready_for_new_byte())
+            | (u32::from(!self.rx_fifo.empty()) << 1)
+            | (u32::from(self.tx_fifo == TxFifoState::Empty) << 2)
+            | (self.baudrate_timer.timer << 11);
+
+        log::debug!("SIO0_STAT read: {value:08X}");
+        value
     }
 
     // $1F801048: SIO0_MODE
@@ -125,12 +181,36 @@ impl SerialPort {
     }
 
     // $1F80104A: SIO0_CTRL
+    pub fn read_control(&self) -> u32 {
+        let rx_mode = match self.rx_interrupt_bytes {
+            1 => 0,
+            2 => 1,
+            4 => 2,
+            8 => 3,
+            _ => panic!("Unexpected RX IRQ FIFO length: {}", self.rx_interrupt_bytes),
+        };
+
+        let value = u32::from(self.tx_enabled)
+            | (u32::from(self.dtr_on) << 1)
+            | (u32::from(self.rx_enabled) << 2)
+            | (rx_mode << 8)
+            | (u32::from(self.tx_interrupt_enabled) << 10)
+            | (u32::from(self.rx_interrupt_enabled) << 11)
+            | (u32::from(self.dsr_interrupt_enabled) << 12)
+            | ((self.selected_port as u32) << 13);
+
+        log::debug!("SIO0_CTRL read: {value:04X}");
+        value
+    }
+
+    // $1F80104A: SIO0_CTRL
     pub fn write_control(&mut self, value: u32) {
         if value.bit(6) {
             // Reset bit
             log::debug!("SIO0 reset");
             self.write_mode(0xC);
             self.write_control(0);
+            self.rx_fifo.clear();
             return;
         }
 

@@ -57,6 +57,8 @@ impl ControlRegisters {
     pub fn write_interrupt_status(&mut self, value: u32) {
         // Writing 0 to a bit clears it, writing 1 leaves it unchanged
         self.interrupt_status &= value as u16;
+
+        log::debug!("Interrupt status write: {value:04X}");
     }
 
     pub fn read_interrupt_mask(&self) -> u32 {
@@ -66,13 +68,13 @@ impl ControlRegisters {
     pub fn write_interrupt_mask(&mut self, value: u32) {
         self.interrupt_mask = value as u16;
 
-        log::trace!("Interrupt mask register write: {:04X}", self.interrupt_mask);
+        log::debug!("Interrupt mask register write: {:04X}", self.interrupt_mask);
     }
 
     pub fn set_interrupt_flag(&mut self, interrupt: InterruptType) {
         self.interrupt_status |= interrupt.bit_mask();
 
-        log::trace!("Set interrupt status flag: {interrupt:?}");
+        log::debug!("Set interrupt status flag: {interrupt:?}");
     }
 
     pub fn interrupt_pending(&self) -> bool {
