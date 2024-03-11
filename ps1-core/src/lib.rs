@@ -8,5 +8,6 @@ mod gpu;
 pub mod input;
 mod memory;
 mod num;
+mod sio;
 mod spu;
 mod timers;

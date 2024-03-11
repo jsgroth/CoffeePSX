@@ -6,6 +6,7 @@ use crate::cpu::OpSize;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::memory::Memory;
+use crate::sio::SerialPort;
 use crate::spu::Spu;
 use crate::timers::Timers;
 
@@ -16,6 +17,7 @@ pub struct Bus<'a> {
     pub memory: &'a mut Memory,
     pub dma_controller: &'a mut DmaController,
     pub control_registers: &'a mut ControlRegisters,
+    pub sio0: &'a mut SerialPort,
     pub timers: &'a mut Timers,
 }
 
@@ -169,7 +171,9 @@ impl<'a> Bus<'a> {
                 unimplemented_register_write("Expansion 2 Memory Control", address, value, size);
             }
             0x1020 => unimplemented_register_write("Common Delay", address, value, size),
-            0x104A => unimplemented_register_write("Joypad Control", address, value, size),
+            0x1048 => self.sio0.write_mode(value),
+            0x104A => self.sio0.write_control(value),
+            0x104E => self.sio0.write_baudrate_reload(value),
             0x1060 => unimplemented_register_write("RAM Size", address, value, size),
             0x1070 => self.control_registers.write_interrupt_status(value),
             0x1074 => self.control_registers.write_interrupt_mask(value),

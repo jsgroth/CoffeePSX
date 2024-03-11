@@ -8,6 +8,7 @@ use crate::dma::DmaController;
 use crate::gpu::{Gpu, TickEffect};
 use crate::input::Ps1Inputs;
 use crate::memory::Memory;
+use crate::sio::SerialPort;
 use crate::spu::Spu;
 use crate::timers::Timers;
 use thiserror::Error;
@@ -58,6 +59,7 @@ pub struct Ps1Emulator {
     memory: Memory,
     dma_controller: DmaController,
     control_registers: ControlRegisters,
+    sio0: SerialPort,
     timers: Timers,
     tty_enabled: bool,
     tty_buffer: String,
@@ -115,6 +117,7 @@ impl Ps1Emulator {
             memory,
             dma_controller: DmaController::new(),
             control_registers: ControlRegisters::new(),
+            sio0: SerialPort::new(),
             timers: Timers::new(),
             tty_enabled,
             tty_buffer: String::new(),
@@ -182,6 +185,7 @@ impl Ps1Emulator {
             memory: &mut self.memory,
             dma_controller: &mut self.dma_controller,
             control_registers: &mut self.control_registers,
+            sio0: &mut self.sio0,
             timers: &mut self.timers,
         });
 
@@ -198,6 +202,9 @@ impl Ps1Emulator {
         self.spu.tick(cpu_cycles, &mut self.audio_buffer);
         self.cd_controller
             .tick(cpu_cycles, &mut self.control_registers);
+
+        // TODO use a scheduler or something instead of advancing every CPU tick
+        self.sio0.tick(cpu_cycles);
 
         if self
             .gpu
