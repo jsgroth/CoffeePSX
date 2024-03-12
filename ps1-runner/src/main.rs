@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{fs, thread};
 
 #[derive(Debug, Parser)]
@@ -27,6 +27,8 @@ struct MiniFbRenderer<'a> {
     window: &'a mut Window,
     frame_buffer: &'a mut [u32],
     inputs: &'a mut Ps1Inputs,
+    frame_count: &'a mut u64,
+    last_fps_log: &'a mut SystemTime,
 }
 
 impl<'a> Renderer for MiniFbRenderer<'a> {
@@ -53,6 +55,17 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
             .update_with_buffer(self.frame_buffer, 1024, 512)?;
 
         update_inputs(self.window, self.inputs);
+
+        *self.frame_count += 1;
+
+        let elapsed = SystemTime::now()
+            .duration_since(*self.last_fps_log)
+            .unwrap();
+        if elapsed >= Duration::from_secs(5) {
+            log::info!("FPS: {}", *self.frame_count as f64 / elapsed.as_secs_f64());
+            *self.frame_count = 0;
+            *self.last_fps_log = SystemTime::now();
+        }
 
         Ok(())
     }
@@ -193,6 +206,8 @@ fn main() -> anyhow::Result<()> {
                     window: &mut window,
                     frame_buffer: &mut frame_buffer,
                     inputs: &mut inputs,
+                    frame_count: &mut 0,
+                    last_fps_log: &mut SystemTime::now(),
                 },
                 &mut audio_output,
             )?;
@@ -204,6 +219,8 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    let mut frame_count = 0;
+    let mut last_fps_log = SystemTime::now();
     while window.is_open() && !window.is_key_down(Key::Escape) {
         emulator.tick(
             inputs,
@@ -211,6 +228,8 @@ fn main() -> anyhow::Result<()> {
                 window: &mut window,
                 frame_buffer: &mut frame_buffer,
                 inputs: &mut inputs,
+                frame_count: &mut frame_count,
+                last_fps_log: &mut last_fps_log,
             },
             &mut audio_output,
         )?;

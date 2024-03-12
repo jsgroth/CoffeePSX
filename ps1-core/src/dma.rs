@@ -333,7 +333,7 @@ fn run_gpu_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Memory) {
     }
 }
 
-fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &Memory) {
+fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Memory) {
     match config.direction {
         DmaDirection::FromRam => {
             let mut address = config.start_address & !3;
@@ -344,12 +344,23 @@ fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &Memory)
                 address = match config.step {
                     Step::Forwards => address.wrapping_add(4) & 0x1FFFFF,
                     Step::Backwards => address.wrapping_sub(4) & 0x1FFFFF,
-                }
+                };
             }
 
             config.start_address = address;
         }
-        DmaDirection::ToRam => todo!("GPU block DMA from VRAM to CPU RAM"),
+        DmaDirection::ToRam => {
+            let mut address = config.start_address & !3;
+            for _ in 0..config.block_size * config.num_blocks {
+                let word = gpu.read_port();
+                memory.write_main_ram_u32(address, word);
+
+                address = match config.step {
+                    Step::Forwards => address.wrapping_add(4) & 0x1FFFFF,
+                    Step::Backwards => address.wrapping_sub(4) & 0x1FFFFF,
+                };
+            }
+        }
     }
 }
 
