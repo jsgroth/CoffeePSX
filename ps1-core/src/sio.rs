@@ -2,6 +2,8 @@
 
 mod rxfifo;
 
+use crate::input::Ps1Inputs;
+use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
 use crate::sio::rxfifo::RxFifo;
 use std::cmp;
@@ -81,7 +83,7 @@ enum TxFifoState {
     Queued(u8),
     Transferring {
         value: u8,
-        bits_remaining: u8,
+        cycles_remaining: u32,
         next: Option<u8>,
     },
 }
@@ -92,8 +94,20 @@ impl TxFifoState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PortState {
+    Idle,
+    ReceivedControllerAddress,
+    SentIdLow,
+    SentIdHigh,
+    SentDigitalLow,
+}
+
+const CONTROLLER_TRANSFER_CYCLES: u32 = 1000;
+
 #[derive(Debug, Clone)]
 pub struct SerialPort {
+    port_state: PortState,
     tx_fifo: TxFifoState,
     rx_fifo: RxFifo,
     tx_enabled: bool,
@@ -105,11 +119,13 @@ pub struct SerialPort {
     dsr_interrupt_enabled: bool,
     selected_port: Port,
     baudrate_timer: BaudrateTimer,
+    irq: bool,
 }
 
 impl SerialPort {
     pub fn new() -> Self {
         Self {
+            port_state: PortState::Idle,
             tx_fifo: TxFifoState::Empty,
             rx_fifo: RxFifo::new(),
             tx_enabled: false,
@@ -121,25 +137,121 @@ impl SerialPort {
             dsr_interrupt_enabled: false,
             selected_port: Port::default(),
             baudrate_timer: BaudrateTimer::new(),
+            irq: false,
         }
     }
 
-    pub fn tick(&mut self, cpu_cycles: u32) {
+    pub fn tick(
+        &mut self,
+        cpu_cycles: u32,
+        inputs: Ps1Inputs,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
         self.baudrate_timer.tick(cpu_cycles);
+
+        match self.tx_fifo {
+            TxFifoState::Empty => {}
+            TxFifoState::Queued(value) => {
+                if self.tx_enabled {
+                    self.tx_fifo = TxFifoState::Transferring {
+                        value,
+                        cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
+                        next: None,
+                    };
+                }
+            }
+            TxFifoState::Transferring {
+                value,
+                cycles_remaining,
+                next,
+            } => {
+                let cycles_remaining = cycles_remaining.saturating_sub(cpu_cycles);
+                if cycles_remaining == 0 {
+                    self.process_tx_write(value, inputs, interrupt_registers);
+                    self.tx_fifo = match (next, self.tx_enabled) {
+                        (Some(next_value), true) => TxFifoState::Transferring {
+                            value: next_value,
+                            cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
+                            next: None,
+                        },
+                        (Some(next_value), false) => TxFifoState::Queued(next_value),
+                        (None, _) => TxFifoState::Empty,
+                    };
+                } else {
+                    self.tx_fifo = TxFifoState::Transferring {
+                        value,
+                        cycles_remaining,
+                        next,
+                    };
+                }
+            }
+        }
+    }
+
+    fn process_tx_write(
+        &mut self,
+        value: u8,
+        inputs: Ps1Inputs,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
+        log::debug!("Processing SIO0 TX_DATA write {value:02X}");
+
+        self.port_state = match (self.port_state, value) {
+            (PortState::Idle, 0x01) => {
+                self.rx_fifo.push(0);
+                PortState::ReceivedControllerAddress
+            }
+            (PortState::Idle, _) => todo!("SIO0 address {value:02X}"),
+            // TODO ID hardcoded to $5A41 (digital controller)
+            (PortState::ReceivedControllerAddress, 0x42) => {
+                self.rx_fifo.push(0x41);
+                PortState::SentIdLow
+            }
+            (PortState::ReceivedControllerAddress, _) => {
+                todo!("SIO0 controller, second byte was {value:02X}")
+            }
+            (PortState::SentIdLow, _) => {
+                self.rx_fifo.push(0x5A);
+                PortState::SentIdHigh
+            }
+            (PortState::SentIdHigh, _) => {
+                self.rx_fifo.push((!u16::from(inputs.p1)) as u8);
+                PortState::SentDigitalLow
+            }
+            (PortState::SentDigitalLow, _) => {
+                self.rx_fifo.push((!(u16::from(inputs.p1) >> 8)) as u8);
+                PortState::Idle
+            }
+        };
+
+        if self.dsr_interrupt_enabled && !self.irq {
+            interrupt_registers.set_interrupt_flag(InterruptType::Sio0);
+            self.irq = true;
+        }
     }
 
     pub fn write_tx_data(&mut self, tx_data: u32) {
         let tx_data = tx_data as u8;
 
         self.tx_fifo = match self.tx_fifo {
-            TxFifoState::Empty | TxFifoState::Queued(_) => TxFifoState::Queued(tx_data),
+            TxFifoState::Empty | TxFifoState::Queued(_) => {
+                if self.tx_enabled {
+                    TxFifoState::Transferring {
+                        value: tx_data,
+                        cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
+                        next: None,
+                    }
+                } else {
+                    TxFifoState::Queued(tx_data)
+                }
+            }
             TxFifoState::Transferring {
                 value,
-                bits_remaining,
+                cycles_remaining,
                 ..
             } => TxFifoState::Transferring {
                 value,
-                bits_remaining,
+                cycles_remaining,
                 next: Some(tx_data),
             },
         };
@@ -147,13 +259,19 @@ impl SerialPort {
         log::debug!("SIO0_TX_DATA write: {tx_data:02X}");
     }
 
+    pub fn read_rx_data(&mut self) -> u32 {
+        let value = self.rx_fifo.pop();
+        log::debug!("RX_DATA read: {value:02X}");
+        value.into()
+    }
+
     // $1F801044: SIO0_STAT
     pub fn read_status(&self) -> u32 {
         // TODO Bit 7: DSR input level (/ACK)
-        // TODO Bit 9: IRQ
         let value = u32::from(self.tx_fifo.ready_for_new_byte())
             | (u32::from(!self.rx_fifo.empty()) << 1)
             | (u32::from(self.tx_fifo == TxFifoState::Empty) << 2)
+            | (u32::from(self.irq) << 9)
             | (self.baudrate_timer.timer << 11);
 
         log::debug!("SIO0_STAT read: {value:08X}");
@@ -224,7 +342,12 @@ impl SerialPort {
         self.selected_port = Port::from_bit(value.bit(13));
 
         if value.bit(4) {
-            todo!("SIO0_CTRL ACK");
+            self.irq = false;
+        }
+
+        if !self.dtr_on {
+            self.tx_fifo = TxFifoState::Empty;
+            self.port_state = PortState::Idle;
         }
 
         log::debug!("SIO0_CTRL write: {value:04X}");

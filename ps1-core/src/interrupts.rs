@@ -8,6 +8,7 @@ pub enum InterruptType {
     Timer0,
     Timer1,
     Timer2,
+    Sio0,
 }
 
 impl InterruptType {
@@ -19,6 +20,7 @@ impl InterruptType {
             Self::Timer0 => 1 << 4,
             Self::Timer1 => 1 << 5,
             Self::Timer2 => 1 << 6,
+            Self::Sio0 => 1 << 7,
         }
     }
 }

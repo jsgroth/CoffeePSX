@@ -130,8 +130,7 @@ impl<'a> Bus<'a> {
         log::trace!("I/O register read: {address:08X} {size:?}");
 
         match address & 0xFFFF {
-            // SIO0_TX_DATA is supposedly not readable?
-            0x1040 => unimplemented_register_read("SIO0_TX_DATA", address, size),
+            0x1040 => self.sio0.read_rx_data(),
             0x1044 => self.sio0.read_status(),
             0x104A => self.sio0.read_control(),
             0x1070 => self.interrupt_registers.read_interrupt_status(),

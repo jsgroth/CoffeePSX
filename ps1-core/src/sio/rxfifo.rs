@@ -37,6 +37,8 @@ impl RxFifo {
 
         self.write_idx = (self.write_idx + 1) & FIFO_MASK;
         self.len += 1;
+
+        log::debug!("Pushed {value:02X} into RX FIFO");
     }
 
     pub fn pop(&mut self) -> u8 {

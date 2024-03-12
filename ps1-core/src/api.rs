@@ -174,7 +174,7 @@ impl Ps1Emulator {
     #[inline]
     pub fn tick<R: Renderer, A: AudioOutput>(
         &mut self,
-        _inputs: Ps1Inputs,
+        inputs: Ps1Inputs,
         renderer: &mut R,
         audio_output: &mut A,
     ) -> Result<(), TickError<R::Err, A::Err>> {
@@ -204,7 +204,8 @@ impl Ps1Emulator {
             .tick(cpu_cycles, &mut self.interrupt_registers);
 
         // TODO use a scheduler or something instead of advancing SIO0 and timers every CPU tick
-        self.sio0.tick(cpu_cycles);
+        self.sio0
+            .tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
         let prev_in_vblank = self.timers.in_vblank();
         self.timers.tick(cpu_cycles, &mut self.interrupt_registers);
