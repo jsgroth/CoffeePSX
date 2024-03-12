@@ -4,7 +4,7 @@ use crate::bus::Bus;
 use crate::cd::CdController;
 use crate::cpu::R3000;
 use crate::dma::DmaController;
-use crate::gpu::{Gpu, TickEffect};
+use crate::gpu::Gpu;
 use crate::input::Ps1Inputs;
 use crate::interrupts::InterruptRegisters;
 use crate::memory::Memory;
@@ -203,14 +203,13 @@ impl Ps1Emulator {
         self.cd_controller
             .tick(cpu_cycles, &mut self.interrupt_registers);
 
-        // TODO use a scheduler or something instead of advancing every CPU tick
+        // TODO use a scheduler or something instead of advancing SIO0 and timers every CPU tick
         self.sio0.tick(cpu_cycles);
 
-        if self
-            .gpu
-            .tick(cpu_cycles, &mut self.interrupt_registers, &mut self.timers)
-            == TickEffect::RenderFrame
-        {
+        let prev_in_vblank = self.timers.in_vblank();
+        self.timers.tick(cpu_cycles, &mut self.interrupt_registers);
+
+        if !prev_in_vblank && self.timers.in_vblank() {
             renderer
                 .render_frame(self.gpu.vram())
                 .map_err(TickError::Render)?;

@@ -145,7 +145,7 @@ impl<'a> Bus<'a> {
             0x1110 => self.timers.timer_1.counter.into(),
             0x1800..=0x1803 => read_cd_controller(self.cd_controller, address, size),
             0x1810 => self.gpu.read_port(),
-            0x1814 => self.gpu.read_status_register(),
+            0x1814 => self.gpu.read_status_register(self.timers),
             0x1C00..=0x1FFF => self.spu.read_register(address, size),
             _ => todo!("I/O register read {address:08X} {size:?}"),
         }
@@ -201,7 +201,7 @@ impl<'a> Bus<'a> {
             0x1100..=0x112F => self.timers.write_register(address, value),
             0x1800..=0x1803 => self.cd_controller.write_port(address, value as u8),
             0x1810 => self.gpu.write_gp0_command(value),
-            0x1814 => self.gpu.write_gp1_command(value),
+            0x1814 => self.gpu.write_gp1_command(value, self.timers),
             0x1C00..=0x1FFF => self.spu.write_register(address, value, size),
             _ => todo!("I/O register write {address:08X} {value:08X} {size:?}"),
         }

@@ -6,61 +6,11 @@ mod registers;
 
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::gpu::registers::Registers;
-use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::timers::Timers;
 
 const VRAM_LEN: usize = 1024 * 1024;
 
 type Vram = [u8; VRAM_LEN];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TickEffect {
-    None,
-    RenderFrame,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ClockState {
-    line: u16,
-    line_cycle: u16,
-    cpu_cycles_11x: u32,
-    odd_frame: bool,
-}
-
-impl ClockState {
-    fn tick(
-        &mut self,
-        cpu_cycles: u32,
-        interrupt_registers: &mut InterruptRegisters,
-        timers: &mut Timers,
-    ) -> TickEffect {
-        // TODO optimize/clean this
-        // GPU clock speed is 11/7 times the CPU clock speed
-        let mut tick_effect = TickEffect::None;
-
-        self.cpu_cycles_11x += 11 * cpu_cycles;
-        while self.cpu_cycles_11x >= 7 {
-            self.cpu_cycles_11x -= 7;
-
-            self.line_cycle += 1;
-            if self.line_cycle == 3413 {
-                self.line_cycle = 0;
-                timers.timer_1.increment();
-
-                self.line += 1;
-                if self.line == 263 {
-                    self.line = 0;
-                    self.odd_frame = !self.odd_frame;
-                    tick_effect = TickEffect::RenderFrame;
-                } else if self.line == 256 {
-                    interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
-                }
-            }
-        }
-
-        tick_effect
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Gpu {
@@ -68,7 +18,6 @@ pub struct Gpu {
     registers: Registers,
     gp0: Gp0State,
     gpu_read_buffer: u32,
-    clock_state: ClockState,
 }
 
 impl Gpu {
@@ -78,7 +27,6 @@ impl Gpu {
             registers: Registers::new(),
             gp0: Gp0State::new(),
             gpu_read_buffer: 0,
-            clock_state: ClockState::default(),
         }
     }
 
@@ -90,24 +38,13 @@ impl Gpu {
         self.gpu_read_buffer
     }
 
-    pub fn read_status_register(&self) -> u32 {
-        let status = self.registers.read_status(&self.gp0, &self.clock_state);
+    pub fn read_status_register(&self, timers: &Timers) -> u32 {
+        let status = self.registers.read_status(&self.gp0, timers);
         log::trace!("GPU status register read: {status:08X}");
         status
     }
 
     pub fn vram(&self) -> &[u8] {
         self.vram.as_ref()
-    }
-
-    pub fn tick(
-        &mut self,
-        cpu_cycles: u32,
-        interrupt_registers: &mut InterruptRegisters,
-        timers: &mut Timers,
-    ) -> TickEffect {
-        // TODO do actual rendering in here when VBlank is reached
-        self.clock_state
-            .tick(cpu_cycles, interrupt_registers, timers)
     }
 }

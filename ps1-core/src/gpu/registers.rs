@@ -1,5 +1,5 @@
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
-use crate::gpu::ClockState;
+use crate::timers::Timers;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -169,7 +169,7 @@ impl Registers {
         }
     }
 
-    pub fn read_status(&self, gp0_state: &Gp0State, clock_state: &ClockState) -> u32 {
+    pub fn read_status(&self, gp0_state: &Gp0State, timers: &Timers) -> u32 {
         let ready_to_receive_command =
             matches!(gp0_state.command_state, Gp0CommandState::WaitingForCommand);
         let ready_to_send_vram =
@@ -184,9 +184,9 @@ impl Registers {
         };
 
         let interlaced_bit = if self.interlaced {
-            clock_state.odd_frame && (16..256).contains(&clock_state.line)
+            !timers.in_vblank() && timers.odd_frame()
         } else {
-            (16..256).contains(&clock_state.line) && clock_state.line % 2 == 1
+            !timers.in_vblank() && timers.scanline() % 2 == 1
         };
 
         // TODO bits hardcoded:
