@@ -5,6 +5,9 @@ pub enum InterruptType {
     VBlank,
     CdRom,
     Dma,
+    Timer0,
+    Timer1,
+    Timer2,
 }
 
 impl InterruptType {
@@ -13,6 +16,9 @@ impl InterruptType {
             Self::VBlank => 1,
             Self::CdRom => 1 << 2,
             Self::Dma => 1 << 3,
+            Self::Timer0 => 1 << 4,
+            Self::Timer1 => 1 << 5,
+            Self::Timer2 => 1 << 6,
         }
     }
 }

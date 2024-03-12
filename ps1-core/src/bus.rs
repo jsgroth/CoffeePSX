@@ -142,7 +142,7 @@ impl<'a> Bus<'a> {
                 _ => todo!("DMA register read {address:08X} {size:?}"),
             },
             0x10F4 => self.dma_controller.read_interrupt(),
-            0x1110 => self.timers.timer_1.counter.into(),
+            0x1100..=0x113F => self.timers.read_register(address),
             0x1800..=0x1803 => read_cd_controller(self.cd_controller, address, size),
             0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(self.timers),
