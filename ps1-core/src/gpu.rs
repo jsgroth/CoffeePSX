@@ -4,9 +4,9 @@ mod gp0;
 mod gp1;
 mod registers;
 
-use crate::control::{ControlRegisters, InterruptType};
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::gpu::registers::Registers;
+use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::timers::Timers;
 
 const VRAM_LEN: usize = 1024 * 1024;
@@ -31,7 +31,7 @@ impl ClockState {
     fn tick(
         &mut self,
         cpu_cycles: u32,
-        control_registers: &mut ControlRegisters,
+        interrupt_registers: &mut InterruptRegisters,
         timers: &mut Timers,
     ) -> TickEffect {
         // TODO optimize/clean this
@@ -53,7 +53,7 @@ impl ClockState {
                     self.odd_frame = !self.odd_frame;
                     tick_effect = TickEffect::RenderFrame;
                 } else if self.line == 256 {
-                    control_registers.set_interrupt_flag(InterruptType::VBlank);
+                    interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
                 }
             }
         }
@@ -103,10 +103,11 @@ impl Gpu {
     pub fn tick(
         &mut self,
         cpu_cycles: u32,
-        control_registers: &mut ControlRegisters,
+        interrupt_registers: &mut InterruptRegisters,
         timers: &mut Timers,
     ) -> TickEffect {
         // TODO do actual rendering in here when VBlank is reached
-        self.clock_state.tick(cpu_cycles, control_registers, timers)
+        self.clock_state
+            .tick(cpu_cycles, interrupt_registers, timers)
     }
 }

@@ -1,7 +1,7 @@
 //! PS1 DMA registers and transfers
 
-use crate::control::{ControlRegisters, InterruptType};
 use crate::gpu::Gpu;
+use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::memory::Memory;
 use crate::num::U32Ext;
 use std::array;
@@ -196,12 +196,12 @@ impl DmaController {
         self.interrupt.read()
     }
 
-    pub fn write_interrupt(&mut self, value: u32, control_registers: &mut ControlRegisters) {
+    pub fn write_interrupt(&mut self, value: u32, interrupt_registers: &mut InterruptRegisters) {
         let prev_irq_pending = self.interrupt.pending();
         self.interrupt.write(value);
 
         if !prev_irq_pending && self.interrupt.pending() {
-            control_registers.set_interrupt_flag(InterruptType::Dma);
+            interrupt_registers.set_interrupt_flag(InterruptType::Dma);
         }
 
         log::trace!(
@@ -266,7 +266,7 @@ impl DmaController {
         value: u32,
         gpu: &mut Gpu,
         memory: &mut Memory,
-        control_registers: &mut ControlRegisters,
+        interrupt_registers: &mut InterruptRegisters,
     ) {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -318,7 +318,7 @@ impl DmaController {
                 self.interrupt.channel_irq_pending |= 1 << channel;
 
                 if !prev_irq_pending && self.interrupt.pending() {
-                    control_registers.set_interrupt_flag(InterruptType::Dma);
+                    interrupt_registers.set_interrupt_flag(InterruptType::Dma);
                 }
             }
         }

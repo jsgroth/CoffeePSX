@@ -1,10 +1,10 @@
 //! PS1 memory map
 
 use crate::cd::CdController;
-use crate::control::ControlRegisters;
 use crate::cpu::OpSize;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
+use crate::interrupts::InterruptRegisters;
 use crate::memory::Memory;
 use crate::sio::SerialPort;
 use crate::spu::Spu;
@@ -16,7 +16,7 @@ pub struct Bus<'a> {
     pub cd_controller: &'a mut CdController,
     pub memory: &'a mut Memory,
     pub dma_controller: &'a mut DmaController,
-    pub control_registers: &'a mut ControlRegisters,
+    pub interrupt_registers: &'a mut InterruptRegisters,
     pub sio0: &'a mut SerialPort,
     pub timers: &'a mut Timers,
 }
@@ -122,7 +122,7 @@ impl<'a> Bus<'a> {
     }
 
     pub fn hardware_interrupt_pending(&self) -> bool {
-        self.control_registers.interrupt_pending()
+        self.interrupt_registers.interrupt_pending()
     }
 
     #[allow(clippy::match_same_arms)]
@@ -134,8 +134,8 @@ impl<'a> Bus<'a> {
             0x1040 => unimplemented_register_read("SIO0_TX_DATA", address, size),
             0x1044 => self.sio0.read_status(),
             0x104A => self.sio0.read_control(),
-            0x1070 => self.control_registers.read_interrupt_status(),
-            0x1074 => self.control_registers.read_interrupt_mask(),
+            0x1070 => self.interrupt_registers.read_interrupt_status(),
+            0x1074 => self.interrupt_registers.read_interrupt_mask(),
             0x10F0 => self.dma_controller.read_control(),
             0x1080..=0x10EF => match (address >> 2) & 3 {
                 2 => self.dma_controller.read_channel_control(address),
@@ -155,8 +155,12 @@ impl<'a> Bus<'a> {
         log::trace!("I/O register write: {address:08X} {value:08X} {size:?}");
 
         match address & 0xFFFF {
-            0x1000 => self.control_registers.write_expansion_1_address(value),
-            0x1004 => self.control_registers.write_expansion_2_address(value),
+            0x1000 => {
+                unimplemented_register_write("Expansion 1 Address", address, value, size);
+            }
+            0x1004 => {
+                unimplemented_register_write("Expansion 2 Address", address, value, size);
+            }
             0x1008 => {
                 unimplemented_register_write("Expansion 1 Memory Control", address, value, size);
             }
@@ -175,8 +179,8 @@ impl<'a> Bus<'a> {
             0x104A => self.sio0.write_control(value),
             0x104E => self.sio0.write_baudrate_reload(value),
             0x1060 => unimplemented_register_write("RAM Size", address, value, size),
-            0x1070 => self.control_registers.write_interrupt_status(value),
-            0x1074 => self.control_registers.write_interrupt_mask(value),
+            0x1070 => self.interrupt_registers.write_interrupt_status(value),
+            0x1074 => self.interrupt_registers.write_interrupt_mask(value),
             0x1080..=0x10EF => match (address >> 2) & 3 {
                 0 => self.dma_controller.write_channel_address(address, value),
                 1 => self.dma_controller.write_channel_length(address, value),
@@ -185,7 +189,7 @@ impl<'a> Bus<'a> {
                     value,
                     self.gpu,
                     self.memory,
-                    self.control_registers,
+                    self.interrupt_registers,
                 ),
                 3 => todo!("Invalid DMA register write: {address:08X} {value:08X} {size:?}"),
                 _ => unreachable!("value & 3 is always <= 3"),
@@ -193,7 +197,7 @@ impl<'a> Bus<'a> {
             0x10F0 => self.dma_controller.write_control(value),
             0x10F4 => self
                 .dma_controller
-                .write_interrupt(value, self.control_registers),
+                .write_interrupt(value, self.interrupt_registers),
             0x1100..=0x112F => self.timers.write_register(address, value),
             0x1800..=0x1803 => self.cd_controller.write_port(address, value as u8),
             0x1810 => self.gpu.write_gp0_command(value),

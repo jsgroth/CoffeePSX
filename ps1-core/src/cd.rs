@@ -4,7 +4,7 @@ mod macros;
 mod stat;
 
 use crate::cd::stat::ErrorFlags;
-use crate::control::{ControlRegisters, InterruptType};
+use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
 #[allow(clippy::wildcard_imports)]
 use macros::*;
@@ -18,13 +18,13 @@ const RECEIVE_COMMAND_CYCLES_STOPPED: u32 = 31;
 const INVALID_COMMAND: u8 = 0x40;
 
 #[derive(Debug, Clone, Copy)]
-struct InterruptRegisters {
+struct CdInterruptRegisters {
     enabled: u8,
     flags: u8,
     prev_pending: bool,
 }
 
-impl InterruptRegisters {
+impl CdInterruptRegisters {
     fn new() -> Self {
         Self {
             enabled: 0,
@@ -153,7 +153,7 @@ impl Default for DriveState {
 #[derive(Debug, Clone)]
 pub struct CdController {
     index: u8,
-    interrupts: InterruptRegisters,
+    interrupts: CdInterruptRegisters,
     parameter_fifo: ParameterFifo,
     response_fifo: ResponseFifo,
     command_state: CommandState,
@@ -165,7 +165,7 @@ impl CdController {
     pub fn new() -> Self {
         Self {
             index: 0,
-            interrupts: InterruptRegisters::new(),
+            interrupts: CdInterruptRegisters::new(),
             parameter_fifo: ParameterFifo::new(),
             response_fifo: ResponseFifo::new(),
             command_state: CommandState::default(),
@@ -174,23 +174,23 @@ impl CdController {
         }
     }
 
-    pub fn tick(&mut self, cpu_cycles: u32, control_registers: &mut ControlRegisters) {
+    pub fn tick(&mut self, cpu_cycles: u32, interrupt_registers: &mut InterruptRegisters) {
         self.cpu_cycles += cpu_cycles;
         while self.cpu_cycles >= CD_CPU_DIVIDER {
             self.cpu_cycles -= CD_CPU_DIVIDER;
-            self.clock(control_registers);
+            self.clock(interrupt_registers);
         }
     }
 
     // 44100 Hz clock
-    fn clock(&mut self, control_registers: &mut ControlRegisters) {
+    fn clock(&mut self, interrupt_registers: &mut InterruptRegisters) {
         self.advance_command_state();
 
         let interrupt_pending = self.interrupts.pending();
         if !self.interrupts.prev_pending && interrupt_pending {
             // Flag a CD-ROM interrupt on any 0->1 transition
             // TODO apparently there should be a small delay before the interrupt flag is set in I_STAT?
-            control_registers.set_interrupt_flag(InterruptType::CdRom);
+            interrupt_registers.set_interrupt_flag(InterruptType::CdRom);
             log::debug!(
                 "CD-ROM INT{} generated",
                 self.interrupts.enabled & self.interrupts.flags

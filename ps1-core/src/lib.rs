@@ -1,11 +1,11 @@
 pub mod api;
 mod bus;
 mod cd;
-mod control;
 mod cpu;
 mod dma;
 mod gpu;
 pub mod input;
+mod interrupts;
 mod memory;
 mod num;
 mod sio;

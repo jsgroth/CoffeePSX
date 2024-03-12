@@ -2,11 +2,11 @@
 
 use crate::bus::Bus;
 use crate::cd::CdController;
-use crate::control::ControlRegisters;
 use crate::cpu::R3000;
 use crate::dma::DmaController;
 use crate::gpu::{Gpu, TickEffect};
 use crate::input::Ps1Inputs;
+use crate::interrupts::InterruptRegisters;
 use crate::memory::Memory;
 use crate::sio::SerialPort;
 use crate::spu::Spu;
@@ -58,7 +58,7 @@ pub struct Ps1Emulator {
     cd_controller: CdController,
     memory: Memory,
     dma_controller: DmaController,
-    control_registers: ControlRegisters,
+    interrupt_registers: InterruptRegisters,
     sio0: SerialPort,
     timers: Timers,
     tty_enabled: bool,
@@ -116,7 +116,7 @@ impl Ps1Emulator {
             cd_controller: CdController::new(),
             memory,
             dma_controller: DmaController::new(),
-            control_registers: ControlRegisters::new(),
+            interrupt_registers: InterruptRegisters::new(),
             sio0: SerialPort::new(),
             timers: Timers::new(),
             tty_enabled,
@@ -184,7 +184,7 @@ impl Ps1Emulator {
             cd_controller: &mut self.cd_controller,
             memory: &mut self.memory,
             dma_controller: &mut self.dma_controller,
-            control_registers: &mut self.control_registers,
+            interrupt_registers: &mut self.interrupt_registers,
             sio0: &mut self.sio0,
             timers: &mut self.timers,
         });
@@ -201,14 +201,14 @@ impl Ps1Emulator {
 
         self.spu.tick(cpu_cycles, &mut self.audio_buffer);
         self.cd_controller
-            .tick(cpu_cycles, &mut self.control_registers);
+            .tick(cpu_cycles, &mut self.interrupt_registers);
 
         // TODO use a scheduler or something instead of advancing every CPU tick
         self.sio0.tick(cpu_cycles);
 
         if self
             .gpu
-            .tick(cpu_cycles, &mut self.control_registers, &mut self.timers)
+            .tick(cpu_cycles, &mut self.interrupt_registers, &mut self.timers)
             == TickEffect::RenderFrame
         {
             renderer
