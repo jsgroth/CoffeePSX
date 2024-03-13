@@ -443,7 +443,7 @@ impl Gpu {
     }
 
     #[allow(clippy::match_same_arms)]
-    pub fn write_gp0_command(&mut self, value: u32) {
+    pub(super) fn handle_gp0_write(&mut self, value: u32) {
         log::trace!("GP0 command write: {value:08X}");
 
         self.gp0.command_state = match self.gp0.command_state {

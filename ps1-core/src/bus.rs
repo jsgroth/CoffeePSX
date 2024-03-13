@@ -6,6 +6,7 @@ use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::interrupts::InterruptRegisters;
 use crate::memory::Memory;
+use crate::scheduler::Scheduler;
 use crate::sio::SerialPort;
 use crate::spu::Spu;
 use crate::timers::Timers;
@@ -19,6 +20,7 @@ pub struct Bus<'a> {
     pub interrupt_registers: &'a mut InterruptRegisters,
     pub sio0: &'a mut SerialPort,
     pub timers: &'a mut Timers,
+    pub scheduler: &'a mut Scheduler,
 }
 
 macro_rules! memory_map {
@@ -127,7 +129,7 @@ impl<'a> Bus<'a> {
 
     #[allow(clippy::match_same_arms)]
     fn read_io_register(&mut self, address: u32, size: OpSize) -> u32 {
-        log::trace!("I/O register read: {address:08X} {size:?}");
+        log::debug!("I/O register read: {address:08X} {size:?}");
 
         match address & 0xFFFF {
             0x1040 => self.sio0.read_rx_data(),
@@ -141,17 +143,17 @@ impl<'a> Bus<'a> {
                 _ => todo!("DMA register read {address:08X} {size:?}"),
             },
             0x10F4 => self.dma_controller.read_interrupt(),
-            0x1100..=0x113F => self.timers.read_register(address),
+            0x1100..=0x113F => self.timers.read_register(address, self.scheduler),
             0x1800..=0x1803 => read_cd_controller(self.cd_controller, address, size),
             0x1810 => self.gpu.read_port(),
-            0x1814 => self.gpu.read_status_register(self.timers),
+            0x1814 => self.gpu.read_status_register(self.timers, self.scheduler),
             0x1C00..=0x1FFF => self.spu.read_register(address, size),
             _ => todo!("I/O register read {address:08X} {size:?}"),
         }
     }
 
     fn write_io_register(&mut self, address: u32, value: u32, size: OpSize) {
-        log::trace!("I/O register write: {address:08X} {value:08X} {size:?}");
+        log::debug!("I/O register write: {address:08X} {value:08X} {size:?}");
 
         match address & 0xFFFF {
             0x1000 => {
@@ -197,10 +199,12 @@ impl<'a> Bus<'a> {
             0x10F4 => self
                 .dma_controller
                 .write_interrupt(value, self.interrupt_registers),
-            0x1100..=0x112F => self.timers.write_register(address, value),
+            0x1100..=0x112F => self.timers.write_register(address, value, self.scheduler),
             0x1800..=0x1803 => self.cd_controller.write_port(address, value as u8),
             0x1810 => self.gpu.write_gp0_command(value),
-            0x1814 => self.gpu.write_gp1_command(value, self.timers),
+            0x1814 => self
+                .gpu
+                .write_gp1_command(value, self.timers, self.scheduler),
             0x1C00..=0x1FFF => self.spu.write_register(address, value, size),
             _ => todo!("I/O register write {address:08X} {value:08X} {size:?}"),
         }
@@ -224,11 +228,6 @@ fn read_cd_controller(cd_controller: &mut CdController, address: u32, size: OpSi
             u32::from_le_bytes([byte, byte, byte, byte])
         }
     }
-}
-
-fn unimplemented_register_read(name: &str, address: u32, size: OpSize) -> u32 {
-    log::warn!("Unimplemented {name} read: {address:08X} {size:?}");
-    0
 }
 
 fn unimplemented_register_write(name: &str, address: u32, value: u32, size: OpSize) {

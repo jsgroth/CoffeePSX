@@ -235,11 +235,6 @@ impl R3000 {
     impl_bus_write!(bus_write_u32, write_u32);
 
     fn handle_exception(&mut self, exception: Exception, pc: u32, in_delay_slot: bool) {
-        log::trace!(
-            "Handling exception {exception:?}; PC={pc:08X}, BD={}",
-            u8::from(in_delay_slot)
-        );
-
         self.cp0.handle_exception(exception, pc, in_delay_slot);
 
         self.registers.pc = if self.cp0.status.boot_exception_vectors {

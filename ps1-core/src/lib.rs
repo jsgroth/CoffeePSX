@@ -8,6 +8,7 @@ pub mod input;
 mod interrupts;
 mod memory;
 mod num;
+mod scheduler;
 mod sio;
 mod spu;
 mod timers;

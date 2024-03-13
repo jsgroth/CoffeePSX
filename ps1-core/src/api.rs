@@ -6,8 +6,9 @@ use crate::cpu::R3000;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::input::Ps1Inputs;
-use crate::interrupts::InterruptRegisters;
+use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::memory::Memory;
+use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
 use crate::sio::SerialPort;
 use crate::spu::Spu;
 use crate::timers::Timers;
@@ -61,6 +62,7 @@ pub struct Ps1Emulator {
     interrupt_registers: InterruptRegisters,
     sio0: SerialPort,
     timers: Timers,
+    scheduler: Scheduler,
     tty_enabled: bool,
     tty_buffer: String,
 }
@@ -96,6 +98,10 @@ impl Ps1EmulatorBuilder {
     }
 }
 
+// The SPU clock rate is exactly 1/768 the CPU clock rate
+// This _should_ be 44.1 KHz, but it may not be exactly depending on the exact oscillator speed
+const SPU_CLOCK_DIVIDER: u64 = 768;
+
 impl Ps1Emulator {
     #[must_use]
     pub fn builder(bios_rom: Vec<u8>) -> Ps1EmulatorBuilder {
@@ -108,7 +114,7 @@ impl Ps1Emulator {
     pub fn new(bios_rom: Vec<u8>, tty_enabled: bool) -> Ps1Result<Self> {
         let memory = Memory::new(bios_rom)?;
 
-        Ok(Self {
+        let mut emulator = Self {
             cpu: R3000::new(),
             gpu: Gpu::new(),
             spu: Spu::new(),
@@ -119,9 +125,19 @@ impl Ps1Emulator {
             interrupt_registers: InterruptRegisters::new(),
             sio0: SerialPort::new(),
             timers: Timers::new(),
+            scheduler: Scheduler::new(),
             tty_enabled,
             tty_buffer: String::new(),
-        })
+        };
+        emulator.schedule_initial_events();
+
+        Ok(emulator)
+    }
+
+    fn schedule_initial_events(&mut self) {
+        self.timers.schedule_next_vblank(&mut self.scheduler);
+        self.scheduler
+            .update_or_push_event(SchedulerEvent::spu_clock(SPU_CLOCK_DIVIDER));
     }
 
     #[inline]
@@ -187,6 +203,7 @@ impl Ps1Emulator {
             interrupt_registers: &mut self.interrupt_registers,
             sio0: &mut self.sio0,
             timers: &mut self.timers,
+            scheduler: &mut self.scheduler,
         });
 
         if self.tty_enabled {
@@ -199,26 +216,63 @@ impl Ps1Emulator {
         // while the write queue was full.
         let cpu_cycles = 2;
 
-        self.spu.tick(cpu_cycles, &mut self.audio_buffer);
+        self.scheduler.increment_cpu_cycles(cpu_cycles.into());
+
         self.cd_controller
             .tick(cpu_cycles, &mut self.interrupt_registers);
 
-        // TODO use a scheduler or something instead of advancing SIO0 and timers every CPU tick
+        // TODO use a scheduler or something instead of advancing SIO0 every CPU tick
         self.sio0
             .tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
-        let prev_in_vblank = self.timers.in_vblank();
-        self.timers.tick(cpu_cycles, &mut self.interrupt_registers);
+        self.process_scheduler_events(renderer, audio_output)
+    }
 
-        if !prev_in_vblank && self.timers.in_vblank() {
-            renderer
-                .render_frame(self.gpu.vram())
-                .map_err(TickError::Render)?;
+    fn process_scheduler_events<R: Renderer, A: AudioOutput>(
+        &mut self,
+        renderer: &mut R,
+        audio_output: &mut A,
+    ) -> Result<(), TickError<R::Err, A::Err>> {
+        while self.scheduler.is_event_ready() {
+            let event = self.scheduler.pop_event();
+            match event.event_type {
+                SchedulerEventType::VBlank => {
+                    self.interrupt_registers
+                        .set_interrupt_flag(InterruptType::VBlank);
+                    self.timers.schedule_next_vblank(&mut self.scheduler);
 
-            audio_output
-                .queue_samples(&self.audio_buffer)
-                .map_err(TickError::Audio)?;
-            self.audio_buffer.clear();
+                    renderer
+                        .render_frame(self.gpu.vram())
+                        .map_err(TickError::Render)?;
+
+                    audio_output
+                        .queue_samples(&self.audio_buffer)
+                        .map_err(TickError::Audio)?;
+                    self.audio_buffer.clear();
+                }
+                SchedulerEventType::SpuClock => {
+                    self.audio_buffer.push(self.spu.clock());
+                    self.scheduler
+                        .update_or_push_event(SchedulerEvent::spu_clock(
+                            event.cpu_cycles + SPU_CLOCK_DIVIDER,
+                        ));
+                }
+                SchedulerEventType::Timer0Irq => {
+                    self.interrupt_registers
+                        .set_interrupt_flag(InterruptType::Timer0);
+                    self.timers.schedule_next_timer_0_irq(&mut self.scheduler);
+                }
+                SchedulerEventType::Timer1Irq => {
+                    self.interrupt_registers
+                        .set_interrupt_flag(InterruptType::Timer1);
+                    self.timers.scheduler_next_timer_1_irq(&mut self.scheduler);
+                }
+                SchedulerEventType::Timer2Irq => {
+                    self.interrupt_registers
+                        .set_interrupt_flag(InterruptType::Timer2);
+                    self.timers.schedule_next_timer_2_irq(&mut self.scheduler);
+                }
+            }
         }
 
         Ok(())

@@ -6,6 +6,7 @@ mod registers;
 
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::gpu::registers::Registers;
+use crate::scheduler::Scheduler;
 use crate::timers::Timers;
 
 const VRAM_LEN: usize = 1024 * 1024;
@@ -38,10 +39,23 @@ impl Gpu {
         self.gpu_read_buffer
     }
 
-    pub fn read_status_register(&self, timers: &Timers) -> u32 {
-        let status = self.registers.read_status(&self.gp0, timers);
+    pub fn read_status_register(&self, timers: &mut Timers, scheduler: &mut Scheduler) -> u32 {
+        let status = self.registers.read_status(&self.gp0, timers, scheduler);
         log::trace!("GPU status register read: {status:08X}");
         status
+    }
+
+    pub fn write_gp0_command(&mut self, value: u32) {
+        self.handle_gp0_write(value);
+    }
+
+    pub fn write_gp1_command(
+        &mut self,
+        value: u32,
+        timers: &mut Timers,
+        scheduler: &mut Scheduler,
+    ) {
+        self.handle_gp1_write(value, timers, scheduler);
     }
 
     pub fn vram(&self) -> &[u8] {

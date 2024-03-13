@@ -1,4 +1,5 @@
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
+use crate::scheduler::Scheduler;
 use crate::timers::Timers;
 use std::fmt::{Display, Formatter};
 
@@ -47,6 +48,8 @@ impl Display for HorizontalResolution {
     }
 }
 
+const H368_DOT_CLOCK_DIVIDER: u16 = 7;
+
 impl HorizontalResolution {
     pub fn from_bits(bits: u32) -> Self {
         match bits & 3 {
@@ -55,6 +58,15 @@ impl HorizontalResolution {
             2 => Self::FiveTwelve,
             3 => Self::SixForty,
             _ => unreachable!("value & 3 is always <= 3"),
+        }
+    }
+
+    pub fn dot_clock_divider(self) -> u16 {
+        match self {
+            Self::TwoFiftySix => 10,
+            Self::ThreeTwenty => 8,
+            Self::FiveTwelve => 5,
+            Self::SixForty => 4,
         }
     }
 }
@@ -169,7 +181,12 @@ impl Registers {
         }
     }
 
-    pub fn read_status(&self, gp0_state: &Gp0State, timers: &Timers) -> u32 {
+    pub fn read_status(
+        &self,
+        gp0_state: &Gp0State,
+        timers: &mut Timers,
+        scheduler: &mut Scheduler,
+    ) -> u32 {
         let ready_to_receive_command =
             matches!(gp0_state.command_state, Gp0CommandState::WaitingForCommand);
         let ready_to_send_vram =
@@ -184,9 +201,9 @@ impl Registers {
         };
 
         let interlaced_bit = if self.interlaced {
-            !timers.in_vblank() && timers.odd_frame()
+            !timers.in_vblank(scheduler) && timers.odd_frame(scheduler)
         } else {
-            !timers.in_vblank() && timers.scanline() % 2 == 1
+            !timers.in_vblank(scheduler) && timers.scanline(scheduler) % 2 == 1
         };
 
         // TODO bits hardcoded:
@@ -216,5 +233,13 @@ impl Registers {
             | (u32::from(ready_to_receive_dma) << 28)
             | ((self.dma_mode as u32) << 29)
             | (u32::from(interlaced_bit) << 31)
+    }
+
+    pub fn dot_clock_divider(&self) -> u16 {
+        if self.force_h_368px {
+            H368_DOT_CLOCK_DIVIDER
+        } else {
+            self.h_resolution.dot_clock_divider()
+        }
     }
 }

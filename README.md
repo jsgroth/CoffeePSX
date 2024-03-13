@@ -18,6 +18,8 @@ Implemented:
 * Most of the GPU, using a software rasterizer
 * Part of the SPU (Sound Processing Unit), enough to get basic audio output
 * Enough of the CD-ROM controller to make the BIOS think there's no disc in the drive
+* Digital controllers (P1 only)
+* Most of the hardware timers
 
 Not yet implemented:
 * More accurate CPU timing; currently hardcoded to 2 cycles per instruction
@@ -27,6 +29,6 @@ Not yet implemented:
 * Most CD-ROM functionality
 * GTE (Geometry Transformation Engine)
 * MDEC (Macroblock Decoder)
-* Controllers
+* Analog controllers and P2 inputs
 * Memory cards
-* Hardware timers
+* Synchronization modes for dotclock and HBlank timers

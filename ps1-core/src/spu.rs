@@ -17,10 +17,6 @@ const AUDIO_RAM_MASK: u32 = (AUDIO_RAM_LEN - 1) as u32;
 
 const NUM_VOICES: usize = 24;
 
-// The SPU clock rate is exactly 1/768 the CPU clock rate
-// This _should_ be 44.1 KHz, but it may not be exactly depending on the exact oscillator speed
-const SPU_CLOCK_DIVIDER: u32 = 768;
-
 type AudioRam = [u8; AUDIO_RAM_LEN];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -185,7 +181,6 @@ pub struct Spu {
     volume: VolumeControl,
     data_port: DataPort,
     reverb: ReverbSettings,
-    cpu_cycles: u32,
 }
 
 impl Spu {
@@ -200,19 +195,10 @@ impl Spu {
             volume: VolumeControl::new(),
             data_port: DataPort::new(),
             reverb: ReverbSettings::default(),
-            cpu_cycles: 0,
         }
     }
 
-    pub fn tick(&mut self, cpu_cycles: u32, audio_queue: &mut Vec<(f64, f64)>) {
-        self.cpu_cycles += cpu_cycles;
-        while self.cpu_cycles >= SPU_CLOCK_DIVIDER {
-            self.cpu_cycles -= SPU_CLOCK_DIVIDER;
-            audio_queue.push(self.clock());
-        }
-    }
-
-    fn clock(&mut self) -> (f64, f64) {
+    pub fn clock(&mut self) -> (f64, f64) {
         self.volume.main_l.clock();
         self.volume.main_r.clock();
 

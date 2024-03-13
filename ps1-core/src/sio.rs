@@ -103,7 +103,7 @@ enum PortState {
     SentDigitalLow,
 }
 
-const CONTROLLER_TRANSFER_CYCLES: u32 = 1000;
+const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
 
 #[derive(Debug, Clone)]
 pub struct SerialPort {
@@ -120,6 +120,7 @@ pub struct SerialPort {
     selected_port: Port,
     baudrate_timer: BaudrateTimer,
     irq: bool,
+    irq_delay_cycles: u16,
 }
 
 impl SerialPort {
@@ -138,6 +139,7 @@ impl SerialPort {
             selected_port: Port::default(),
             baudrate_timer: BaudrateTimer::new(),
             irq: false,
+            irq_delay_cycles: 0,
         }
     }
 
@@ -148,6 +150,13 @@ impl SerialPort {
         interrupt_registers: &mut InterruptRegisters,
     ) {
         self.baudrate_timer.tick(cpu_cycles);
+
+        if self.irq_delay_cycles != 0 {
+            self.irq_delay_cycles = self.irq_delay_cycles.saturating_sub(cpu_cycles as u16);
+            if self.irq_delay_cycles == 0 {
+                interrupt_registers.set_interrupt_flag(InterruptType::Sio0);
+            }
+        }
 
         match self.tx_fifo {
             TxFifoState::Empty => {}
@@ -167,7 +176,7 @@ impl SerialPort {
             } => {
                 let cycles_remaining = cycles_remaining.saturating_sub(cpu_cycles);
                 if cycles_remaining == 0 {
-                    self.process_tx_write(value, inputs, interrupt_registers);
+                    self.process_tx_write(value, inputs);
                     self.tx_fifo = match (next, self.tx_enabled) {
                         (Some(next_value), true) => TxFifoState::Transferring {
                             value: next_value,
@@ -188,12 +197,7 @@ impl SerialPort {
         }
     }
 
-    fn process_tx_write(
-        &mut self,
-        value: u8,
-        inputs: Ps1Inputs,
-        interrupt_registers: &mut InterruptRegisters,
-    ) {
+    fn process_tx_write(&mut self, value: u8, inputs: Ps1Inputs) {
         log::debug!("Processing SIO0 TX_DATA write {value:02X}");
 
         self.port_state = match (self.port_state, value) {
@@ -224,9 +228,9 @@ impl SerialPort {
             }
         };
 
-        if self.dsr_interrupt_enabled && !self.irq {
-            interrupt_registers.set_interrupt_flag(InterruptType::Sio0);
+        if self.dsr_interrupt_enabled && !self.irq && !matches!(self.port_state, PortState::Idle) {
             self.irq = true;
+            self.irq_delay_cycles = 100;
         }
     }
 
