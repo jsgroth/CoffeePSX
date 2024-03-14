@@ -1,3 +1,5 @@
+use crate::spu::I32Ext;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AdpcmHeader {
     pub shift: u8,
@@ -102,7 +104,7 @@ pub fn decode_spu_block(block: &[u8], buffer: &mut SpuAdpcmBuffer) {
         let older: i32 = buffer.samples[buffer_idx - 2].into();
 
         let filtered = shifted + (filter_0 * old + filter_1 * older + 32) / 64;
-        buffer.samples[buffer_idx] = filtered.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+        buffer.samples[buffer_idx] = filtered.clamp_to_i16();
     }
 
     buffer.idx = 4;

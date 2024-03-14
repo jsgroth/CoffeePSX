@@ -25,7 +25,7 @@ Not yet implemented:
 * More accurate CPU timing; currently hardcoded to 2 cycles per instruction
 * CPU instruction cache
 * GPU: 24-bit color mode and display area cropping
-* SPU: Reverb, noise generator, pitch modulation, interrupts, DMA
+* SPU: Capture buffers, noise generator, pitch modulation, interrupts, DMA, reverb FIR filter
 * Most CD-ROM functionality
 * GTE (Geometry Transformation Engine)
 * MDEC (Macroblock Decoder)

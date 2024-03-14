@@ -8,7 +8,7 @@ mod voice;
 use crate::cpu::OpSize;
 use crate::num::U32Ext;
 use crate::spu::envelope::VolumeControl;
-use crate::spu::reverb::ReverbSettings;
+use crate::spu::reverb::ReverbUnit;
 use crate::spu::voice::Voice;
 use std::array;
 
@@ -18,6 +18,16 @@ const AUDIO_RAM_MASK: u32 = (AUDIO_RAM_LEN - 1) as u32;
 const NUM_VOICES: usize = 24;
 
 type AudioRam = [u8; AUDIO_RAM_LEN];
+
+trait I32Ext {
+    fn clamp_to_i16(self) -> i16;
+}
+
+impl I32Ext for i32 {
+    fn clamp_to_i16(self) -> i16 {
+        self.clamp(i16::MIN.into(), i16::MAX.into()) as i16
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum DataPortMode {
@@ -108,7 +118,7 @@ impl ControlRegisters {
     }
 
     // $1F801DAA: SPU control register (SPUCNT)
-    fn read_spucnt(&self, data_port: &DataPort, reverb: &ReverbSettings) -> u32 {
+    fn read_spucnt(&self, data_port: &DataPort, reverb: &ReverbUnit) -> u32 {
         (u32::from(self.spu_enabled) << 15)
             | (u32::from(self.amplifier_enabled) << 14)
             | (u32::from(self.noise_shift) << 10)
@@ -123,7 +133,7 @@ impl ControlRegisters {
     }
 
     // $1F801DAA: SPU control register (SPUCNT)
-    fn write_spucnt(&mut self, value: u32, data_port: &mut DataPort, reverb: &mut ReverbSettings) {
+    fn write_spucnt(&mut self, value: u32, data_port: &mut DataPort, reverb: &mut ReverbUnit) {
         self.spu_enabled = value.bit(15);
         self.amplifier_enabled = value.bit(14);
         self.noise_shift = ((value >> 10) & 0xF) as u8;
@@ -180,7 +190,7 @@ pub struct Spu {
     control: ControlRegisters,
     volume: VolumeControl,
     data_port: DataPort,
-    reverb: ReverbSettings,
+    reverb: ReverbUnit,
 }
 
 impl Spu {
@@ -194,7 +204,7 @@ impl Spu {
             control: ControlRegisters::new(),
             volume: VolumeControl::new(),
             data_port: DataPort::new(),
-            reverb: ReverbSettings::default(),
+            reverb: ReverbUnit::default(),
         }
     }
 
@@ -206,19 +216,26 @@ impl Spu {
             voice.clock(&self.audio_ram);
         }
 
+        self.reverb.clock(&self.voices, &mut self.audio_ram);
+
         let mut sample_l = 0;
         let mut sample_r = 0;
         for voice in &self.voices {
-            let (voice_sample_l, voice_sample_r) = voice.sample();
+            let (voice_sample_l, voice_sample_r) = voice.current_sample;
             sample_l += i32::from(voice_sample_l);
             sample_r += i32::from(voice_sample_r);
         }
 
-        let sample_l = sample_l.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
-        let sample_r = sample_r.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+        let sample_l = sample_l.clamp_to_i16();
+        let sample_r = sample_r.clamp_to_i16();
 
         let sample_l = multiply_volume(sample_l, self.volume.main_l.volume);
         let sample_r = multiply_volume(sample_r, self.volume.main_r.volume);
+
+        let sample_l =
+            (i32::from(sample_l) + i32::from(self.reverb.current_output.0)).clamp_to_i16();
+        let sample_r =
+            (i32::from(sample_r) + i32::from(self.reverb.current_output.1)).clamp_to_i16();
 
         let sample_l = f64::from(sample_l) / -f64::from(i16::MIN);
         let sample_r = f64::from(sample_r) / -f64::from(i16::MIN);
@@ -294,8 +311,8 @@ impl Spu {
             0x1D92 => log::warn!("Unimplemented FM/LFO mode write (high halfword): {value:04X}"),
             0x1D94 => log::warn!("Unimplemented noise mode write (low halfword): {value:04X}"),
             0x1D96 => log::warn!("Unimplemented noise mode write (high halfword): {value:04X}"),
-            0x1D98 => log::warn!("Unimplemented voice reverb enabled write (0-15): {value:04X}"),
-            0x1D9A => log::warn!("Unimplemented voice reverb enabled write (16-23): {value:04X}"),
+            0x1D98 => self.reverb.write_reverb_on_low(value),
+            0x1D9A => self.reverb.write_reverb_on_high(value),
             0x1DA2 => self.reverb.write_buffer_start_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
             0x1DA8 => self.write_data_port(value),
@@ -489,4 +506,8 @@ fn get_voice_number(address: u32) -> usize {
 
 fn multiply_volume(sample: i16, volume: i16) -> i16 {
     ((i32::from(sample) * i32::from(volume)) >> 15) as i16
+}
+
+fn multiply_volume_i32(sample: i32, volume: i32) -> i32 {
+    (sample * volume) >> 15
 }

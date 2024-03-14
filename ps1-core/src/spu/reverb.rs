@@ -1,15 +1,90 @@
+use crate::num::U32Ext;
+use crate::spu;
+use crate::spu::voice::Voice;
+use crate::spu::{multiply_volume_i32, AudioRam, I32Ext};
+use std::cmp;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ReverbClock {
+    #[default]
+    Left,
+    Right,
+}
+
+impl ReverbClock {
+    #[must_use]
+    fn invert(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+}
+
+trait SampleTupleExt {
+    fn get(self, clock: ReverbClock) -> i16;
+
+    fn set(&mut self, value: i16, clock: ReverbClock);
+}
+
+impl SampleTupleExt for (i16, i16) {
+    fn get(self, clock: ReverbClock) -> i16 {
+        match clock {
+            ReverbClock::Left => self.0,
+            ReverbClock::Right => self.1,
+        }
+    }
+
+    fn set(&mut self, value: i16, clock: ReverbClock) {
+        match clock {
+            ReverbClock::Left => self.0 = value,
+            ReverbClock::Right => self.1 = value,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct StereoValue<T> {
     l: T,
     r: T,
 }
 
+impl<T: Copy> StereoValue<T> {
+    fn get(self, clock: ReverbClock) -> T {
+        match clock {
+            ReverbClock::Left => self.l,
+            ReverbClock::Right => self.r,
+        }
+    }
+}
+
 type StereoI32 = StereoValue<i32>;
 type StereoU32 = StereoValue<u32>;
 
+trait AudioRamExt {
+    fn get_i16(&self, address: u32) -> i16;
+
+    fn set_i16(&mut self, address: u32, sample: i16);
+}
+
+impl AudioRamExt for AudioRam {
+    fn get_i16(&self, address: u32) -> i16 {
+        let address = address as usize;
+        i16::from_le_bytes([self[address], self[address + 1]])
+    }
+
+    fn set_i16(&mut self, address: u32, sample: i16) {
+        let address = address as usize;
+        let [lsb, msb] = sample.to_le_bytes();
+        self[address] = lsb;
+        self[address + 1] = msb;
+    }
+}
+
 #[derive(Debug, Clone, Default)]
-pub struct ReverbSettings {
+pub struct ReverbUnit {
     pub writes_enabled: bool,
+    voices_enabled: [bool; spu::NUM_VOICES],
     buffer_start_addr: u32,
     buffer_current_addr: u32,
     input_volume: StereoI32,
@@ -28,9 +103,158 @@ pub struct ReverbSettings {
     apf_offset_1: u32,
     apf_addr_2: StereoU32,
     apf_offset_2: u32,
+    clock: ReverbClock,
+    pub current_output: (i16, i16),
 }
 
-impl ReverbSettings {
+impl ReverbUnit {
+    // TODO 39-tap FIR filter for in/out resampling
+    pub fn clock(&mut self, voices: &[Voice; spu::NUM_VOICES], audio_ram: &mut AudioRam) {
+        let input_sample = self.compute_input_sample(voices);
+
+        self.perform_same_side_reflection(input_sample, audio_ram);
+        self.perform_different_side_reflection(input_sample, audio_ram);
+
+        let comb_filter_output = self.apply_comb_filter(audio_ram);
+        let apf1_output = self.apply_all_pass_filter_1(comb_filter_output, audio_ram);
+        let apf2_output = self.apply_all_pass_filter_2(apf1_output, audio_ram);
+
+        let v_out = self.output_volume.get(self.clock);
+        let output_sample = multiply_volume_i32(apf2_output, v_out);
+        self.current_output
+            .set(output_sample.clamp_to_i16(), self.clock);
+
+        // Increment buffer address only after processing both L and R samples
+        if self.clock == ReverbClock::Right {
+            self.buffer_current_addr = cmp::max(
+                self.buffer_start_addr,
+                self.buffer_current_addr.wrapping_add(2) & spu::AUDIO_RAM_MASK,
+            );
+        }
+
+        self.clock = self.clock.invert();
+    }
+
+    fn compute_input_sample(&self, voices: &[Voice; spu::NUM_VOICES]) -> i32 {
+        let input_volume = self.input_volume.get(self.clock);
+        let mut input_sample = 0_i32;
+        for (voice, reverb_enabled) in voices.iter().zip(self.voices_enabled) {
+            if !reverb_enabled {
+                continue;
+            }
+
+            let voice_sample = voice.current_sample.get(self.clock);
+            input_sample += multiply_volume_i32(voice_sample.into(), input_volume);
+        }
+
+        input_sample
+    }
+
+    fn perform_same_side_reflection(&mut self, input_sample: i32, audio_ram: &mut AudioRam) {
+        if !self.writes_enabled {
+            return;
+        }
+
+        let m_addr = self.same_reflect_addr_1.get(self.clock);
+        let d_addr = self.same_reflect_addr_2.get(self.clock);
+        self.perform_reflection(input_sample, m_addr, d_addr, audio_ram);
+    }
+
+    fn perform_different_side_reflection(&mut self, input_sample: i32, audio_ram: &mut AudioRam) {
+        if !self.writes_enabled {
+            return;
+        }
+
+        let m_addr = self.diff_reflect_addr_1.get(self.clock);
+        let d_addr = self.diff_reflect_addr_2.get(self.clock.invert());
+        self.perform_reflection(input_sample, m_addr, d_addr, audio_ram);
+    }
+
+    fn perform_reflection(
+        &mut self,
+        input_sample: i32,
+        m_addr: u32,
+        d_addr: u32,
+        audio_ram: &mut AudioRam,
+    ) {
+        let v_iir = self.reflection_volume_1;
+        let v_wall = self.reflection_volume_2;
+
+        let m_sample: i32 = audio_ram
+            .get_i16(self.relative_buffer_address(m_addr.wrapping_sub(2)))
+            .into();
+        let d_sample: i32 = audio_ram
+            .get_i16(self.relative_buffer_address(d_addr))
+            .into();
+
+        let reflect_sample = m_sample
+            + multiply_volume_i32(
+                input_sample + multiply_volume_i32(d_sample, v_wall) - m_sample,
+                v_iir,
+            );
+        audio_ram.set_i16(
+            self.relative_buffer_address(m_addr),
+            reflect_sample.clamp_to_i16(),
+        );
+    }
+
+    fn apply_comb_filter(&self, audio_ram: &AudioRam) -> i32 {
+        (0..4)
+            .map(|i| {
+                let ram_addr = self.relative_buffer_address(self.comb_addrs[i].get(self.clock));
+                let comb_sample: i32 = audio_ram.get_i16(ram_addr).into();
+                multiply_volume_i32(comb_sample, self.comb_volumes[i])
+            })
+            .sum()
+    }
+
+    fn apply_all_pass_filter_1(&self, comb_filter_output: i32, audio_ram: &mut AudioRam) -> i32 {
+        let m_apf1 = self.apf_addr_1.get(self.clock);
+        let d_apf1 = self.apf_offset_1;
+        let v_apf1 = self.apf_volume_1;
+        self.apply_all_pass_filter(comb_filter_output, m_apf1, d_apf1, v_apf1, audio_ram)
+    }
+
+    fn apply_all_pass_filter_2(&self, apf1_output: i32, audio_ram: &mut AudioRam) -> i32 {
+        let m_apf2 = self.apf_addr_2.get(self.clock);
+        let d_apf2 = self.apf_offset_2;
+        let v_apf2 = self.apf_volume_2;
+        self.apply_all_pass_filter(apf1_output, m_apf2, d_apf2, v_apf2, audio_ram)
+    }
+
+    fn apply_all_pass_filter(
+        &self,
+        prev_output: i32,
+        m_apf: u32,
+        d_apf: u32,
+        v_apf: i32,
+        audio_ram: &mut AudioRam,
+    ) -> i32 {
+        let apf_input_sample: i32 = audio_ram
+            .get_i16(self.relative_buffer_address(m_apf.wrapping_sub(d_apf)))
+            .into();
+
+        let new_apf_sample = prev_output - multiply_volume_i32(apf_input_sample, v_apf);
+        if self.writes_enabled {
+            audio_ram.set_i16(
+                self.relative_buffer_address(m_apf),
+                new_apf_sample.clamp_to_i16(),
+            );
+        }
+
+        apf_input_sample + multiply_volume_i32(new_apf_sample, v_apf)
+    }
+
+    fn reverb_buffer_len(&self) -> u32 {
+        spu::AUDIO_RAM_LEN as u32 - self.buffer_start_addr
+    }
+
+    fn relative_buffer_address(&self, register_addr: u32) -> u32 {
+        let buffer_offset = self.buffer_current_addr - self.buffer_start_addr;
+        let register_offset = buffer_offset.wrapping_add(register_addr) % self.reverb_buffer_len();
+        self.buffer_start_addr.wrapping_add(register_offset)
+    }
+
     // $1F801D84: Reverb output volume L (vLOUT)
     pub fn write_output_volume_l(&mut self, value: u32) {
         self.output_volume.l = parse_volume(value);
@@ -41,6 +265,24 @@ impl ReverbSettings {
     pub fn write_output_volume_r(&mut self, value: u32) {
         self.output_volume.r = parse_volume(value);
         log::trace!("Reverb output volume R: {}", self.output_volume.r);
+    }
+
+    // $1F801D98: Reverb enabled, low halfword (EON)
+    pub fn write_reverb_on_low(&mut self, value: u32) {
+        for i in 0..16 {
+            self.voices_enabled[i] = value.bit(i as u8);
+        }
+
+        log::trace!("Reverb enabled (voices 0-15): {value:04X}");
+    }
+
+    // $1F801D9A: Reverb enabled, high halfword (EON)
+    pub fn write_reverb_on_high(&mut self, value: u32) {
+        for i in 16..24 {
+            self.voices_enabled[i] = value.bit((i - 16) as u8);
+        }
+
+        log::trace!("Reverb enabled (voices 16-23): {value:04X}");
     }
 
     // $1F801DA2: Reverb buffer start address (mBASE)

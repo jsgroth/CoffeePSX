@@ -17,6 +17,7 @@ pub struct Voice {
     pub adsr: AdsrEnvelope,
     adpcm_buffer: SpuAdpcmBuffer,
     pitch_counter: u16,
+    pub current_sample: (i16, i16),
 }
 
 impl Voice {
@@ -31,6 +32,7 @@ impl Voice {
             adsr: AdsrEnvelope::new(),
             adpcm_buffer: SpuAdpcmBuffer::new(),
             pitch_counter: 0,
+            current_sample: (0, 0),
         }
     }
 
@@ -50,9 +52,11 @@ impl Voice {
                 self.decode_adpcm_block(audio_ram);
             }
         }
+
+        self.current_sample = self.sample();
     }
 
-    pub fn sample(&self) -> (i16, i16) {
+    fn sample(&self) -> (i16, i16) {
         let sample = gaussian::interpolate(
             self.adpcm_buffer.four_most_recent_samples(),
             self.pitch_counter,
