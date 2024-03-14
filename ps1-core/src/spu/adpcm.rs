@@ -48,7 +48,7 @@ impl SpuAdpcmBuffer {
     }
 
     pub fn four_most_recent_samples(&self) -> [i16; 4] {
-        self.samples[self.idx - 3..self.idx + 1].try_into().unwrap()
+        self.samples[self.idx - 3..=self.idx].try_into().unwrap()
     }
 
     pub fn advance(&mut self) {

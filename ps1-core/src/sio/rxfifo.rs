@@ -76,7 +76,7 @@ mod tests {
             assert_eq!(fifo.pop(), i * 4);
         }
 
-        for i in 0..3 {
+        for _ in 0..3 {
             assert_eq!(fifo.pop(), 0);
         }
 
