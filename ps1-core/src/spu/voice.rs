@@ -1,3 +1,5 @@
+mod gaussian;
+
 use crate::spu;
 use crate::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
 use crate::spu::envelope::{AdsrEnvelope, AdsrState, SweepEnvelope};
@@ -51,8 +53,10 @@ impl Voice {
     }
 
     pub fn sample(&self) -> (i16, i16) {
-        // TODO Gaussian interpolation
-        let sample = multiply_volume(self.adpcm_buffer.current_sample(), self.adsr.level);
+        let sample = gaussian::interpolate(
+            self.adpcm_buffer.four_most_recent_samples(),
+            self.pitch_counter,
+        );
         let sample_l = multiply_volume(sample, self.volume_l.volume);
         let sample_r = multiply_volume(sample, self.volume_r.volume);
 
