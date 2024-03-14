@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "cdrom",
     "ps1-core",
     "ps1-runner",
 ]
