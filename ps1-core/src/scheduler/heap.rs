@@ -38,11 +38,12 @@ impl<T: Copy + Default + Ord, const CAPACITY: usize> UpdateableMinHeap<T, CAPACI
 
         self.reheapify_up(0);
 
+        let value = self.heap[self.len];
         if self.len == 0 {
             self.heap[0] = T::default();
         }
 
-        self.heap[self.len]
+        value
     }
 
     pub fn update_or_push(&mut self, new_value: T, pred: impl Fn(T) -> bool) {
