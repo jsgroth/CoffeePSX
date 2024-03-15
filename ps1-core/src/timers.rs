@@ -419,9 +419,10 @@ impl SystemTimer {
             _ => todo!("clock source {:?}", self.clock_source),
         };
 
-        scheduler.update_or_push_event(SchedulerEvent::timer_2_irq(
-            scheduler.cpu_cycle_counter() + cpu_clocks_until_irq,
-        ));
+        scheduler.update_or_push_event(SchedulerEvent {
+            event_type: self.interrupt_type,
+            cpu_cycles: scheduler.cpu_cycle_counter() + cpu_clocks_until_irq,
+        });
     }
 }
 

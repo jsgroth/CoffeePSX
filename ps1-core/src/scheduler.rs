@@ -32,13 +32,6 @@ impl SchedulerEvent {
             cpu_cycles,
         }
     }
-
-    pub fn timer_2_irq(cpu_cycles: u64) -> Self {
-        Self {
-            event_type: SchedulerEventType::Timer2Irq,
-            cpu_cycles,
-        }
-    }
 }
 
 impl Default for SchedulerEvent {
