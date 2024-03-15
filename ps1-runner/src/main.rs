@@ -112,12 +112,12 @@ impl AudioOutput for CpalAudioOutput {
             for &sample in samples {
                 audio_queue.push_back(sample);
             }
-            audio_queue.len() >= 1200
+            audio_queue.len() >= 2400
         };
 
         if wait_for_audio {
             loop {
-                if self.audio_queue.lock().unwrap().len() < 1200 {
+                if self.audio_queue.lock().unwrap().len() < 2400 {
                     break;
                 }
                 thread::sleep(Duration::from_micros(250));
