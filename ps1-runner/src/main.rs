@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use std::{fs, thread};
+use std::{fs, iter, thread};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -221,18 +221,41 @@ fn main() -> anyhow::Result<()> {
 
     let mut frame_count = 0;
     let mut last_fps_log = SystemTime::now();
+    let mut paused = false;
+    let mut pause_pressed = false;
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        emulator.tick(
-            inputs,
-            &mut MiniFbRenderer {
-                window: &mut window,
-                frame_buffer: &mut frame_buffer,
-                inputs: &mut inputs,
-                frame_count: &mut frame_count,
-                last_fps_log: &mut last_fps_log,
-            },
-            &mut audio_output,
-        )?;
+        if !paused {
+            emulator.tick(
+                inputs,
+                &mut MiniFbRenderer {
+                    window: &mut window,
+                    frame_buffer: &mut frame_buffer,
+                    inputs: &mut inputs,
+                    frame_count: &mut frame_count,
+                    last_fps_log: &mut last_fps_log,
+                },
+                &mut audio_output,
+            )?;
+        } else {
+            thread::sleep(Duration::from_micros(16667));
+            window.update_with_buffer(&frame_buffer, 1024, 512)?;
+        }
+
+        if !pause_pressed && window.is_key_down(Key::P) {
+            paused = !paused;
+            pause_pressed = true;
+
+            if paused {
+                *audio_output.audio_queue.lock().unwrap() =
+                    iter::once((0.0, 0.0)).cycle().take(1024 * 1024).collect();
+            } else {
+                audio_output.audio_queue.lock().unwrap().clear();
+            }
+        }
+
+        if !window.is_key_down(Key::P) {
+            pause_pressed = false;
+        }
     }
 
     Ok(())
