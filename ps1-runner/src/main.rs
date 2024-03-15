@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use cdrom::reader::{CdRom, CdRomFileFormat};
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
@@ -8,6 +9,7 @@ use ps1_core::api::{AudioOutput, Ps1Emulator, Renderer};
 use ps1_core::input::Ps1Inputs;
 use rayon::prelude::*;
 use std::collections::VecDeque;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -19,6 +21,8 @@ struct Args {
     bios_path: String,
     #[arg(short = 'e', long)]
     exe_path: Option<String>,
+    #[arg(short = 'd', long)]
+    disc_path: Option<String>,
     #[arg(short = 't', long, default_value_t)]
     tty_enabled: bool,
 }
@@ -167,21 +171,50 @@ fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
     let args = Args::parse();
+    assert!(
+        args.disc_path.is_none() || args.exe_path.is_none(),
+        "Disc path and EXE path cannot both be set"
+    );
 
     log::info!("Loading BIOS from '{}'", args.bios_path);
 
     let bios_rom = fs::read(&args.bios_path)?;
-    let mut emulator = Ps1Emulator::builder(bios_rom)
-        .tty_enabled(args.tty_enabled)
-        .build()?;
+    let mut emulator_builder = Ps1Emulator::builder(bios_rom).tty_enabled(args.tty_enabled);
+    if let Some(disc_path) = &args.disc_path {
+        log::info!("Loading CD-ROM image from '{disc_path}'");
+
+        let format = match Path::new(disc_path).extension().and_then(OsStr::to_str) {
+            Some("cue") => CdRomFileFormat::CueBin,
+            Some("chd") => CdRomFileFormat::Chd,
+            _ => panic!("Unknown CD-ROM image format: '{disc_path}'"),
+        };
+
+        let disc = CdRom::open(disc_path, format)?;
+        emulator_builder = emulator_builder.with_disc(disc);
+    }
+
+    let mut emulator = emulator_builder.build()?;
+
     let mut frame_buffer = vec![0; 1024 * 512];
 
-    let window_title = match &args.exe_path {
-        None => "PS1 - (BIOS only)".into(),
-        Some(exe_path) => format!(
+    let window_title = match (&args.disc_path, &args.exe_path) {
+        (None, None) => "PS1 - (BIOS only)".into(),
+        (Some(disc_path), None) => {
+            format!(
+                "PS1 - {}",
+                Path::new(disc_path)
+                    .with_extension("")
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            )
+        }
+        (None, Some(exe_path)) => format!(
             "PS1 - {}",
             Path::new(exe_path).file_name().unwrap().to_str().unwrap()
         ),
+        (Some(_), Some(_)) => unreachable!(),
     };
 
     let mut window = Window::new(&window_title, 1024, 512, WindowOptions::default())?;

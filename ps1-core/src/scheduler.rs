@@ -6,7 +6,7 @@ mod heap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchedulerEventType {
     VBlank,
-    SpuClock,
+    SpuAndCdClock,
     Timer0Irq,
     Timer1Irq,
     Timer2Irq,
@@ -26,9 +26,9 @@ impl SchedulerEvent {
         }
     }
 
-    pub fn spu_clock(cpu_cycles: u64) -> Self {
+    pub fn spu_and_cd_clock(cpu_cycles: u64) -> Self {
         Self {
-            event_type: SchedulerEventType::SpuClock,
+            event_type: SchedulerEventType::SpuAndCdClock,
             cpu_cycles,
         }
     }

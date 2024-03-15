@@ -6,11 +6,9 @@ mod stat;
 use crate::cd::stat::ErrorFlags;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
+use cdrom::reader::CdRom;
 #[allow(clippy::wildcard_imports)]
 use macros::*;
-
-// CPU clock speed = 44100 Hz * 768
-const CD_CPU_DIVIDER: u32 = 768;
 
 // Roughly 23,796 CPU cycles
 const RECEIVE_COMMAND_CYCLES_STOPPED: u32 = 31;
@@ -150,40 +148,32 @@ impl Default for DriveState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CdController {
     index: u8,
+    disc: Option<CdRom>,
     interrupts: CdInterruptRegisters,
     parameter_fifo: ParameterFifo,
     response_fifo: ResponseFifo,
     command_state: CommandState,
     drive_state: DriveState,
-    cpu_cycles: u32,
 }
 
 impl CdController {
-    pub fn new() -> Self {
+    pub fn new(disc: Option<CdRom>) -> Self {
         Self {
             index: 0,
+            disc,
             interrupts: CdInterruptRegisters::new(),
             parameter_fifo: ParameterFifo::new(),
             response_fifo: ResponseFifo::new(),
             command_state: CommandState::default(),
             drive_state: DriveState::default(),
-            cpu_cycles: 0,
-        }
-    }
-
-    pub fn tick(&mut self, cpu_cycles: u32, interrupt_registers: &mut InterruptRegisters) {
-        self.cpu_cycles += cpu_cycles;
-        while self.cpu_cycles >= CD_CPU_DIVIDER {
-            self.cpu_cycles -= CD_CPU_DIVIDER;
-            self.clock(interrupt_registers);
         }
     }
 
     // 44100 Hz clock
-    fn clock(&mut self, interrupt_registers: &mut InterruptRegisters) {
+    pub fn clock(&mut self, interrupt_registers: &mut InterruptRegisters) {
         self.advance_command_state();
 
         let interrupt_pending = self.interrupts.pending();

@@ -12,6 +12,7 @@ use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
 use crate::sio::SerialPort;
 use crate::spu::Spu;
 use crate::timers::Timers;
+use cdrom::reader::CdRom;
 use thiserror::Error;
 
 pub trait Renderer {
@@ -70,6 +71,7 @@ pub struct Ps1Emulator {
 #[derive(Debug)]
 pub struct Ps1EmulatorBuilder {
     bios_rom: Vec<u8>,
+    disc: Option<CdRom>,
     tty_enabled: bool,
 }
 
@@ -78,28 +80,33 @@ impl Ps1EmulatorBuilder {
     pub fn new(bios_rom: Vec<u8>) -> Self {
         Self {
             bios_rom,
+            disc: None,
             tty_enabled: false,
         }
     }
 
     #[must_use]
-    pub fn tty_enabled(self, tty_enabled: bool) -> Self {
-        Self {
-            tty_enabled,
-            ..self
-        }
+    pub fn with_disc(mut self, disc: CdRom) -> Self {
+        self.disc = Some(disc);
+        self
+    }
+
+    #[must_use]
+    pub fn tty_enabled(mut self, tty_enabled: bool) -> Self {
+        self.tty_enabled = tty_enabled;
+        self
     }
 
     /// # Errors
     ///
     /// Will return an error if the BIOS ROM is invalid.
     pub fn build(self) -> Ps1Result<Ps1Emulator> {
-        Ps1Emulator::new(self.bios_rom, self.tty_enabled)
+        Ps1Emulator::new(self.bios_rom, self.disc, self.tty_enabled)
     }
 }
 
 // The SPU clock rate is exactly 1/768 the CPU clock rate
-// This _should_ be 44.1 KHz, but it may not be exactly depending on the exact oscillator speed
+// This _should_ be 44100 Hz, but it may not be exactly depending on the exact oscillator speed
 const SPU_CLOCK_DIVIDER: u64 = 768;
 
 impl Ps1Emulator {
@@ -111,7 +118,7 @@ impl Ps1Emulator {
     /// # Errors
     ///
     /// Will return an error if the BIOS ROM is invalid.
-    pub fn new(bios_rom: Vec<u8>, tty_enabled: bool) -> Ps1Result<Self> {
+    pub fn new(bios_rom: Vec<u8>, disc: Option<CdRom>, tty_enabled: bool) -> Ps1Result<Self> {
         let memory = Memory::new(bios_rom)?;
 
         let mut emulator = Self {
@@ -119,7 +126,7 @@ impl Ps1Emulator {
             gpu: Gpu::new(),
             spu: Spu::new(),
             audio_buffer: Vec::with_capacity(1600),
-            cd_controller: CdController::new(),
+            cd_controller: CdController::new(disc),
             memory,
             dma_controller: DmaController::new(),
             interrupt_registers: InterruptRegisters::new(),
@@ -137,7 +144,7 @@ impl Ps1Emulator {
     fn schedule_initial_events(&mut self) {
         self.timers.schedule_next_vblank(&mut self.scheduler);
         self.scheduler
-            .update_or_push_event(SchedulerEvent::spu_clock(SPU_CLOCK_DIVIDER));
+            .update_or_push_event(SchedulerEvent::spu_and_cd_clock(SPU_CLOCK_DIVIDER));
     }
 
     #[inline]
@@ -218,10 +225,7 @@ impl Ps1Emulator {
 
         self.scheduler.increment_cpu_cycles(cpu_cycles.into());
 
-        self.cd_controller
-            .tick(cpu_cycles, &mut self.interrupt_registers);
-
-        // TODO use a scheduler or something instead of advancing SIO0 every CPU tick
+        // TODO use scheduler instead of advancing SIO0 every CPU tick
         self.sio0
             .tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
@@ -250,10 +254,12 @@ impl Ps1Emulator {
                         .map_err(TickError::Audio)?;
                     self.audio_buffer.clear();
                 }
-                SchedulerEventType::SpuClock => {
+                SchedulerEventType::SpuAndCdClock => {
                     self.audio_buffer.push(self.spu.clock());
+                    self.cd_controller.clock(&mut self.interrupt_registers);
+
                     self.scheduler
-                        .update_or_push_event(SchedulerEvent::spu_clock(
+                        .update_or_push_event(SchedulerEvent::spu_and_cd_clock(
                             event.cpu_cycles + SPU_CLOCK_DIVIDER,
                         ));
                 }

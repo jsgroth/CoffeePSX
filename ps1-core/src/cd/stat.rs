@@ -1,6 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::{CdController, Command, CommandState, DriveState};
+use cdrom::cue::TrackMode;
 use std::ops::BitOr;
 
 // Roughly 18,944 CPU cycles
@@ -54,8 +55,26 @@ impl CdController {
     }
 
     pub(super) fn get_id_second_response(&mut self) -> CommandState {
-        // TODO this is a hardcoded "no disc" response
-        int5!(self, [0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        match &self.disc {
+            // TODO don't hardcode region
+            Some(disc) => {
+                let status = self.status_code(ErrorFlags::NONE);
+                let mode_byte = match disc.cue().track(1).mode {
+                    TrackMode::Mode2 => 0x20,
+                    TrackMode::Mode1 | TrackMode::Audio => 0x00,
+                };
+
+                int2!(
+                    self,
+                    [status, 0x00, mode_byte, 0x00, b'S', b'C', b'E', b'A']
+                );
+            }
+            None => {
+                // "No disc" response
+                int5!(self, [0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+            }
+        }
+
         CommandState::Idle
     }
 }
