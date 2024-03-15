@@ -218,6 +218,7 @@ impl Spu {
 
         self.reverb.clock(&self.voices, &mut self.audio_ram);
 
+        // Mix voice samples together
         let mut sample_l = 0;
         let mut sample_r = 0;
         for voice in &self.voices {
@@ -226,17 +227,17 @@ impl Spu {
             sample_r += i32::from(voice_sample_r);
         }
 
-        let sample_l = sample_l.clamp_to_i16();
-        let sample_r = sample_r.clamp_to_i16();
+        // Apply main volume
+        let sample_l = multiply_volume(sample_l.clamp_to_i16(), self.volume.main_l.volume);
+        let sample_r = multiply_volume(sample_r.clamp_to_i16(), self.volume.main_r.volume);
 
-        let sample_l = multiply_volume(sample_l, self.volume.main_l.volume);
-        let sample_r = multiply_volume(sample_r, self.volume.main_r.volume);
-
+        // Mix in reverb unit output
         let sample_l =
             (i32::from(sample_l) + i32::from(self.reverb.current_output.0)).clamp_to_i16();
         let sample_r =
             (i32::from(sample_r) + i32::from(self.reverb.current_output.1)).clamp_to_i16();
 
+        // Convert from i16 to f64
         let sample_l = f64::from(sample_l) / -f64::from(i16::MIN);
         let sample_r = f64::from(sample_r) / -f64::from(i16::MIN);
 

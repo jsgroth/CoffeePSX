@@ -57,10 +57,12 @@ impl Voice {
     }
 
     fn sample(&self) -> (i16, i16) {
-        let sample = gaussian::interpolate(
+        let raw_sample = gaussian::interpolate(
             self.adpcm_buffer.four_most_recent_samples(),
             self.pitch_counter,
         );
+        let sample = multiply_volume(raw_sample, self.adsr.level);
+
         let sample_l = multiply_volume(sample, self.volume_l.volume);
         let sample_r = multiply_volume(sample, self.volume_r.volume);
 
