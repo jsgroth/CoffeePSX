@@ -14,21 +14,9 @@ pub struct CdTime {
 }
 
 impl CdTime {
-    pub const ZERO: Self = Self {
-        minutes: 0,
-        seconds: 0,
-        frames: 0,
-    };
-    pub const SECTOR_0_START: Self = Self {
-        minutes: 0,
-        seconds: 2,
-        frames: 0,
-    };
-    pub const DISC_END: Self = Self {
-        minutes: 60,
-        seconds: 3,
-        frames: 74,
-    };
+    pub const ZERO: Self = Self { minutes: 0, seconds: 0, frames: 0 };
+    pub const SECTOR_0_START: Self = Self { minutes: 0, seconds: 2, frames: 0 };
+    pub const DISC_END: Self = Self { minutes: 60, seconds: 3, frames: 74 };
 
     pub const MAX_MINUTES: u8 = 80;
     pub const SECONDS_PER_MINUTE: u8 = 60;
@@ -49,11 +37,7 @@ impl CdTime {
     /// * Frames must be less than 75
     #[must_use]
     pub fn new(minutes: u8, seconds: u8, frames: u8) -> Self {
-        assert!(
-            minutes < Self::MAX_MINUTES,
-            "Minutes must be less than {}",
-            Self::MAX_MINUTES
-        );
+        assert!(minutes < Self::MAX_MINUTES, "Minutes must be less than {}", Self::MAX_MINUTES);
         assert!(
             seconds < Self::SECONDS_PER_MINUTE,
             "Seconds must be less than {}",
@@ -65,11 +49,7 @@ impl CdTime {
             Self::FRAMES_PER_SECOND
         );
 
-        Self {
-            minutes,
-            seconds,
-            frames,
-        }
+        Self { minutes, seconds, frames }
     }
 
     #[must_use]
@@ -77,11 +57,7 @@ impl CdTime {
         (minutes < Self::MAX_MINUTES
             && seconds < Self::SECONDS_PER_MINUTE
             && frames < Self::FRAMES_PER_SECOND)
-            .then_some(Self {
-                minutes,
-                seconds,
-                frames,
-            })
+            .then_some(Self { minutes, seconds, frames })
     }
 
     #[must_use]
@@ -100,10 +76,7 @@ impl CdTime {
     #[must_use]
     pub fn from_sector_number(sector_number: u32) -> Self {
         // All Sega CD sector numbers are less than 360,000 (80 minutes)
-        assert!(
-            sector_number < Self::MAX_SECTORS,
-            "Invalid sector number: {sector_number}"
-        );
+        assert!(sector_number < Self::MAX_SECTORS, "Invalid sector number: {sector_number}");
 
         let frames = sector_number % u32::from(Self::FRAMES_PER_SECOND);
         let seconds = (sector_number / u32::from(Self::FRAMES_PER_SECOND))
@@ -139,11 +112,7 @@ impl CdTime {
 
     #[must_use]
     pub fn saturating_sub(self, other: Self) -> Self {
-        if self <= other {
-            CdTime::ZERO
-        } else {
-            self - other
-        }
+        if self <= other { CdTime::ZERO } else { self - other }
     }
 }
 
@@ -155,11 +124,7 @@ impl Add for CdTime {
         let (seconds, carried) = add(self.seconds, rhs.seconds, carried, Self::SECONDS_PER_MINUTE);
         let (minutes, _) = add(self.minutes, rhs.minutes, carried, Self::MAX_MINUTES);
 
-        Self {
-            minutes,
-            seconds,
-            frames,
-        }
+        Self { minutes, seconds, frames }
     }
 }
 
@@ -174,19 +139,11 @@ impl Sub for CdTime {
 
     fn sub(self, rhs: Self) -> Self::Output {
         let (frames, borrowed) = sub(self.frames, rhs.frames, false, Self::FRAMES_PER_SECOND);
-        let (seconds, borrowed) = sub(
-            self.seconds,
-            rhs.seconds,
-            borrowed,
-            Self::SECONDS_PER_MINUTE,
-        );
+        let (seconds, borrowed) =
+            sub(self.seconds, rhs.seconds, borrowed, Self::SECONDS_PER_MINUTE);
         let (minutes, _) = sub(self.minutes, rhs.minutes, borrowed, Self::MAX_MINUTES);
 
-        Self {
-            minutes,
-            seconds,
-            frames,
-        }
+        Self { minutes, seconds, frames }
     }
 }
 
@@ -218,11 +175,7 @@ fn add(a: u8, b: u8, overflow: bool, base: u8) -> (u8, bool) {
 
 fn sub(a: u8, b: u8, overflow: bool, base: u8) -> (u8, bool) {
     let operand_r = b + u8::from(overflow);
-    if a < operand_r {
-        (base - (operand_r - a), true)
-    } else {
-        (a - operand_r, false)
-    }
+    if a < operand_r { (base - (operand_r - a), true) } else { (a - operand_r, false) }
 }
 
 impl FromStr for CdTime {
@@ -243,21 +196,13 @@ impl FromStr for CdTime {
         let seconds: u8 = s[3..5].parse().map_err(err_fn)?;
         let frames: u8 = s[6..8].parse().map_err(err_fn)?;
 
-        Ok(CdTime {
-            minutes,
-            seconds,
-            frames,
-        })
+        Ok(CdTime { minutes, seconds, frames })
     }
 }
 
 impl Display for CdTime {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:02}:{:02}:{:02}",
-            self.minutes, self.seconds, self.frames
-        )
+        write!(f, "{:02}:{:02}:{:02}", self.minutes, self.seconds, self.frames)
     }
 }
 
@@ -268,42 +213,24 @@ mod tests {
     #[test]
     fn cd_time_add() {
         // No carries
-        assert_eq!(
-            CdTime::new(10, 20, 30) + CdTime::new(15, 25, 35),
-            CdTime::new(25, 45, 65)
-        );
+        assert_eq!(CdTime::new(10, 20, 30) + CdTime::new(15, 25, 35), CdTime::new(25, 45, 65));
 
         // Frames carry
-        assert_eq!(
-            CdTime::new(10, 20, 30) + CdTime::new(15, 25, 55),
-            CdTime::new(25, 46, 10)
-        );
+        assert_eq!(CdTime::new(10, 20, 30) + CdTime::new(15, 25, 55), CdTime::new(25, 46, 10));
 
         // Seconds carry
-        assert_eq!(
-            CdTime::new(10, 20, 30) + CdTime::new(15, 55, 35),
-            CdTime::new(26, 15, 65)
-        );
+        assert_eq!(CdTime::new(10, 20, 30) + CdTime::new(15, 55, 35), CdTime::new(26, 15, 65));
     }
 
     #[test]
     fn cd_time_sub() {
         // No borrows
-        assert_eq!(
-            CdTime::new(12, 13, 14) - CdTime::new(7, 7, 7),
-            CdTime::new(5, 6, 7)
-        );
+        assert_eq!(CdTime::new(12, 13, 14) - CdTime::new(7, 7, 7), CdTime::new(5, 6, 7));
 
         // Frames borrow
-        assert_eq!(
-            CdTime::new(5, 4, 3) - CdTime::new(1, 1, 10),
-            CdTime::new(4, 2, 68)
-        );
+        assert_eq!(CdTime::new(5, 4, 3) - CdTime::new(1, 1, 10), CdTime::new(4, 2, 68));
 
         // Seconds borrow
-        assert_eq!(
-            CdTime::new(15, 5, 39) - CdTime::new(13, 16, 25),
-            CdTime::new(1, 49, 14)
-        );
+        assert_eq!(CdTime::new(15, 5, 39) - CdTime::new(13, 16, 25), CdTime::new(1, 49, 14));
     }
 }

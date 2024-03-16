@@ -63,11 +63,7 @@ struct DataPort {
 
 impl DataPort {
     fn new() -> Self {
-        Self {
-            mode: DataPortMode::default(),
-            start_address: 0,
-            current_address: 0,
-        }
+        Self { mode: DataPortMode::default(), start_address: 0, current_address: 0 }
     }
 
     // $1F801DA6: Sound RAM data transfer address
@@ -77,10 +73,7 @@ impl DataPort {
         self.start_address = (value & 0xFFFF) << 3;
         self.current_address = self.start_address;
 
-        log::trace!(
-            "Sound RAM data transfer address: {:05X}",
-            self.start_address
-        );
+        log::trace!("Sound RAM data transfer address: {:05X}", self.start_address);
     }
 }
 
@@ -154,14 +147,8 @@ impl ControlRegisters {
         log::trace!("  Reverb writes enabled: {}", reverb.writes_enabled);
         log::trace!("  IRQ enabled: {}", self.irq_enabled);
         log::trace!("  Data port mode: {:?}", data_port.mode);
-        log::trace!(
-            "  External audio reverb enabled: {}",
-            self.external_audio_reverb_enabled
-        );
-        log::trace!(
-            "  CD audio reverb enabled: {}",
-            self.cd_audio_reverb_enabled
-        );
+        log::trace!("  External audio reverb enabled: {}", self.external_audio_reverb_enabled);
+        log::trace!("  CD audio reverb enabled: {}", self.cd_audio_reverb_enabled);
         log::trace!("  External audio enabled: {}", self.external_audio_enabled);
         log::trace!("  CD audio enabled: {}", self.cd_audio_enabled);
     }
@@ -196,10 +183,7 @@ pub struct Spu {
 impl Spu {
     pub fn new() -> Self {
         Self {
-            audio_ram: vec![0; AUDIO_RAM_LEN]
-                .into_boxed_slice()
-                .try_into()
-                .unwrap(),
+            audio_ram: vec![0; AUDIO_RAM_LEN].into_boxed_slice().try_into().unwrap(),
             voices: array::from_fn(|_| Voice::new()),
             control: ControlRegisters::new(),
             volume: VolumeControl::new(),
@@ -317,9 +301,7 @@ impl Spu {
             0x1DA2 => self.reverb.write_buffer_start_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
             0x1DA8 => self.write_data_port(value),
-            0x1DAA => self
-                .control
-                .write_spucnt(value, &mut self.data_port, &mut self.reverb),
+            0x1DAA => self.control.write_spucnt(value, &mut self.data_port, &mut self.reverb),
             0x1DAC => {
                 // Sound RAM data transfer control register; writing any value other than $0004
                 // would be highly unexpected
@@ -375,10 +357,7 @@ impl Spu {
             0x4 => {
                 // $1F801C04 + N*$10: Voice sample rate
                 self.voices[voice].write_sample_rate(value);
-                log::trace!(
-                    "Voice {voice} sample rate: {:04X}",
-                    self.voices[voice].sample_rate
-                );
+                log::trace!("Voice {voice} sample rate: {:04X}", self.voices[voice].sample_rate);
             }
             0x6 => {
                 // $1F801C06 + N*$10: ADPCM start address
@@ -391,18 +370,12 @@ impl Spu {
             0x8 => {
                 // $1F801C08 + N*$10: ADSR settings, low halfword
                 self.voices[voice].write_adsr_low(value);
-                log::trace!(
-                    "Voice {voice} ADSR settings (low): {:?}",
-                    self.voices[voice].adsr
-                );
+                log::trace!("Voice {voice} ADSR settings (low): {:?}", self.voices[voice].adsr);
             }
             0xA => {
                 // $1F801C0A + N*$10: ADSR settings, high halfword
                 self.voices[voice].write_adsr_high(value);
-                log::trace!(
-                    "Voice {voice} ADSR settings (high): {:?}",
-                    self.voices[voice].adsr
-                );
+                log::trace!("Voice {voice} ADSR settings (high): {:?}", self.voices[voice].adsr);
             }
             _ => todo!("voice {voice} register write: {address:08X} {value:04X}"),
         }
@@ -436,10 +409,7 @@ impl Spu {
         self.audio_ram[self.data_port.current_address as usize] = lsb;
         self.audio_ram[(self.data_port.current_address + 1) as usize] = msb;
 
-        log::trace!(
-            "Wrote to {:05X} in audio RAM",
-            self.data_port.current_address
-        );
+        log::trace!("Wrote to {:05X} in audio RAM", self.data_port.current_address);
 
         self.data_port.current_address = (self.data_port.current_address + 2) & AUDIO_RAM_MASK;
     }

@@ -58,12 +58,7 @@ pub enum CdRomError {
     #[error(
         "CD-ROM error detection check failed for track {track_number} sector {sector_number}; expected={expected:08X}, actual={actual:08X}"
     )]
-    DiscReadInvalidChecksum {
-        track_number: u8,
-        sector_number: u32,
-        expected: u32,
-        actual: u32,
-    },
+    DiscReadInvalidChecksum { track_number: u8, sector_number: u32, expected: u32, actual: u32 },
 }
 
 pub type CdRomResult<T> = Result<T, CdRomError>;

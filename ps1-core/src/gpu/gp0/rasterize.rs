@@ -7,12 +7,8 @@ use crate::gpu::gp0::{
 use crate::gpu::Vram;
 use std::cmp;
 
-const DITHER_TABLE: &[[i8; 4]; 4] = &[
-    [-4, 0, -3, 1],
-    [2, -2, 3, -1],
-    [-3, 1, -4, 0],
-    [3, -1, 2, -2],
-];
+const DITHER_TABLE: &[[i8; 4]; 4] =
+    &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4, 0], [3, -1, 2, -2]];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct VertexFloat {
@@ -22,10 +18,7 @@ struct VertexFloat {
 
 impl Vertex {
     fn to_float(self) -> VertexFloat {
-        VertexFloat {
-            x: self.x.into(),
-            y: self.y.into(),
-        }
+        VertexFloat { x: self.x.into(), y: self.y.into() }
     }
 }
 
@@ -74,11 +67,7 @@ fn apply_semi_transparency<F>(back: Color, front: Color, op: F) -> Color
 where
     F: Fn(u8, u8) -> u8,
 {
-    Color {
-        r: op(back.r, front.r),
-        g: op(back.g, front.g),
-        b: op(back.b, front.b),
-    }
+    Color { r: op(back.r, front.r), g: op(back.g, front.g), b: op(back.b, front.b) }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -101,11 +90,7 @@ pub struct DrawLineParameters {
 }
 
 pub fn line(
-    DrawLineParameters {
-        vertices,
-        shading,
-        semi_transparent,
-    }: DrawLineParameters,
+    DrawLineParameters { vertices, shading, semi_transparent }: DrawLineParameters,
     draw_settings: &DrawSettings,
     global_texpage: TexturePage,
     vram: &mut Vram,
@@ -172,15 +157,8 @@ pub fn line(
     let mut x = f64::from(vertices[0].x);
     let mut y = f64::from(vertices[0].y);
     while x.round() as i32 != vertices[1].x || y.round() as i32 != vertices[1].y {
-        let vertex = Vertex {
-            x: x.round() as i32,
-            y: y.round() as i32,
-        };
-        let color = Color {
-            r: r.round() as u8,
-            g: g.round() as u8,
-            b: b.round() as u8,
-        };
+        let vertex = Vertex { x: x.round() as i32, y: y.round() as i32 };
+        let color = Color { r: r.round() as u8, g: g.round() as u8, b: b.round() as u8 };
         draw_line_pixel(
             vertex,
             color,
@@ -198,11 +176,7 @@ pub fn line(
     }
 
     // Draw the last pixel
-    let color = Color {
-        r: r.round() as u8,
-        g: g.round() as u8,
-        b: b.round() as u8,
-    };
+    let color = Color { r: r.round() as u8, g: g.round() as u8, b: b.round() as u8 };
     draw_line_pixel(
         vertices[1],
         color,
@@ -330,10 +304,7 @@ pub fn triangle(
     let (x_offset, y_offset) = draw_settings.draw_offset;
 
     // Apply drawing offset to vertices
-    let v = v.map(|vertex| Vertex {
-        x: vertex.x + x_offset,
-        y: vertex.y + y_offset,
-    });
+    let v = v.map(|vertex| Vertex { x: vertex.x + x_offset, y: vertex.y + y_offset });
 
     log::trace!("Triangle vertices: {v:?}");
     log::trace!("Bounding box: ({draw_min_x}, {draw_min_y}) to ({draw_max_x}, {draw_max_y}");
@@ -386,16 +357,8 @@ fn triangle_swapped_vertices(
     vram: &mut Vram,
 ) {
     let vertices = [v[1], v[0], v[2]];
-    let texture_u = [
-        texture_params.u[1],
-        texture_params.u[0],
-        texture_params.u[2],
-    ];
-    let texture_v = [
-        texture_params.v[1],
-        texture_params.v[0],
-        texture_params.v[2],
-    ];
+    let texture_u = [texture_params.u[1], texture_params.u[0], texture_params.u[2]];
+    let texture_v = [texture_params.v[1], texture_params.v[0], texture_params.v[2]];
     let shading = match shading {
         PolygonShading::Flat(color) => PolygonShading::Flat(color),
         PolygonShading::Gouraud(color0, color1, color2) => {
@@ -456,10 +419,7 @@ fn rasterize_pixel(
     }
 
     // The sampling point is in the center of the pixel, so add 0.5 to both coordinates
-    let p = VertexFloat {
-        x: f64::from(px) + 0.5,
-        y: f64::from(py) + 0.5,
-    };
+    let p = VertexFloat { x: f64::from(px) + 0.5, y: f64::from(py) + 0.5 };
 
     // A given point is contained within the triangle if the Z component of the cross-product of
     // v0->p and v0->v1 is non-negative for each edge v0->v1 (assuming the vertices are ordered
@@ -583,11 +543,7 @@ fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]
     let g = alpha * gf[0] + beta * gf[1] + gamma * gf[2];
     let b = alpha * bf[0] + beta * bf[1] + gamma * bf[2];
 
-    Color {
-        r: r.round() as u8,
-        g: g.round() as u8,
-        b: b.round() as u8,
-    }
+    Color { r: r.round() as u8, g: g.round() as u8, b: b.round() as u8 }
 }
 
 fn interpolate_uv_coordinates(
@@ -596,10 +552,7 @@ fn interpolate_uv_coordinates(
     u: [u8; 3],
     v: [u8; 3],
 ) -> (u8, u8) {
-    let vertices = vertices.map(|vertex| VertexFloat {
-        x: vertex.x + 0.5,
-        y: vertex.y + 0.5,
-    });
+    let vertices = vertices.map(|vertex| VertexFloat { x: vertex.x + 0.5, y: vertex.y + 0.5 });
 
     let uf = u.map(f64::from);
     let vf = v.map(f64::from);

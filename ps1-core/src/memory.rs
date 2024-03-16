@@ -75,18 +75,13 @@ macro_rules! impl_write_u32 {
 impl Memory {
     pub fn new(bios_rom: Vec<u8>) -> Ps1Result<Self> {
         if bios_rom.len() != BIOS_ROM_LEN {
-            return Err(Ps1Error::IncorrectBiosSize {
-                bios_len: bios_rom.len(),
-            });
+            return Err(Ps1Error::IncorrectBiosSize { bios_len: bios_rom.len() });
         }
 
         Ok(Self {
             bios_rom: bios_rom.into_boxed_slice().try_into().unwrap(),
             main_ram: vec![0; MAIN_RAM_LEN].into_boxed_slice().try_into().unwrap(),
-            scratchpad: vec![0; SCRATCHPAD_LEN]
-                .into_boxed_slice()
-                .try_into()
-                .unwrap(),
+            scratchpad: vec![0; SCRATCHPAD_LEN].into_boxed_slice().try_into().unwrap(),
         })
     }
 

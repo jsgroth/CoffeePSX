@@ -88,10 +88,7 @@ impl CueSheet {
 
         let track_start_times = tracks.iter().map(|track| track.start_time).collect();
 
-        Self {
-            tracks,
-            track_start_times,
-        }
+        Self { tracks, track_start_times }
     }
 
     #[must_use]
@@ -130,9 +127,7 @@ pub(crate) fn tracks_are_continuous(tracks: &[Track]) -> bool {
     }
 
     for window in tracks.windows(2) {
-        let [track, next] = window else {
-            unreachable!("windows(2)")
-        };
+        let [track, next] = window else { unreachable!("windows(2)") };
         if next.start_time != track.end_time {
             return false;
         }

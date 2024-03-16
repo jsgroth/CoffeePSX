@@ -20,26 +20,17 @@ pub struct SchedulerEvent {
 
 impl SchedulerEvent {
     pub fn vblank(cpu_cycles: u64) -> Self {
-        Self {
-            event_type: SchedulerEventType::VBlank,
-            cpu_cycles,
-        }
+        Self { event_type: SchedulerEventType::VBlank, cpu_cycles }
     }
 
     pub fn spu_and_cd_clock(cpu_cycles: u64) -> Self {
-        Self {
-            event_type: SchedulerEventType::SpuAndCdClock,
-            cpu_cycles,
-        }
+        Self { event_type: SchedulerEventType::SpuAndCdClock, cpu_cycles }
     }
 }
 
 impl Default for SchedulerEvent {
     fn default() -> Self {
-        Self {
-            event_type: SchedulerEventType::VBlank,
-            cpu_cycles: u64::MAX,
-        }
+        Self { event_type: SchedulerEventType::VBlank, cpu_cycles: u64::MAX }
     }
 }
 
@@ -65,10 +56,7 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new() -> Self {
-        Self {
-            cpu_cycle_counter: 0,
-            heap: SchedulerHeap::new(),
-        }
+        Self { cpu_cycle_counter: 0, heap: SchedulerHeap::new() }
     }
 
     pub fn cpu_cycle_counter(&self) -> u64 {
@@ -84,9 +72,8 @@ impl Scheduler {
     }
 
     pub fn update_or_push_event(&mut self, event: SchedulerEvent) {
-        self.heap.update_or_push(event, |existing_event| {
-            event.event_type == existing_event.event_type
-        });
+        self.heap
+            .update_or_push(event, |existing_event| event.event_type == existing_event.event_type);
     }
 
     pub fn remove_event(&mut self, event_type: SchedulerEventType) {

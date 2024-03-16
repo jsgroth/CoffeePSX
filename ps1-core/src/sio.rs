@@ -17,11 +17,7 @@ struct BaudrateTimer {
 
 impl BaudrateTimer {
     fn new() -> Self {
-        Self {
-            timer: 0x0088,
-            raw_reload_value: 0x0088,
-            reload_factor: 2,
-        }
+        Self { timer: 0x0088, raw_reload_value: 0x0088, reload_factor: 2 }
     }
 
     fn tick(&mut self, mut cpu_cycles: u32) {
@@ -69,11 +65,7 @@ enum Port {
 
 impl Port {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Two
-        } else {
-            Self::One
-        }
+        if bit { Self::Two } else { Self::One }
     }
 }
 
@@ -81,11 +73,7 @@ impl Port {
 enum TxFifoState {
     Empty,
     Queued(u8),
-    Transferring {
-        value: u8,
-        cycles_remaining: u32,
-        next: Option<u8>,
-    },
+    Transferring { value: u8, cycles_remaining: u32, next: Option<u8> },
 }
 
 impl TxFifoState {
@@ -169,11 +157,7 @@ impl SerialPort {
                     };
                 }
             }
-            TxFifoState::Transferring {
-                value,
-                cycles_remaining,
-                next,
-            } => {
+            TxFifoState::Transferring { value, cycles_remaining, next } => {
                 let cycles_remaining = cycles_remaining.saturating_sub(cpu_cycles);
                 if cycles_remaining == 0 {
                     self.process_tx_write(value, inputs);
@@ -187,11 +171,7 @@ impl SerialPort {
                         (None, _) => TxFifoState::Empty,
                     };
                 } else {
-                    self.tx_fifo = TxFifoState::Transferring {
-                        value,
-                        cycles_remaining,
-                        next,
-                    };
+                    self.tx_fifo = TxFifoState::Transferring { value, cycles_remaining, next };
                 }
             }
         }
@@ -249,15 +229,9 @@ impl SerialPort {
                     TxFifoState::Queued(tx_data)
                 }
             }
-            TxFifoState::Transferring {
-                value,
-                cycles_remaining,
-                ..
-            } => TxFifoState::Transferring {
-                value,
-                cycles_remaining,
-                next: Some(tx_data),
-            },
+            TxFifoState::Transferring { value, cycles_remaining, .. } => {
+                TxFifoState::Transferring { value, cycles_remaining, next: Some(tx_data) }
+            }
         };
 
         log::debug!("SIO0_TX_DATA write: {tx_data:02X}");
@@ -287,10 +261,7 @@ impl SerialPort {
         self.baudrate_timer.update_reload_factor(value);
 
         if value & 0xC != 0xC {
-            todo!(
-                "Expected character length to be 8-bit (3), was {}",
-                (value >> 2) & 3
-            );
+            todo!("Expected character length to be 8-bit (3), was {}", (value >> 2) & 3);
         }
 
         if value.bit(4) {

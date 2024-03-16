@@ -75,9 +75,7 @@ impl<F: Read + Seek> ChdFile<F> {
 
             let Some(cd_metadata) = CdMetadata::parse_from(metadata.value.clone()) else {
                 let value_str = String::from_utf8_lossy(&metadata.value).to_string();
-                return Err(CdRomError::ChdHeaderParseError {
-                    metadata_value: value_str,
-                });
+                return Err(CdRomError::ChdHeaderParseError { metadata_value: value_str });
             };
 
             cd_metadata_list.push(cd_metadata);
@@ -201,21 +199,15 @@ impl<F: Read + Seek> ChdFile<F> {
 
 impl<F: Read + Seek> Debug for ChdFile<F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "ChdFile {{ current_hunk_number: {} }}",
-            self.current_hunk_number
-        )
+        write!(f, "ChdFile {{ current_hunk_number: {} }}", self.current_hunk_number)
     }
 }
 
 fn validate_track_numbers(cd_metadata_list: &[CdMetadata]) -> CdRomResult<()> {
     for (i, metadata) in cd_metadata_list.iter().enumerate() {
         if metadata.track_number != (i + 1) as u8 {
-            let track_numbers = cd_metadata_list
-                .iter()
-                .map(|metadata| metadata.track_number)
-                .collect();
+            let track_numbers =
+                cd_metadata_list.iter().map(|metadata| metadata.track_number).collect();
             return Err(CdRomError::ChdInvalidTrackList { track_numbers });
         }
     }

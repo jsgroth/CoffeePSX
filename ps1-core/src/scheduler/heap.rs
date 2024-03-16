@@ -8,17 +8,11 @@ pub struct UpdateableMinHeap<T, const CAPACITY: usize> {
 
 impl<T: Copy + Default + Ord, const CAPACITY: usize> UpdateableMinHeap<T, CAPACITY> {
     pub fn new() -> Self {
-        Self {
-            heap: array::from_fn(|_| T::default()),
-            len: 0,
-        }
+        Self { heap: array::from_fn(|_| T::default()), len: 0 }
     }
 
     pub fn push(&mut self, value: T) {
-        assert!(
-            self.len < CAPACITY,
-            "Push while heap is at capacity of {CAPACITY}"
-        );
+        assert!(self.len < CAPACITY, "Push while heap is at capacity of {CAPACITY}");
 
         self.heap[self.len] = value;
         self.len += 1;

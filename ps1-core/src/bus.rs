@@ -196,15 +196,11 @@ impl<'a> Bus<'a> {
                 _ => unreachable!("value & 3 is always <= 3"),
             },
             0x10F0 => self.dma_controller.write_control(value),
-            0x10F4 => self
-                .dma_controller
-                .write_interrupt(value, self.interrupt_registers),
+            0x10F4 => self.dma_controller.write_interrupt(value, self.interrupt_registers),
             0x1100..=0x112F => self.timers.write_register(address, value, self.scheduler),
             0x1800..=0x1803 => self.cd_controller.write_port(address, value as u8),
             0x1810 => self.gpu.write_gp0_command(value),
-            0x1814 => self
-                .gpu
-                .write_gp1_command(value, self.timers, self.scheduler),
+            0x1814 => self.gpu.write_gp1_command(value, self.timers, self.scheduler),
             0x1C00..=0x1FFF => self.spu.write_register(address, value, size),
             _ => todo!("I/O register write {address:08X} {value:08X} {size:?}"),
         }

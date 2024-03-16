@@ -121,8 +121,7 @@ impl ReverbUnit {
 
         let v_out = self.output_volume.get(self.clock);
         let output_sample = multiply_volume_i32(apf2_output, v_out);
-        self.current_output
-            .set(output_sample.clamp_to_i16(), self.clock);
+        self.current_output.set(output_sample.clamp_to_i16(), self.clock);
 
         // Increment buffer address only after processing both L and R samples
         if self.clock == ReverbClock::Right {
@@ -180,22 +179,16 @@ impl ReverbUnit {
         let v_iir = self.reflection_volume_1;
         let v_wall = self.reflection_volume_2;
 
-        let m_sample: i32 = audio_ram
-            .get_i16(self.relative_buffer_address(m_addr.wrapping_sub(2)))
-            .into();
-        let d_sample: i32 = audio_ram
-            .get_i16(self.relative_buffer_address(d_addr))
-            .into();
+        let m_sample: i32 =
+            audio_ram.get_i16(self.relative_buffer_address(m_addr.wrapping_sub(2))).into();
+        let d_sample: i32 = audio_ram.get_i16(self.relative_buffer_address(d_addr)).into();
 
         let reflect_sample = m_sample
             + multiply_volume_i32(
                 input_sample + multiply_volume_i32(d_sample, v_wall) - m_sample,
                 v_iir,
             );
-        audio_ram.set_i16(
-            self.relative_buffer_address(m_addr),
-            reflect_sample.clamp_to_i16(),
-        );
+        audio_ram.set_i16(self.relative_buffer_address(m_addr), reflect_sample.clamp_to_i16());
     }
 
     fn apply_comb_filter(&self, audio_ram: &AudioRam) -> i32 {
@@ -230,16 +223,12 @@ impl ReverbUnit {
         v_apf: i32,
         audio_ram: &mut AudioRam,
     ) -> i32 {
-        let apf_input_sample: i32 = audio_ram
-            .get_i16(self.relative_buffer_address(m_apf.wrapping_sub(d_apf)))
-            .into();
+        let apf_input_sample: i32 =
+            audio_ram.get_i16(self.relative_buffer_address(m_apf.wrapping_sub(d_apf))).into();
 
         let new_apf_sample = prev_output - multiply_volume_i32(apf_input_sample, v_apf);
         if self.writes_enabled {
-            audio_ram.set_i16(
-                self.relative_buffer_address(m_apf),
-                new_apf_sample.clamp_to_i16(),
-            );
+            audio_ram.set_i16(self.relative_buffer_address(m_apf), new_apf_sample.clamp_to_i16());
         }
 
         apf_input_sample + multiply_volume_i32(new_apf_sample, v_apf)
@@ -290,10 +279,7 @@ impl ReverbUnit {
         // Writing start address also sets current address
         self.buffer_start_addr = parse_address(value);
         self.buffer_current_addr = self.buffer_start_addr;
-        log::trace!(
-            "Reverb buffer start address: {:05X}",
-            self.buffer_start_addr
-        );
+        log::trace!("Reverb buffer start address: {:05X}", self.buffer_start_addr);
     }
 
     // $1F801DC0-$1F801DFF: The majority of the reverb registers

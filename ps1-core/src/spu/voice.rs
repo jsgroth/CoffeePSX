@@ -57,10 +57,8 @@ impl Voice {
     }
 
     fn sample(&self) -> (i16, i16) {
-        let raw_sample = gaussian::interpolate(
-            self.adpcm_buffer.four_most_recent_samples(),
-            self.pitch_counter,
-        );
+        let raw_sample =
+            gaussian::interpolate(self.adpcm_buffer.four_most_recent_samples(), self.pitch_counter);
         let sample = multiply_volume(raw_sample, self.adsr.level);
 
         let sample_l = multiply_volume(sample, self.volume_l.volume);
@@ -116,12 +114,7 @@ impl Voice {
         let block = &audio_ram[self.current_address as usize..(self.current_address + 16) as usize];
         adpcm::decode_spu_block(block, &mut self.adpcm_buffer);
 
-        let AdpcmHeader {
-            loop_start,
-            loop_end,
-            loop_repeat,
-            ..
-        } = self.adpcm_buffer.header;
+        let AdpcmHeader { loop_start, loop_end, loop_repeat, .. } = self.adpcm_buffer.header;
         if loop_start {
             self.repeat_address = self.current_address;
         }

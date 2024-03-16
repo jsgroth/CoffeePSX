@@ -45,11 +45,7 @@ impl GpuTimer {
     }
 
     fn cycles_per_frame(&self) -> u64 {
-        if self.interlaced {
-            INTERLACED_CYCLES_PER_FRAME
-        } else {
-            PROGRESSIVE_CYCLES_PER_FRAME
-        }
+        if self.interlaced { INTERLACED_CYCLES_PER_FRAME } else { PROGRESSIVE_CYCLES_PER_FRAME }
     }
 
     fn catch_up(&mut self, cpu_cycle_counter: u64) {
@@ -194,11 +190,7 @@ enum ResetMode {
 
 impl ResetMode {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Target
-        } else {
-            Self::Overflow
-        }
+        if bit { Self::Target } else { Self::Overflow }
     }
 }
 
@@ -211,11 +203,7 @@ enum IrqMode {
 
 impl IrqMode {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Repeat
-        } else {
-            Self::Once
-        }
+        if bit { Self::Repeat } else { Self::Once }
     }
 }
 
@@ -284,10 +272,7 @@ impl SystemTimer {
             elapsed -= 1;
         }
 
-        if self
-            .clocks_until_irq()
-            .is_some_and(|clocks| clocks <= elapsed)
-        {
+        if self.clocks_until_irq().is_some_and(|clocks| clocks <= elapsed) {
             self.irq = true;
             self.irq_since_mode_write = true;
         }
@@ -329,12 +314,10 @@ impl SystemTimer {
                 u64::from(self.target_value - self.counter)
             }
         });
-        let clocks_until_overflow_irq = (self.overflow_irq_enabled && max_value == 0xFFFF)
-            .then_some(if self.counter == 0xFFFF {
-                0x10000_u64
-            } else {
-                (0xFFFF - self.counter).into()
-            });
+        let clocks_until_overflow_irq =
+            (self.overflow_irq_enabled && max_value == 0xFFFF).then_some(
+                if self.counter == 0xFFFF { 0x10000_u64 } else { (0xFFFF - self.counter).into() },
+            );
 
         match (clocks_until_target_irq, clocks_until_overflow_irq) {
             (Some(a), Some(b)) => Some(cmp::min(a, b)),
@@ -361,10 +344,7 @@ impl SystemTimer {
         }
 
         if value.bit(7) {
-            log::error!(
-                "IRQ toggle mode enabled for timer {}, not implemented",
-                self.idx
-            );
+            log::error!("IRQ toggle mode enabled for timer {}, not implemented", self.idx);
         }
 
         self.reset_mode = ResetMode::from_bit(value.bit(3));
@@ -486,8 +466,7 @@ impl Timers {
         interlaced: bool,
         scheduler: &mut Scheduler,
     ) {
-        self.gpu
-            .update_display_mode(dot_clock_divider.into(), interlaced, scheduler);
+        self.gpu.update_display_mode(dot_clock_divider.into(), interlaced, scheduler);
 
         if self.timers[0].clock_source == ClockSource::Dot {
             self.timers[0].maybe_schedule_irq(scheduler);

@@ -61,8 +61,5 @@ impl Seek for SeekableVec {
 }
 
 fn new_seek_error(address: i64) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidInput,
-        format!("Invalid seek address: {address}"),
-    )
+    io::Error::new(io::ErrorKind::InvalidInput, format!("Invalid seek address: {address}"))
 }

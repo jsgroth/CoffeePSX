@@ -14,11 +14,7 @@ pub struct CacheControl {
 
 impl CacheControl {
     fn new() -> Self {
-        Self {
-            i_cache_enabled: true,
-            d_cache_enabled: true,
-            scratchpad_enabled: true,
-        }
+        Self { i_cache_enabled: true, d_cache_enabled: true, scratchpad_enabled: true }
     }
 
     pub fn write(&mut self, value: u32) {
@@ -265,11 +261,7 @@ impl SystemControlCoprocessor {
         self.cause.branch_delay = in_delay_slot;
         self.cause.exception_code = exception.to_code();
 
-        self.epc = if in_delay_slot {
-            pc.wrapping_sub(4)
-        } else {
-            pc
-        };
+        self.epc = if in_delay_slot { pc.wrapping_sub(4) } else { pc };
 
         match exception {
             Exception::AddressErrorLoad(address) | Exception::AddressErrorStore(address) => {

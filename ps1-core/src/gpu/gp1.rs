@@ -74,10 +74,7 @@ impl Gpu {
         // 0=on, 1=off
         self.registers.display_enabled = !value.bit(0);
 
-        log::trace!(
-            "GP1($03): Display enabled - {}",
-            self.registers.display_enabled
-        );
+        log::trace!("GP1($03): Display enabled - {}", self.registers.display_enabled);
     }
 
     // GP1($04)
@@ -93,11 +90,7 @@ impl Gpu {
         self.registers.display_area_y = (value >> 10) & 0x1FF;
 
         log::trace!("GP1($05): Display area start");
-        log::trace!(
-            "  X={}, Y={}",
-            self.registers.display_area_x,
-            self.registers.display_area_y
-        );
+        log::trace!("  X={}, Y={}", self.registers.display_area_x, self.registers.display_area_y);
     }
 
     // GP1($06)
@@ -152,15 +145,9 @@ impl Gpu {
         log::trace!("  Horizontal resolution: {}", self.registers.h_resolution);
         log::trace!("  Vertical resolution: {:?}", self.registers.v_resolution);
         log::trace!("  Video mode: {}", self.registers.video_mode);
-        log::trace!(
-            "  Display area color depth: {}",
-            self.registers.display_area_color_depth
-        );
+        log::trace!("  Display area color depth: {}", self.registers.display_area_color_depth);
         log::trace!("  Interlacing on: {}", self.registers.interlaced);
-        log::trace!(
-            "  Force horizontal resolution to 368px: {}",
-            self.registers.force_h_368px
-        );
+        log::trace!("  Force horizontal resolution to 368px: {}", self.registers.force_h_368px);
     }
 
     // GP1($10)

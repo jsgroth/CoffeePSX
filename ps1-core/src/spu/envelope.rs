@@ -9,11 +9,7 @@ pub enum EnvelopeMode {
 
 impl EnvelopeMode {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Exponential
-        } else {
-            Self::Linear
-        }
+        if bit { Self::Exponential } else { Self::Linear }
     }
 }
 
@@ -26,11 +22,7 @@ pub enum EnvelopeDirection {
 
 impl EnvelopeDirection {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Decreasing
-        } else {
-            Self::Increasing
-        }
+        if bit { Self::Decreasing } else { Self::Increasing }
     }
 }
 
@@ -84,11 +76,7 @@ pub enum SweepPhase {
 
 impl SweepPhase {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Negative
-        } else {
-            Self::Positive
-        }
+        if bit { Self::Negative } else { Self::Positive }
     }
 }
 
@@ -132,12 +120,7 @@ pub struct SweepEnvelope {
 
 impl SweepEnvelope {
     pub fn new() -> Self {
-        Self {
-            volume: 0,
-            setting: SweepSetting::default(),
-            wait_cycles_remaining: 1,
-            next_step: 0,
-        }
+        Self { volume: 0, setting: SweepSetting::default(), wait_cycles_remaining: 1, next_step: 0 }
     }
 
     pub fn write(&mut self, value: u32) {
@@ -185,12 +168,7 @@ pub struct VolumeControl {
 
 impl VolumeControl {
     pub fn new() -> Self {
-        Self {
-            main_l: SweepEnvelope::new(),
-            main_r: SweepEnvelope::new(),
-            cd_l: 0,
-            cd_r: 0,
-        }
+        Self { main_l: SweepEnvelope::new(), main_r: SweepEnvelope::new(), cd_l: 0, cd_r: 0 }
     }
 
     // $1F801D80: Main volume left

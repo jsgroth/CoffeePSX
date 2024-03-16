@@ -120,11 +120,7 @@ enum Mode2Form {
 impl Mode2Form {
     fn parse(sector_buffer: &[u8]) -> Self {
         // Submode bit 5 specifies Form 1 vs. Form 2
-        if sector_buffer[MODE_2_SUBMODE_LOCATION] & (1 << 5) != 0 {
-            Self::Two
-        } else {
-            Self::One
-        }
+        if sector_buffer[MODE_2_SUBMODE_LOCATION] & (1 << 5) != 0 { Self::Two } else { Self::One }
     }
 }
 
@@ -151,10 +147,7 @@ impl CdRom {
     fn open_cue_bin<P: AsRef<Path>>(cue_path: P) -> CdRomResult<Self> {
         let (bin_files, cue_sheet) = CdBinFiles::create(cue_path)?;
 
-        Ok(Self {
-            cue_sheet,
-            reader: CdRomReader::CueBin(bin_files),
-        })
+        Ok(Self { cue_sheet, reader: CdRomReader::CueBin(bin_files) })
     }
 
     fn open_chd<P: AsRef<Path>>(chd_path: P) -> CdRomResult<Self> {
@@ -166,10 +159,7 @@ impl CdRom {
         })?;
         let (chd_file, cue_sheet) = ChdFile::open(BufReader::new(file))?;
 
-        Ok(Self {
-            cue_sheet,
-            reader: CdRomReader::ChdFs(chd_file),
-        })
+        Ok(Self { cue_sheet, reader: CdRomReader::ChdFs(chd_file) })
     }
 
     /// Open a CD-ROM reader that will read from a CHD file that has been read into memory.
@@ -181,10 +171,7 @@ impl CdRom {
         let seekable_vec = SeekableVec::new(chd_bytes);
         let (chd_file, cue_sheet) = ChdFile::open(seekable_vec)?;
 
-        Ok(Self {
-            cue_sheet,
-            reader: CdRomReader::ChdMemory(chd_file),
-        })
+        Ok(Self { cue_sheet, reader: CdRomReader::ChdMemory(chd_file) })
     }
 
     #[must_use]
@@ -226,8 +213,7 @@ impl CdRom {
         }
 
         let relative_sector_number = (relative_time - track.pregap_len).to_sector_number();
-        self.reader
-            .read_sector(track_number, relative_sector_number, out)?;
+        self.reader.read_sector(track_number, relative_sector_number, out)?;
 
         validate_edc(track.mode, track_number, relative_sector_number, out)?;
 

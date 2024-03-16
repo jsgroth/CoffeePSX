@@ -82,11 +82,7 @@ pub enum VerticalResolution {
 
 impl VerticalResolution {
     pub fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Double
-        } else {
-            Self::Single
-        }
+        if bit { Self::Double } else { Self::Single }
     }
 }
 
@@ -108,11 +104,7 @@ impl Display for VideoMode {
 
 impl VideoMode {
     pub fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Pal
-        } else {
-            Self::Ntsc
-        }
+        if bit { Self::Pal } else { Self::Ntsc }
     }
 }
 
@@ -134,11 +126,7 @@ impl Display for ColorDepthBits {
 
 impl ColorDepthBits {
     pub fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::TwentyFour
-        } else {
-            Self::Fifteen
-        }
+        if bit { Self::TwentyFour } else { Self::Fifteen }
     }
 }
 

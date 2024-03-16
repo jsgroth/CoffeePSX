@@ -61,8 +61,7 @@ impl Registers {
     }
 
     fn delayed_load_register_is(&self, register: u32) -> bool {
-        self.delayed_load
-            .is_some_and(|(delayed_register, _)| register == delayed_register)
+        self.delayed_load.is_some_and(|(delayed_register, _)| register == delayed_register)
     }
 
     fn write_gpr_delayed(&mut self, register: u32, value: u32) {
@@ -173,9 +172,7 @@ impl R3000 {
     pub fn execute_instruction(&mut self, bus: &mut Bus<'_>) {
         let pc = self.registers.pc;
 
-        self.cp0
-            .cause
-            .set_hardware_interrupt_flag(bus.hardware_interrupt_pending());
+        self.cp0.cause.set_hardware_interrupt_flag(bus.hardware_interrupt_pending());
         if self.cp0.interrupt_pending() {
             self.handle_exception(
                 Exception::Interrupt,

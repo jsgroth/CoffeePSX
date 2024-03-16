@@ -26,10 +26,7 @@ struct CdRomFile {
 
 impl CdRomFile {
     fn new(file: File) -> Self {
-        Self {
-            file: BufReader::new(file),
-            position: 0,
-        }
+        Self { file: BufReader::new(file), position: 0 }
     }
 }
 
@@ -45,10 +42,8 @@ impl CdBinFiles {
 
         let (cue_sheet, track_metadata) = parse_cue(cue_path)?;
 
-        let file_names: HashSet<_> = track_metadata
-            .iter()
-            .map(|metadata| metadata.file_name.clone())
-            .collect();
+        let file_names: HashSet<_> =
+            track_metadata.iter().map(|metadata| metadata.file_name.clone()).collect();
 
         let parent_dir = cue_path
             .parent()
@@ -64,10 +59,7 @@ impl CdBinFiles {
             files.insert(file_name, CdRomFile::new(file));
         }
 
-        let bin_files = Self {
-            files,
-            track_metadata,
-        };
+        let bin_files = Self { files, track_metadata };
         Ok((bin_files, cue_sheet))
     }
 
@@ -78,10 +70,7 @@ impl CdBinFiles {
         out: &mut [u8],
     ) -> CdRomResult<()> {
         let metadata = &self.track_metadata[(track_number - 1) as usize];
-        let CdRomFile {
-            file: track_file,
-            position,
-        } = self
+        let CdRomFile { file: track_file, position } = self
             .files
             .get_mut(&metadata.file_name)
             .expect("Track file was not opened on load; this is a bug");
@@ -91,9 +80,7 @@ impl CdBinFiles {
 
         // Only seek if the file descriptor is not already at the desired position
         if *position != sector_addr {
-            track_file
-                .seek(SeekFrom::Start(sector_addr))
-                .map_err(CdRomError::DiscReadIo)?;
+            track_file.seek(SeekFrom::Start(sector_addr)).map_err(CdRomError::DiscReadIo)?;
         }
 
         track_file
@@ -174,9 +161,8 @@ impl CueParser {
         self.push_file()?;
 
         let re = RE.get_or_init(|| Regex::new(r#"FILE "(.*)" BINARY"#).unwrap());
-        let captures = re
-            .captures(line)
-            .ok_or_else(|| CdRomError::CueInvalidFileLine(line.into()))?;
+        let captures =
+            re.captures(line).ok_or_else(|| CdRomError::CueInvalidFileLine(line.into()))?;
         let file_name = captures.get(1).unwrap();
         self.current_file = Some(file_name.as_str().into());
 
@@ -189,9 +175,8 @@ impl CueParser {
         self.push_track()?;
 
         let re = RE.get_or_init(|| Regex::new(r"TRACK ([^ ]*) ([^ ]*)").unwrap());
-        let captures = re
-            .captures(line)
-            .ok_or_else(|| CdRomError::CueInvalidTrackLine(line.into()))?;
+        let captures =
+            re.captures(line).ok_or_else(|| CdRomError::CueInvalidTrackLine(line.into()))?;
         let track_number = captures
             .get(1)
             .unwrap()
@@ -214,9 +199,8 @@ impl CueParser {
         static RE: OnceLock<Regex> = OnceLock::new();
 
         let re = RE.get_or_init(|| Regex::new(r"INDEX ([^ ]*) ([^ ]*)").unwrap());
-        let captures = re
-            .captures(line)
-            .ok_or_else(|| CdRomError::CueInvalidIndexLine(line.into()))?;
+        let captures =
+            re.captures(line).ok_or_else(|| CdRomError::CueInvalidIndexLine(line.into()))?;
         let index_number = captures.get(1).unwrap();
         let start_time = captures
             .get(2)
@@ -244,9 +228,8 @@ impl CueParser {
         static RE: OnceLock<Regex> = OnceLock::new();
 
         let re = RE.get_or_init(|| Regex::new(r"PREGAP ([^ ]*)").unwrap());
-        let captures = re
-            .captures(line)
-            .ok_or_else(|| CdRomError::CueInvalidPregapLine(line.into()))?;
+        let captures =
+            re.captures(line).ok_or_else(|| CdRomError::CueInvalidPregapLine(line.into()))?;
         let pregap_len = captures
             .get(1)
             .unwrap()
@@ -272,10 +255,8 @@ impl CueParser {
             )));
         }
 
-        self.files.push(ParsedFile {
-            file_name: current_file,
-            tracks: mem::take(&mut self.tracks),
-        });
+        self.files
+            .push(ParsedFile { file_name: current_file, tracks: mem::take(&mut self.tracks) });
 
         Ok(())
     }
@@ -324,10 +305,8 @@ impl CueParser {
 fn parse_cue<P: AsRef<Path>>(cue_path: P) -> CdRomResult<(CueSheet, Vec<TrackMetadata>)> {
     let cue_path = cue_path.as_ref();
 
-    let cue_file = fs::read_to_string(cue_path).map_err(|source| CdRomError::CueOpen {
-        path: cue_path.display().to_string(),
-        source,
-    })?;
+    let cue_file = fs::read_to_string(cue_path)
+        .map_err(|source| CdRomError::CueOpen { path: cue_path.display().to_string(), source })?;
     let parsed_files = CueParser::new().parse(&cue_file)?;
 
     to_cue_sheet(parsed_files, cue_path)
@@ -345,11 +324,7 @@ fn to_cue_sheet(
     let mut tracks = Vec::new();
     let mut track_metadata = Vec::new();
 
-    for ParsedFile {
-        file_name,
-        tracks: parsed_tracks,
-    } in parsed_files
-    {
+    for ParsedFile { file_name, tracks: parsed_tracks } in parsed_files {
         let bin_path = cue_parent_dir.join(&file_name);
 
         let file_metadata = fs::metadata(&bin_path).map_err(|source| CdRomError::FsMetadata {

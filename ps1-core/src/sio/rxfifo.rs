@@ -11,12 +11,7 @@ pub struct RxFifo {
 
 impl RxFifo {
     pub fn new() -> Self {
-        Self {
-            values: [0; FIFO_LEN as usize],
-            write_idx: 0,
-            read_idx: 0,
-            len: 0,
-        }
+        Self { values: [0; FIFO_LEN as usize], write_idx: 0, read_idx: 0, len: 0 }
     }
 
     pub fn clear(&mut self) {

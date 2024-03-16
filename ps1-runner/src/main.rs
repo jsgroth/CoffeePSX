@@ -39,32 +39,26 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
     type Err = anyhow::Error;
 
     fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err> {
-        self.frame_buffer
-            .par_chunks_exact_mut(1024)
-            .enumerate()
-            .for_each(|(y, row)| {
-                for (x, fb_color) in row.iter_mut().enumerate() {
-                    let vram_addr = 2048 * y + 2 * x;
-                    let color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
+        self.frame_buffer.par_chunks_exact_mut(1024).enumerate().for_each(|(y, row)| {
+            for (x, fb_color) in row.iter_mut().enumerate() {
+                let vram_addr = 2048 * y + 2 * x;
+                let color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
 
-                    let r = color & 0x1F;
-                    let g = (color >> 5) & 0x1F;
-                    let b = (color >> 10) & 0x1F;
+                let r = color & 0x1F;
+                let g = (color >> 5) & 0x1F;
+                let b = (color >> 10) & 0x1F;
 
-                    *fb_color = rgb_5_to_8(b) | (rgb_5_to_8(g) << 8) | (rgb_5_to_8(r) << 16);
-                }
-            });
+                *fb_color = rgb_5_to_8(b) | (rgb_5_to_8(g) << 8) | (rgb_5_to_8(r) << 16);
+            }
+        });
 
-        self.window
-            .update_with_buffer(self.frame_buffer, 1024, 512)?;
+        self.window.update_with_buffer(self.frame_buffer, 1024, 512)?;
 
         update_inputs(self.window, self.inputs);
 
         *self.frame_count += 1;
 
-        let elapsed = SystemTime::now()
-            .duration_since(*self.last_fps_log)
-            .unwrap();
+        let elapsed = SystemTime::now().duration_since(*self.last_fps_log).unwrap();
         if elapsed >= Duration::from_secs(5) {
             log::info!("FPS: {}", *self.frame_count as f64 / elapsed.as_secs_f64());
             *self.frame_count = 0;
@@ -134,9 +128,7 @@ impl AudioOutput for CpalAudioOutput {
 
 fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> {
     let audio_queue = Arc::new(Mutex::new(VecDeque::with_capacity(1600)));
-    let audio_output = CpalAudioOutput {
-        audio_queue: Arc::clone(&audio_queue),
-    };
+    let audio_output = CpalAudioOutput { audio_queue: Arc::clone(&audio_queue) };
 
     let audio_host = cpal::default_host();
     let audio_device = audio_host
@@ -202,18 +194,12 @@ fn main() -> anyhow::Result<()> {
         (Some(disc_path), None) => {
             format!(
                 "PS1 - {}",
-                Path::new(disc_path)
-                    .with_extension("")
-                    .file_name()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
+                Path::new(disc_path).with_extension("").file_name().unwrap().to_str().unwrap()
             )
         }
-        (None, Some(exe_path)) => format!(
-            "PS1 - {}",
-            Path::new(exe_path).file_name().unwrap().to_str().unwrap()
-        ),
+        (None, Some(exe_path)) => {
+            format!("PS1 - {}", Path::new(exe_path).file_name().unwrap().to_str().unwrap())
+        }
         (Some(_), Some(_)) => unreachable!(),
     };
 

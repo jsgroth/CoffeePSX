@@ -40,11 +40,7 @@ pub enum PolygonVertices {
 
 impl PolygonVertices {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Four
-        } else {
-            Self::Three
-        }
+        if bit { Self::Four } else { Self::Three }
     }
 }
 
@@ -158,11 +154,7 @@ impl VramTransferFields {
 #[derive(Debug, Clone, Copy)]
 pub enum Gp0CommandState {
     WaitingForCommand,
-    WaitingForParameters {
-        command: DrawCommand,
-        index: u8,
-        remaining: u8,
-    },
+    WaitingForParameters { command: DrawCommand, index: u8, remaining: u8 },
     WaitingForPolyline(LineCommandParameters),
     ReceivingFromCpu(VramTransferFields),
     SendingToCpu(VramTransferFields),
@@ -175,31 +167,18 @@ impl Default for Gp0CommandState {
 }
 
 impl Gp0CommandState {
-    const VRAM_TO_VRAM_BLIT: Self = Self::WaitingForParameters {
-        command: DrawCommand::VramToVramBlit,
-        index: 0,
-        remaining: 3,
-    };
+    const VRAM_TO_VRAM_BLIT: Self =
+        Self::WaitingForParameters { command: DrawCommand::VramToVramBlit, index: 0, remaining: 3 };
 
-    const CPU_TO_VRAM_BLIT: Self = Self::WaitingForParameters {
-        command: DrawCommand::CpuToVramBlit,
-        index: 0,
-        remaining: 2,
-    };
+    const CPU_TO_VRAM_BLIT: Self =
+        Self::WaitingForParameters { command: DrawCommand::CpuToVramBlit, index: 0, remaining: 2 };
 
-    const VRAM_TO_CPU_BLIT: Self = Self::WaitingForParameters {
-        command: DrawCommand::VramToCpuBlit,
-        index: 0,
-        remaining: 2,
-    };
+    const VRAM_TO_CPU_BLIT: Self =
+        Self::WaitingForParameters { command: DrawCommand::VramToCpuBlit, index: 0, remaining: 2 };
 
     fn fill(value: u32) -> Self {
         let color = parse_command_color(value);
-        Self::WaitingForParameters {
-            command: DrawCommand::Fill(color),
-            index: 0,
-            remaining: 2,
-        }
+        Self::WaitingForParameters { command: DrawCommand::Fill(color), index: 0, remaining: 2 }
     }
 
     fn draw_line(value: u32) -> Self {
@@ -250,11 +229,7 @@ impl Gp0CommandState {
             color,
         });
 
-        Self::WaitingForParameters {
-            command,
-            index: 0,
-            remaining: parameters,
-        }
+        Self::WaitingForParameters { command, index: 0, remaining: parameters }
     }
 
     fn draw_rectangle(value: u32) -> Self {
@@ -274,11 +249,7 @@ impl Gp0CommandState {
             color,
         });
 
-        Self::WaitingForParameters {
-            command,
-            index: 0,
-            remaining: parameters,
-        }
+        Self::WaitingForParameters { command, index: 0, remaining: parameters }
     }
 }
 
@@ -485,11 +456,7 @@ impl Gpu {
                 }
                 _ => unreachable!("highest 3 bits must be <= 7"),
             },
-            Gp0CommandState::WaitingForParameters {
-                command,
-                index,
-                remaining,
-            } => {
+            Gp0CommandState::WaitingForParameters { command, index, remaining } => {
                 self.gp0.parameters[index as usize] = value;
                 if remaining == 1 {
                     self.execute_draw_command(command)
@@ -616,10 +583,7 @@ impl Gpu {
                 self.gp0.draw_settings.draw_area_top_left = (x1, y1);
 
                 log::trace!("Executed drawing area top-left command: {command:08X}");
-                log::trace!(
-                    "  (X1, Y1) = {:?}",
-                    self.gp0.draw_settings.draw_area_top_left
-                );
+                log::trace!("  (X1, Y1) = {:?}", self.gp0.draw_settings.draw_area_top_left);
             }
             0xE4 => {
                 // GP0($E4): Drawing area bottom-right coordinates
@@ -628,10 +592,7 @@ impl Gpu {
                 self.gp0.draw_settings.draw_area_bottom_right = (x2, y2);
 
                 log::trace!("Executed drawing area bottom-right command: {command:08X}");
-                log::trace!(
-                    "  (X2, Y2) = {:?}",
-                    self.gp0.draw_settings.draw_area_bottom_right
-                );
+                log::trace!("  (X2, Y2) = {:?}", self.gp0.draw_settings.draw_area_bottom_right);
             }
             0xE5 => {
                 // GP0($E5): Drawing offset
@@ -641,10 +602,7 @@ impl Gpu {
                 self.gp0.draw_settings.draw_offset = (x_offset, y_offset);
 
                 log::trace!("Executed draw offset command: {command:08X}");
-                log::trace!(
-                    "  (X offset, Y offset) = {:?}",
-                    self.gp0.draw_settings.draw_offset
-                );
+                log::trace!("  (X offset, Y offset) = {:?}", self.gp0.draw_settings.draw_offset);
             }
             0xE6 => {
                 // GP0($E6): Mask bit settings
@@ -652,14 +610,8 @@ impl Gpu {
                 self.gp0.draw_settings.check_mask_bit = command.bit(1);
 
                 log::trace!("Executed mask bit settings command: {command:08X}");
-                log::trace!(
-                    "  Force mask bit: {}",
-                    self.gp0.draw_settings.force_mask_bit
-                );
-                log::trace!(
-                    "  Check mask bit on draw: {}",
-                    self.gp0.draw_settings.check_mask_bit
-                );
+                log::trace!("  Force mask bit: {}", self.gp0.draw_settings.force_mask_bit);
+                log::trace!("  Check mask bit on draw: {}", self.gp0.draw_settings.check_mask_bit);
             }
             _ => todo!("GP0 settings command {command:08X}"),
         }
@@ -746,7 +698,9 @@ impl Gpu {
         let width = (self.gp0.parameters[2].wrapping_sub(1) & 0x3FF) + 1;
         let height = ((self.gp0.parameters[2] >> 16).wrapping_sub(1) & 0x1FF) + 1;
 
-        log::trace!("Executing VRAM copy from X={source_x_base} / Y={source_y} to X={dest_x_base} / Y={dest_y}, width={width} and height={height}");
+        log::trace!(
+            "Executing VRAM copy from X={source_x_base} / Y={source_y} to X={dest_x_base} / Y={dest_y}, width={width} and height={height}"
+        );
 
         for _ in 0..height {
             let mut source_x = source_x_base;

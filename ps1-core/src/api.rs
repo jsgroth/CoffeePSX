@@ -78,11 +78,7 @@ pub struct Ps1EmulatorBuilder {
 impl Ps1EmulatorBuilder {
     #[must_use]
     pub fn new(bios_rom: Vec<u8>) -> Self {
-        Self {
-            bios_rom,
-            disc: None,
-            tty_enabled: false,
-        }
+        Self { bios_rom, disc: None, tty_enabled: false }
     }
 
     #[must_use]
@@ -143,8 +139,7 @@ impl Ps1Emulator {
 
     fn schedule_initial_events(&mut self) {
         self.timers.schedule_next_vblank(&mut self.scheduler);
-        self.scheduler
-            .update_or_push_event(SchedulerEvent::spu_and_cd_clock(SPU_CLOCK_DIVIDER));
+        self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(SPU_CLOCK_DIVIDER));
     }
 
     #[inline]
@@ -185,8 +180,7 @@ impl Ps1Emulator {
         }
 
         let exe_data = &exe[0x800..0x800 + exe_size as usize];
-        self.memory
-            .copy_to_main_ram(exe_data, ram_dest_addr & 0x1FFFFFFF);
+        self.memory.copy_to_main_ram(exe_data, ram_dest_addr & 0x1FFFFFFF);
 
         Ok(())
     }
@@ -226,8 +220,7 @@ impl Ps1Emulator {
         self.scheduler.increment_cpu_cycles(cpu_cycles.into());
 
         // TODO use scheduler instead of advancing SIO0 every CPU tick
-        self.sio0
-            .tick(cpu_cycles, inputs, &mut self.interrupt_registers);
+        self.sio0.tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
         self.process_scheduler_events(renderer, audio_output)
     }
@@ -241,41 +234,32 @@ impl Ps1Emulator {
             let event = self.scheduler.pop_event();
             match event.event_type {
                 SchedulerEventType::VBlank => {
-                    self.interrupt_registers
-                        .set_interrupt_flag(InterruptType::VBlank);
+                    self.interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
                     self.timers.schedule_next_vblank(&mut self.scheduler);
 
-                    renderer
-                        .render_frame(self.gpu.vram())
-                        .map_err(TickError::Render)?;
+                    renderer.render_frame(self.gpu.vram()).map_err(TickError::Render)?;
 
-                    audio_output
-                        .queue_samples(&self.audio_buffer)
-                        .map_err(TickError::Audio)?;
+                    audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
                     self.audio_buffer.clear();
                 }
                 SchedulerEventType::SpuAndCdClock => {
                     self.audio_buffer.push(self.spu.clock());
                     self.cd_controller.clock(&mut self.interrupt_registers);
 
-                    self.scheduler
-                        .update_or_push_event(SchedulerEvent::spu_and_cd_clock(
-                            event.cpu_cycles + SPU_CLOCK_DIVIDER,
-                        ));
+                    self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(
+                        event.cpu_cycles + SPU_CLOCK_DIVIDER,
+                    ));
                 }
                 SchedulerEventType::Timer0Irq => {
-                    self.interrupt_registers
-                        .set_interrupt_flag(InterruptType::Timer0);
+                    self.interrupt_registers.set_interrupt_flag(InterruptType::Timer0);
                     self.timers.schedule_next_timer_0_irq(&mut self.scheduler);
                 }
                 SchedulerEventType::Timer1Irq => {
-                    self.interrupt_registers
-                        .set_interrupt_flag(InterruptType::Timer1);
+                    self.interrupt_registers.set_interrupt_flag(InterruptType::Timer1);
                     self.timers.scheduler_next_timer_1_irq(&mut self.scheduler);
                 }
                 SchedulerEventType::Timer2Irq => {
-                    self.interrupt_registers
-                        .set_interrupt_flag(InterruptType::Timer2);
+                    self.interrupt_registers.set_interrupt_flag(InterruptType::Timer2);
                     self.timers.schedule_next_timer_2_irq(&mut self.scheduler);
                 }
             }

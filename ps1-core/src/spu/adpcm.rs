@@ -23,13 +23,7 @@ impl AdpcmHeader {
             filter = 4;
         }
 
-        Self {
-            shift,
-            filter,
-            loop_start,
-            loop_end,
-            loop_repeat,
-        }
+        Self { shift, filter, loop_start, loop_end, loop_repeat }
     }
 }
 
@@ -42,11 +36,7 @@ pub struct SpuAdpcmBuffer {
 
 impl SpuAdpcmBuffer {
     pub fn new() -> Self {
-        Self {
-            header: AdpcmHeader::default(),
-            samples: [0; 32],
-            idx: 4,
-        }
+        Self { header: AdpcmHeader::default(), samples: [0; 32], idx: 4 }
     }
 
     pub fn four_most_recent_samples(&self) -> [i16; 4] {
@@ -55,10 +45,7 @@ impl SpuAdpcmBuffer {
 
     pub fn advance(&mut self) {
         self.idx += 1;
-        assert!(
-            self.idx <= self.samples.len(),
-            "ADPCM decoding bug: advanced past end of block"
-        );
+        assert!(self.idx <= self.samples.len(), "ADPCM decoding bug: advanced past end of block");
     }
 
     pub fn at_end_of_block(&self) -> bool {
@@ -79,11 +66,7 @@ pub fn decode_spu_block(block: &[u8], buffer: &mut SpuAdpcmBuffer) {
 
     // Effective shift is (12 - shift)
     // Shift values of 13-15 function the same as 9, so effective shift is (12 - 9) = 3
-    let effective_shift = if buffer.header.shift > 12 {
-        3
-    } else {
-        12 - buffer.header.shift
-    };
+    let effective_shift = if buffer.header.shift > 12 { 3 } else { 12 - buffer.header.shift };
     let filter_0 = FILTER_0_TABLE[buffer.header.filter as usize];
     let filter_1 = FILTER_1_TABLE[buffer.header.filter as usize];
 

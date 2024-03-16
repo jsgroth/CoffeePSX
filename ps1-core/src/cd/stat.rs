@@ -64,10 +64,7 @@ impl CdController {
                     TrackMode::Mode1 | TrackMode::Audio => 0x00,
                 };
 
-                int2!(
-                    self,
-                    [status, 0x00, mode_byte, 0x00, b'S', b'C', b'E', b'A']
-                );
+                int2!(self, [status, 0x00, mode_byte, 0x00, b'S', b'C', b'E', b'A']);
             }
             None => {
                 // "No disc" response

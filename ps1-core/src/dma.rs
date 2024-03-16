@@ -15,11 +15,7 @@ enum DmaDirection {
 
 impl DmaDirection {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::FromRam
-        } else {
-            Self::ToRam
-        }
+        if bit { Self::FromRam } else { Self::ToRam }
     }
 }
 
@@ -32,11 +28,7 @@ enum Step {
 
 impl Step {
     fn from_bit(bit: bool) -> Self {
-        if bit {
-            Self::Backwards
-        } else {
-            Self::Forwards
-        }
+        if bit { Self::Backwards } else { Self::Forwards }
     }
 }
 
@@ -84,10 +76,7 @@ struct ChannelConfig {
 
 impl ChannelConfig {
     fn otc() -> Self {
-        Self {
-            step: Step::Backwards,
-            ..Self::default()
-        }
+        Self { step: Step::Backwards, ..Self::default() }
     }
 }
 
@@ -204,10 +193,7 @@ impl DmaController {
             interrupt_registers.set_interrupt_flag(InterruptType::Dma);
         }
 
-        log::trace!(
-            "DMA interrupt register write: {value:08X} {:?}",
-            self.interrupt
-        );
+        log::trace!("DMA interrupt register write: {value:08X} {:?}", self.interrupt);
     }
 
     pub fn write_control(&mut self, value: u32) {

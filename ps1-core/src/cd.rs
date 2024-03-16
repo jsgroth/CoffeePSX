@@ -24,11 +24,7 @@ struct CdInterruptRegisters {
 
 impl CdInterruptRegisters {
     fn new() -> Self {
-        Self {
-            enabled: 0,
-            flags: 0,
-            prev_pending: false,
-        }
+        Self { enabled: 0, flags: 0, prev_pending: false }
     }
 
     fn pending(self) -> bool {
@@ -58,11 +54,7 @@ struct Fifo<const MAX_LEN: usize> {
 
 impl<const MAX_LEN: usize> Fifo<MAX_LEN> {
     fn new() -> Self {
-        Self {
-            values: [0; MAX_LEN],
-            idx: 0,
-            len: 0,
-        }
+        Self { values: [0; MAX_LEN], idx: 0, len: 0 }
     }
 
     fn reset(&mut self, zero_fill: ZeroFill) {
@@ -121,14 +113,8 @@ enum Command {
 #[derive(Debug, Clone, Copy)]
 enum CommandState {
     Idle,
-    ReceivingCommand {
-        command: Command,
-        cycles_remaining: u32,
-    },
-    GeneratingSecondResponse {
-        command: Command,
-        cycles_remaining: u32,
-    },
+    ReceivingCommand { command: Command, cycles_remaining: u32 },
+    GeneratingSecondResponse { command: Command, cycles_remaining: u32 },
 }
 
 impl Default for CommandState {
@@ -181,10 +167,7 @@ impl CdController {
             // Flag a CD-ROM interrupt on any 0->1 transition
             // TODO apparently there should be a small delay before the interrupt flag is set in I_STAT?
             interrupt_registers.set_interrupt_flag(InterruptType::CdRom);
-            log::debug!(
-                "CD-ROM INT{} generated",
-                self.interrupts.enabled & self.interrupts.flags
-            );
+            log::debug!("CD-ROM INT{} generated", self.interrupts.enabled & self.interrupts.flags);
         }
         self.interrupts.prev_pending = interrupt_pending;
     }
@@ -192,19 +175,13 @@ impl CdController {
     fn advance_command_state(&mut self) {
         self.command_state = match self.command_state {
             CommandState::Idle => CommandState::Idle,
-            CommandState::ReceivingCommand {
-                command,
-                cycles_remaining,
-            } => {
+            CommandState::ReceivingCommand { command, cycles_remaining } => {
                 if cycles_remaining == 1 {
                     if !self.interrupts.pending() {
                         self.execute_command(command)
                     } else {
                         // If an interrupt is pending, the controller waits until it is cleared
-                        CommandState::ReceivingCommand {
-                            command,
-                            cycles_remaining: 1,
-                        }
+                        CommandState::ReceivingCommand { command, cycles_remaining: 1 }
                     }
                 } else {
                     CommandState::ReceivingCommand {
@@ -213,19 +190,13 @@ impl CdController {
                     }
                 }
             }
-            CommandState::GeneratingSecondResponse {
-                command,
-                cycles_remaining,
-            } => {
+            CommandState::GeneratingSecondResponse { command, cycles_remaining } => {
                 if cycles_remaining == 1 {
                     if !self.interrupts.pending() {
                         self.generate_second_response(command)
                     } else {
                         // If an interrupt is pending, the controller waits until it is cleared
-                        CommandState::GeneratingSecondResponse {
-                            command,
-                            cycles_remaining: 1,
-                        }
+                        CommandState::GeneratingSecondResponse { command, cycles_remaining: 1 }
                     }
                 } else {
                     CommandState::GeneratingSecondResponse {
@@ -301,10 +272,7 @@ impl CdController {
     }
 
     pub fn write_port(&mut self, address: u32, value: u8) {
-        log::debug!(
-            "CD-ROM register write: {address:08X}.{} {value:02X}",
-            self.index
-        );
+        log::debug!("CD-ROM register write: {address:08X}.{} {value:02X}", self.index);
 
         match (address & 3, self.index) {
             (0, _) => {
@@ -363,10 +331,7 @@ impl CdController {
             0x19 => (Command::Test, std_receive_cycles),
             _ => todo!("Command byte {command:02X}"),
         };
-        self.command_state = CommandState::ReceivingCommand {
-            command,
-            cycles_remaining: cycles,
-        };
+        self.command_state = CommandState::ReceivingCommand { command, cycles_remaining: cycles };
 
         log::debug!("  Received command, new state: {:?}", self.command_state);
     }
@@ -379,10 +344,7 @@ impl CdController {
 
     fn write_parameter_fifo(&mut self, value: u8) {
         self.parameter_fifo.push(value);
-        log::debug!(
-            "  Parameter FIFO write (idx {}): {value:02X}",
-            self.parameter_fifo.len - 1
-        );
+        log::debug!("  Parameter FIFO write (idx {}): {value:02X}", self.parameter_fifo.len - 1);
     }
 
     fn write_interrupts_enabled(&mut self, value: u8) {
