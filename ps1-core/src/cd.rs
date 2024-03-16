@@ -1,9 +1,11 @@
 //! PS1 CD-ROM controller and drive
 
+mod fifo;
 mod macros;
 mod seek;
 mod status;
 
+use crate::cd::fifo::{ParameterFifo, ResponseFifo, ZeroFill};
 use crate::cd::status::ErrorFlags;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
@@ -48,70 +50,6 @@ impl CdInterruptRegisters {
         flags
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ZeroFill {
-    Yes,
-    // No,
-}
-
-#[derive(Debug, Clone)]
-struct Fifo<const MAX_LEN: usize> {
-    values: [u8; MAX_LEN],
-    idx: usize,
-    len: usize,
-}
-
-impl<const MAX_LEN: usize> Fifo<MAX_LEN> {
-    fn new() -> Self {
-        Self { values: [0; MAX_LEN], idx: 0, len: 0 }
-    }
-
-    fn reset(&mut self, zero_fill: ZeroFill) {
-        self.idx = 0;
-        self.len = 0;
-
-        if zero_fill == ZeroFill::Yes {
-            self.values.fill(0);
-        }
-    }
-
-    fn push(&mut self, value: u8) {
-        if self.len == self.values.len() {
-            log::error!("Push to CD-ROM FIFO while full: {value:02X}");
-            return;
-        }
-
-        self.values[self.len] = value;
-        self.len += 1;
-    }
-
-    fn pop(&mut self) -> u8 {
-        let value = self.values[self.idx];
-
-        self.idx += 1;
-        if self.idx == self.values.len() {
-            self.idx = 0;
-        }
-
-        value
-    }
-
-    fn empty(&self) -> bool {
-        self.len == 0
-    }
-
-    fn full(&self) -> bool {
-        self.len == MAX_LEN
-    }
-
-    fn fully_consumed(&self) -> bool {
-        self.idx >= self.len
-    }
-}
-
-type ParameterFifo = Fifo<16>;
-type ResponseFifo = Fifo<16>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
@@ -303,14 +241,14 @@ impl CdController {
     }
 
     // $19: Test(sub_function) -> varies based on sub-function
-    // Only sub-function $20 (get BIOS version) is implemented
+    // Only sub-function $20 (get CD controller ROM version) is implemented
     fn execute_test(&mut self) -> CommandState {
-        if self.parameter_fifo.len != 1 {
+        if self.parameter_fifo.len() != 1 {
             int5!(self, [self.status_code(ErrorFlags::ERROR), status::INVALID_COMMAND]);
             return CommandState::Idle;
         }
 
-        match self.parameter_fifo.values[0] {
+        match self.parameter_fifo.pop() {
             0x20 => {
                 // TODO use a different BIOS version?
                 int3!(self, [0x95, 0x07, 0x24, 0xC1]);
@@ -430,7 +368,7 @@ impl CdController {
 
     fn write_parameter_fifo(&mut self, value: u8) {
         self.parameter_fifo.push(value);
-        log::debug!("  Parameter FIFO write (idx {}): {value:02X}", self.parameter_fifo.len - 1);
+        log::debug!("  Parameter FIFO write (idx {}): {value:02X}", self.parameter_fifo.len() - 1);
     }
 
     fn write_interrupts_enabled(&mut self, value: u8) {

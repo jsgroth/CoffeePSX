@@ -9,14 +9,14 @@ impl CdController {
     // $02: SetLoc(amm, ass, asect) -> INT3(stat)
     // Sets seek location to the specified absolute time
     pub(super) fn execute_set_loc(&mut self) -> CommandState {
-        if self.parameter_fifo.len < 3 {
+        if self.parameter_fifo.len() < 3 {
             int5!(self, [self.status_code(ErrorFlags::ERROR), status::WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
-        let minutes = self.parameter_fifo.values[0];
-        let seconds = self.parameter_fifo.values[1];
-        let frames = self.parameter_fifo.values[2];
+        let minutes = self.parameter_fifo.pop();
+        let seconds = self.parameter_fifo.pop();
+        let frames = self.parameter_fifo.pop();
 
         match CdTime::new_checked(minutes, seconds, frames) {
             Some(cd_time) => {
