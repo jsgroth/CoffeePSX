@@ -4,8 +4,14 @@ use crate::cd::{CdController, Command, CommandState, DriveState};
 use cdrom::cue::TrackMode;
 use std::ops::BitOr;
 
+pub const WRONG_NUM_PARAMETERS: u8 = 0x20;
+pub const INVALID_COMMAND: u8 = 0x40;
+
 // Roughly 18,944 CPU cycles
 const GET_ID_SECOND_CYCLES: u32 = 24;
+
+// Roughly a second
+const READ_TOC_SECOND_CYCLES: u32 = 44_100;
 
 pub struct ErrorFlags(u8);
 
@@ -26,12 +32,13 @@ impl BitOr for ErrorFlags {
 
 impl CdController {
     pub(super) fn status_code(&self, errors: ErrorFlags) -> u8 {
-        // TODO check more drive states
-        let motor_on = !matches!(self.drive_state, DriveState::Stopped);
+        let motor_on =
+            !matches!(self.drive_state, DriveState::Stopped | DriveState::SpinningUp { .. });
+        let seeking = matches!(self.drive_state, DriveState::Seeking { .. });
 
         // TODO Bit 4 (shell open)
-        // TODO Bits 5-7 (Reading/Seeking/Playing)
-        errors.0 | (u8::from(motor_on) << 1)
+        // TODO Bits 5 and 7 (Reading/Playing)
+        errors.0 | (u8::from(motor_on) << 1) | (u8::from(seeking) << 6)
     }
 
     // $01: GetStat() -> INT3(stat)
@@ -72,6 +79,22 @@ impl CdController {
             }
         }
 
+        CommandState::Idle
+    }
+
+    // $1E: ReadTOC() -> INT3(stat), INT2(stat)
+    // Forces the drive to re-read the TOC
+    pub(super) fn execute_read_toc(&mut self) -> CommandState {
+        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+
+        CommandState::GeneratingSecondResponse {
+            command: Command::ReadToc,
+            cycles_remaining: READ_TOC_SECOND_CYCLES,
+        }
+    }
+
+    pub(super) fn read_toc_second_response(&mut self) -> CommandState {
+        int2!(self, [self.status_code(ErrorFlags::NONE)]);
         CommandState::Idle
     }
 }

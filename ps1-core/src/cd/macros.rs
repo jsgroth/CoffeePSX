@@ -15,6 +15,8 @@ macro_rules! generate_response {
             push_fifo!($self.response_fifo, $($response,)*);
 
             $self.interrupts.flags |= $int;
+
+            log::debug!("Set CD-ROM INT{} flag", $int);
         }
     }
 }
