@@ -4,6 +4,7 @@ use crate::cd::macros::*;
 use crate::cd::status::ErrorFlags;
 use crate::cd::{status, CdController, Command, CommandState, DriveState};
 use cdrom::cdtime::CdTime;
+use std::cmp;
 
 impl CdController {
     // $02: SetLoc(amm, ass, asect) -> INT3(stat)
@@ -54,8 +55,10 @@ impl CdController {
     pub(super) fn seek_drive_spun_up(&mut self, command: Command) -> CommandState {
         let current_time = self.drive_state.current_time();
         let seek_cycles = estimate_seek_cycles(current_time, self.seek_location);
-        self.drive_state =
-            DriveState::Seeking { destination: self.seek_location, cycles_remaining: seek_cycles };
+        self.drive_state = DriveState::Seeking {
+            destination: self.seek_location,
+            cycles_remaining: cmp::max(24, seek_cycles),
+        };
 
         CommandState::WaitingForSeek(command)
     }

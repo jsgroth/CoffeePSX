@@ -66,6 +66,8 @@ impl CdController {
 
         disc.read_sector(track_number, relative_time, self.sector_buffer.as_mut())?;
 
+        log::debug!("  Data sector header: {:02X?}", &self.sector_buffer[12..16]);
+
         Ok(DriveState::Reading {
             time: time + CdTime::new(0, 0, 1),
             int1_generated: false,

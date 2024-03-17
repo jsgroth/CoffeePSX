@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::status::ErrorFlags;
-use crate::cd::{status, CdController, CommandState, DriveSpeed};
+use crate::cd::{status, CdController, Command, CommandState, DriveSpeed, DriveState};
 use crate::num::U8Ext;
 
 impl CdController {
@@ -48,6 +48,31 @@ impl CdController {
         log::debug!("Drive speed: {:?}", self.drive_speed);
 
         int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        CommandState::Idle
+    }
+
+    // $09: Pause() -> INT3(stat), INT2(stat)
+    // Aborts any in-progress read or play command and leaves the motor running, with the drive
+    // staying in roughly the same position
+    pub(super) fn execute_pause(&mut self) -> CommandState {
+        // Generate INT3 before pausing the drive
+        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+
+        // TODO check if motor is stopped
+
+        self.drive_state = DriveState::Paused(self.drive_state.current_time());
+
+        log::debug!("Paused drive at {}", self.drive_state.current_time());
+
+        let cycles_till_second_response = 5 * self.drive_speed.cycles_between_sectors();
+        CommandState::GeneratingSecondResponse {
+            command: Command::Pause,
+            cycles_remaining: cycles_till_second_response,
+        }
+    }
+
+    pub(super) fn pause_second_response(&mut self) -> CommandState {
+        int2!(self, [self.status_code(ErrorFlags::NONE)]);
         CommandState::Idle
     }
 }

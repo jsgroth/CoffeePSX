@@ -86,6 +86,8 @@ enum Command {
     SetLoc,
     // $06
     ReadN,
+    // $09
+    Pause,
     // $0E
     SetMode,
     // $15
@@ -326,6 +328,7 @@ impl CdController {
             Command::GetStat => self.execute_get_stat(),
             Command::SetLoc => self.execute_set_loc(),
             Command::ReadN | Command::ReadS => self.execute_read(),
+            Command::Pause => self.execute_pause(),
             Command::SetMode => self.execute_set_mode(),
             Command::SeekL | Command::SeekP => self.execute_seek(command),
             Command::Test => self.execute_test(),
@@ -363,6 +366,7 @@ impl CdController {
         log::debug!("Generating second response for command {command:?}");
 
         match command {
+            Command::Pause => self.pause_second_response(),
             Command::SeekL | Command::SeekP => self.seek_second_response(),
             Command::GetId => self.get_id_second_response(),
             Command::ReadToc => self.read_toc_second_response(),
@@ -461,6 +465,7 @@ impl CdController {
             0x01 => (Command::GetStat, std_receive_cycles),
             0x02 => (Command::SetLoc, std_receive_cycles),
             0x06 => (Command::ReadN, std_receive_cycles),
+            0x09 => (Command::Pause, std_receive_cycles),
             0x0E => (Command::SetMode, std_receive_cycles),
             0x15 => (Command::SeekL, std_receive_cycles),
             0x16 => (Command::SeekP, std_receive_cycles),
