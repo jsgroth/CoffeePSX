@@ -101,7 +101,7 @@ impl R3000 {
             // the operation
             0x10..=0x13 => match (opcode >> 21) & 0x1F {
                 0x00 => self.mfcz(opcode),
-                0x02 => todo!("CFCz opcode {opcode:08X}"),
+                0x02 => self.cfcz(opcode),
                 0x04 => self.mtcz(opcode),
                 0x06 => self.ctcz(opcode),
                 0x10..=0x1F => self.copz(opcode),
@@ -119,8 +119,8 @@ impl R3000 {
             0x2A => self.swl(opcode, bus),
             0x2B => self.sw(opcode, bus)?,
             0x2E => self.swr(opcode, bus),
-            0x30..=0x33 => todo!("LWCz opcode {opcode:08X}"),
-            0x38..=0x3B => todo!("SWCz opcode {opcode:08X}"),
+            0x30..=0x33 => self.lwcz(opcode, bus)?,
+            0x38..=0x3B => self.swcz(opcode, bus)?,
             _ => todo!("opcode {opcode:08X}"),
         }
 
@@ -595,6 +595,7 @@ impl R3000 {
         let register = parse_rd(opcode);
         let value = match parse_coprocessor(opcode) {
             0 => self.cp0.read_register(register),
+            2 => self.gte.read_register(register),
             cp => todo!("MFC{cp} {register}"),
         };
         self.registers.write_gpr(parse_rt(opcode), value);
@@ -606,8 +607,20 @@ impl R3000 {
         let value = self.registers.gpr[parse_rt(opcode) as usize];
         match parse_coprocessor(opcode) {
             0 => self.cp0.write_register(register, value),
+            2 => self.gte.write_register(register, value),
             cp => todo!("MTC{cp} {register} {value:08X}"),
         }
+    }
+
+    // CFCz: Move control from coprocessor
+    fn cfcz(&mut self, opcode: u32) {
+        let register = parse_rd(opcode);
+        let value = match parse_coprocessor(opcode) {
+            2 => self.gte.read_control_register(register),
+            cp => todo!("CFC{cp} {register} {opcode:08X}"),
+        };
+
+        self.registers.write_gpr(parse_rt(opcode), value);
     }
 
     // CTCz: Move control to coprocessor
@@ -625,8 +638,48 @@ impl R3000 {
         let operation = opcode & 0xFFFFFF;
         match parse_coprocessor(opcode) {
             0 => self.cp0.execute_operation(operation),
+            2 => {
+                log::warn!("Unimplemented GTE opcode: {opcode:08X}");
+            }
             cp => todo!("COP{cp} {opcode:08X}"),
         }
+    }
+
+    // LWCz: Load word to coprocessor
+    fn lwcz(&mut self, opcode: u32, bus: &mut Bus<'_>) -> CpuResult<()> {
+        if parse_coprocessor(opcode) != 2 {
+            todo!("LWCz coprocessor exception");
+        }
+
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        if address & 3 != 0 {
+            return Err(Exception::AddressErrorLoad(address));
+        }
+
+        let value = self.bus_read_u32(bus, address);
+
+        self.gte.load_word(parse_rt(opcode), value);
+
+        Ok(())
+    }
+
+    // SWCz: Store word from coprocessor
+    fn swcz(&mut self, opcode: u32, bus: &mut Bus<'_>) -> CpuResult<()> {
+        if parse_coprocessor(opcode) != 2 {
+            todo!("SWCz coprocessor exception");
+        }
+
+        let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
+        let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
+        if address & 3 != 0 {
+            return Err(Exception::AddressErrorLoad(address));
+        }
+
+        let value = self.gte.read_register(parse_rt(opcode));
+        self.bus_write_u32(bus, address, value);
+
+        Ok(())
     }
 }
 
