@@ -1,4 +1,5 @@
 use crate::num::U32Ext;
+use std::cmp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EnvelopeMode {
@@ -287,19 +288,19 @@ impl AdsrEnvelope {
             return;
         }
 
-        let min_level: i32 = match self.state {
-            AdsrState::Decay => self.settings.sustain_level.into(),
+        let min_level = match self.state {
+            AdsrState::Decay => cmp::min(i16::MAX as u16, self.settings.sustain_level) as i16,
             AdsrState::Attack | AdsrState::Sustain | AdsrState::Release => 0,
         };
 
         self.level = (i32::from(self.level) + i32::from(self.next_step))
-            .clamp(min_level, i16::MAX.into()) as i16;
+            .clamp(min_level.into(), i16::MAX.into()) as i16;
 
         if self.state == AdsrState::Attack && self.level == i16::MAX {
             self.state = AdsrState::Decay;
         }
 
-        if self.state == AdsrState::Decay && self.level == self.settings.sustain_level as i16 {
+        if self.state == AdsrState::Decay && self.level == min_level {
             self.state = AdsrState::Sustain;
         }
 
