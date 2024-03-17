@@ -1,5 +1,6 @@
 //! PS1 DMA registers and transfers
 
+use crate::cd::CdController;
 use crate::gpu::Gpu;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::memory::Memory;
@@ -224,6 +225,10 @@ impl DmaController {
         channel_config.block_size = value & 0xFFFF;
         channel_config.num_blocks = value >> 16;
 
+        if channel_config.block_size == 0 {
+            channel_config.block_size = 0x10000;
+        }
+
         log::trace!(
             "DMA{channel} length: block_size={:04X}, block_amount={:04X}",
             channel_config.block_size,
@@ -252,6 +257,7 @@ impl DmaController {
         value: u32,
         gpu: &mut Gpu,
         memory: &mut Memory,
+        cd_controller: &mut CdController,
         interrupt_registers: &mut InterruptRegisters,
     ) {
         let channel = (address >> 4) & 7;
@@ -290,6 +296,14 @@ impl DmaController {
                     log::trace!("Running GPU DMA");
                     run_gpu_dma(&mut self.channel_configs[2], gpu, memory);
                     log::trace!("GPU DMA complete");
+                }
+                3 => {
+                    log::debug!(
+                        "Running CD-ROM DMA, block size is {}",
+                        self.channel_configs[3].block_size
+                    );
+                    run_cdrom_dma(&self.channel_configs[3], memory, cd_controller);
+                    log::debug!("CD-ROM DMA complete");
                 }
                 6 => {
                     log::trace!("Running OTC DMA");
@@ -375,6 +389,21 @@ fn run_gpu_linked_list_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &M
             }
         }
         DmaDirection::ToRam => todo!("GPU linked list DMA from VRAM to CPU RAM"),
+    }
+}
+
+// CD-ROM DMA
+// Copies data from the CD controller's data FIFO to main RAM
+fn run_cdrom_dma(config: &ChannelConfig, memory: &mut Memory, cd_controller: &mut CdController) {
+    let mut address = config.start_address & !3;
+    for _ in 0..config.block_size {
+        let mut bytes = [0; 4];
+        for byte in &mut bytes {
+            *byte = cd_controller.read_data_fifo();
+        }
+
+        memory.write_main_ram_u32(address, u32::from_le_bytes(bytes));
+        address = address.wrapping_add(4);
     }
 }
 

@@ -42,10 +42,10 @@ impl CdController {
     // SeekP seeks in audio mode (uses Subchannel Q for positioning)
     // TODO do SeekL and SeekP need to behave differently?
     pub(super) fn execute_seek(&mut self, command: Command) -> CommandState {
-        if self.drive_state == DriveState::Stopped {
-            self.drive_state = DriveState::SpinningUp { cycles_remaining: cd::SPIN_UP_CYCLES };
-            int3!(self, [self.status_code(ErrorFlags::NONE)]);
-            return CommandState::WaitingForSpinUp(command);
+        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+
+        if let Some(state) = check_if_spin_up_needed(command, &mut self.drive_state) {
+            return state;
         }
 
         self.seek_drive_spun_up(command)
@@ -53,7 +53,7 @@ impl CdController {
 
     pub(super) fn seek_drive_spun_up(&mut self, command: Command) -> CommandState {
         let current_time = self.drive_state.current_time();
-        let seek_cycles = guess_seek_cycles(current_time, self.seek_location);
+        let seek_cycles = estimate_seek_cycles(current_time, self.seek_location);
         self.drive_state =
             DriveState::Seeking { destination: self.seek_location, cycles_remaining: seek_cycles };
 
@@ -66,7 +66,21 @@ impl CdController {
     }
 }
 
-fn guess_seek_cycles(current: CdTime, destination: CdTime) -> u32 {
+pub(super) fn check_if_spin_up_needed(
+    command: Command,
+    drive_state: &mut DriveState,
+) -> Option<CommandState> {
+    match *drive_state {
+        DriveState::Stopped => {
+            *drive_state = DriveState::SpinningUp { cycles_remaining: cd::SPIN_UP_CYCLES };
+            Some(CommandState::WaitingForSpinUp(command))
+        }
+        DriveState::SpinningUp { .. } => Some(CommandState::WaitingForSpinUp(command)),
+        _ => None,
+    }
+}
+
+pub(super) fn estimate_seek_cycles(current: CdTime, destination: CdTime) -> u32 {
     if current == destination {
         return 1;
     }

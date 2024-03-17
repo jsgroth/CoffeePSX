@@ -13,6 +13,7 @@ use crate::sio::SerialPort;
 use crate::spu::Spu;
 use crate::timers::Timers;
 use cdrom::reader::CdRom;
+use cdrom::CdRomError;
 use thiserror::Error;
 
 pub trait Renderer {
@@ -49,6 +50,8 @@ pub enum TickError<RErr, AErr> {
     Render(RErr),
     #[error("Error queueing audio samples: {0}")]
     Audio(AErr),
+    #[error("CD-ROM error: {0}")]
+    CdRom(#[from] CdRomError),
 }
 
 #[derive(Debug)]
@@ -244,7 +247,7 @@ impl Ps1Emulator {
                 }
                 SchedulerEventType::SpuAndCdClock => {
                     self.audio_buffer.push(self.spu.clock());
-                    self.cd_controller.clock(&mut self.interrupt_registers);
+                    self.cd_controller.clock(&mut self.interrupt_registers)?;
 
                     self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(
                         event.cpu_cycles + SPU_CLOCK_DIVIDER,

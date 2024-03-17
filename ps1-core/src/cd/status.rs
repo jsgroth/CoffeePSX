@@ -35,10 +35,11 @@ impl CdController {
         let motor_on =
             !matches!(self.drive_state, DriveState::Stopped | DriveState::SpinningUp { .. });
         let seeking = matches!(self.drive_state, DriveState::Seeking { .. });
+        let reading = matches!(self.drive_state, DriveState::Reading { .. });
 
         // TODO Bit 4 (shell open)
-        // TODO Bits 5 and 7 (Reading/Playing)
-        errors.0 | (u8::from(motor_on) << 1) | (u8::from(seeking) << 6)
+        // TODO Bits 7 (Playing)
+        errors.0 | (u8::from(motor_on) << 1) | (u8::from(reading) << 5) | (u8::from(seeking) << 6)
     }
 
     // $01: GetStat() -> INT3(stat)

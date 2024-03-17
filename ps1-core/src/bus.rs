@@ -190,6 +190,7 @@ impl<'a> Bus<'a> {
                     value,
                     self.gpu,
                     self.memory,
+                    self.cd_controller,
                     self.interrupt_registers,
                 ),
                 3 => todo!("Invalid DMA register write: {address:08X} {value:08X} {size:?}"),

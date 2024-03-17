@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZeroFill {
     Yes,
-    // No,
+    No,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +61,14 @@ impl<const MAX_LEN: usize> Fifo<MAX_LEN> {
     pub fn fully_consumed(&self) -> bool {
         self.idx >= self.len
     }
+
+    pub fn copy_from(&mut self, array: &[u8]) {
+        self.values[..array.len()].copy_from_slice(array);
+        self.idx = 0;
+        self.len = array.len();
+    }
 }
 
 pub type ParameterFifo = Fifo<16>;
 pub type ResponseFifo = Fifo<16>;
+pub type DataFifo = Fifo<2352>;
