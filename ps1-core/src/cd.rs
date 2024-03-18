@@ -1,5 +1,6 @@
 //! PS1 CD-ROM controller and drive
 
+mod audio;
 mod control;
 mod fifo;
 mod macros;
@@ -90,6 +91,8 @@ enum Command {
     Pause,
     // $0A
     Init,
+    // $0C
+    Demute,
     // $0E
     SetMode,
     // $15
@@ -334,6 +337,7 @@ impl CdController {
             Command::ReadN | Command::ReadS => self.execute_read(),
             Command::Pause => self.execute_pause(),
             Command::Init => self.execute_init(),
+            Command::Demute => self.execute_demute(),
             Command::SetMode => self.execute_set_mode(),
             Command::SeekL | Command::SeekP => self.execute_seek(command),
             Command::Test => self.execute_test(),
@@ -473,6 +477,7 @@ impl CdController {
             0x06 => (Command::ReadN, std_receive_cycles),
             0x09 => (Command::Pause, std_receive_cycles),
             0x0A => (Command::Init, INIT_COMMAND_CYCLES),
+            0x0C => (Command::Demute, std_receive_cycles),
             0x0E => (Command::SetMode, std_receive_cycles),
             0x15 => (Command::SeekL, std_receive_cycles),
             0x16 => (Command::SeekP, std_receive_cycles),
