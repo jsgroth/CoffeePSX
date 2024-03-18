@@ -496,7 +496,7 @@ impl Gpu {
     }
 
     fn execute_draw_command(&mut self, command: DrawCommand) -> Gp0CommandState {
-        log::trace!("Executing GP0 command {command:?}");
+        log::debug!("Executing GP0 command {command:?}");
 
         match command {
             DrawCommand::Fill(color) => {
@@ -558,13 +558,13 @@ impl Gpu {
                 self.gp0.draw_settings.drawing_in_display_allowed = command.bit(10);
                 self.gp0.draw_settings.dithering_enabled = command.bit(9);
 
-                log::trace!("Executed texture page / draw mode command: {command:08X}");
-                log::trace!("  Global texture page: {:?}", self.gp0.global_texture_page);
-                log::trace!(
+                log::debug!("Executed texture page / draw mode command: {command:08X}");
+                log::debug!("  Global texture page: {:?}", self.gp0.global_texture_page);
+                log::debug!(
                     "  Drawing allowed in display area: {}",
                     self.gp0.draw_settings.drawing_in_display_allowed
                 );
-                log::trace!(
+                log::debug!(
                     "  Dithering from 24-bit to 15-bit enabled: {}",
                     self.gp0.draw_settings.dithering_enabled
                 );
@@ -573,8 +573,8 @@ impl Gpu {
                 // GP0($E2): Texture window settings
                 self.gp0.texture_window = TextureWindow::from_command_word(command);
 
-                log::trace!("Executed texture window settings command: {command:08X}");
-                log::trace!("  Texture window: {:?}", self.gp0.texture_window);
+                log::debug!("Executed texture window settings command: {command:08X}");
+                log::debug!("  Texture window: {:?}", self.gp0.texture_window);
             }
             0xE3 => {
                 // GP0($E3): Drawing area top-left coordinates
@@ -582,8 +582,8 @@ impl Gpu {
                 let y1 = (command >> 10) & 0x1FF;
                 self.gp0.draw_settings.draw_area_top_left = (x1, y1);
 
-                log::trace!("Executed drawing area top-left command: {command:08X}");
-                log::trace!("  (X1, Y1) = {:?}", self.gp0.draw_settings.draw_area_top_left);
+                log::debug!("Executed drawing area top-left command: {command:08X}");
+                log::debug!("  (X1, Y1) = {:?}", self.gp0.draw_settings.draw_area_top_left);
             }
             0xE4 => {
                 // GP0($E4): Drawing area bottom-right coordinates
@@ -591,8 +591,8 @@ impl Gpu {
                 let y2 = (command >> 10) & 0x1FF;
                 self.gp0.draw_settings.draw_area_bottom_right = (x2, y2);
 
-                log::trace!("Executed drawing area bottom-right command: {command:08X}");
-                log::trace!("  (X2, Y2) = {:?}", self.gp0.draw_settings.draw_area_bottom_right);
+                log::debug!("Executed drawing area bottom-right command: {command:08X}");
+                log::debug!("  (X2, Y2) = {:?}", self.gp0.draw_settings.draw_area_bottom_right);
             }
             0xE5 => {
                 // GP0($E5): Drawing offset
@@ -601,17 +601,17 @@ impl Gpu {
                 let y_offset = parse_signed_11_bit(command >> 11);
                 self.gp0.draw_settings.draw_offset = (x_offset, y_offset);
 
-                log::trace!("Executed draw offset command: {command:08X}");
-                log::trace!("  (X offset, Y offset) = {:?}", self.gp0.draw_settings.draw_offset);
+                log::debug!("Executed draw offset command: {command:08X}");
+                log::debug!("  (X offset, Y offset) = {:?}", self.gp0.draw_settings.draw_offset);
             }
             0xE6 => {
                 // GP0($E6): Mask bit settings
                 self.gp0.draw_settings.force_mask_bit = command.bit(0);
                 self.gp0.draw_settings.check_mask_bit = command.bit(1);
 
-                log::trace!("Executed mask bit settings command: {command:08X}");
-                log::trace!("  Force mask bit: {}", self.gp0.draw_settings.force_mask_bit);
-                log::trace!("  Check mask bit on draw: {}", self.gp0.draw_settings.check_mask_bit);
+                log::debug!("Executed mask bit settings command: {command:08X}");
+                log::debug!("  Force mask bit: {}", self.gp0.draw_settings.force_mask_bit);
+                log::debug!("  Check mask bit on draw: {}", self.gp0.draw_settings.check_mask_bit);
             }
             _ => todo!("GP0 settings command {command:08X}"),
         }
@@ -623,7 +623,7 @@ impl Gpu {
         let width = self.gp0.parameters[1] & 0xFFFF;
         let height = self.gp0.parameters[1] >> 16;
 
-        log::trace!("Executing VRAM fill with X={x}, Y={y}, width={width}, height={height}");
+        log::debug!("Executing VRAM fill with X={x}, Y={y}, width={width}, height={height}");
 
         rasterize::fill(x, y, width, height, color, &mut self.vram);
     }
@@ -631,7 +631,7 @@ impl Gpu {
     fn draw_line(&mut self, command_parameters: LineCommandParameters) -> Gp0CommandState {
         let parameters = parse_draw_line_parameters(command_parameters, &self.gp0.parameters);
 
-        log::trace!("Executing draw line command: {parameters:?}");
+        log::debug!("Executing draw line command: {parameters:?}");
 
         let v1 = parameters.vertices[1];
         let shading = parameters.shading;
@@ -661,6 +661,9 @@ impl Gpu {
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
         let (first_params, second_params) =
             parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
+
+        log::debug!("Drawing polygon with params {first_params:?}");
+
         rasterize::triangle(
             first_params,
             &self.gp0.draw_settings,
@@ -668,6 +671,7 @@ impl Gpu {
             &mut self.vram,
         );
         if let Some(second_params) = second_params {
+            log::debug!("Drawing second polygon with params {second_params:?}");
             rasterize::triangle(
                 second_params,
                 &self.gp0.draw_settings,
@@ -680,7 +684,7 @@ impl Gpu {
     fn draw_rectangle(&mut self, command_parameters: RectangleCommandParameters) {
         let parameters = parse_draw_rectangle_parameters(command_parameters, &self.gp0.parameters);
 
-        log::trace!("Drawing rectangle with parameters {parameters:?}");
+        log::debug!("Drawing rectangle with parameters {parameters:?}");
 
         rasterize::rectangle(
             parameters,
@@ -837,8 +841,7 @@ fn parse_draw_polygon_parameters(
         if command_parameters.textured {
             match vertex_idx {
                 0 => {
-                    clut_x = ((parameters.peek() >> 16) & 0x3F) as u16;
-                    clut_y = ((parameters.peek() >> 22) & 0x1FF) as u16;
+                    (clut_x, clut_y) = parse_clut_attribute(parameters.peek());
                 }
                 1 => {
                     texpage = TexturePage::from_command_word(parameters.peek() >> 16);
@@ -908,9 +911,10 @@ fn parse_draw_rectangle_parameters(
 
     let mut texture_params = RectangleTextureParameters::default();
     if command_parameters.textured {
+        let (clut_x, clut_y) = parse_clut_attribute(parameters.peek());
         texture_params = RectangleTextureParameters {
-            clut_x: ((parameters.peek() >> 16) & 0x3FF) as u16,
-            clut_y: ((parameters.peek() >> 22) & 0x1FF) as u16,
+            clut_x,
+            clut_y,
             u: parameters.peek() as u8,
             v: (parameters.peek() >> 8) as u8,
         };
@@ -937,4 +941,10 @@ fn parse_draw_rectangle_parameters(
         texture_params,
         texture_mode: TextureMode::from_rectangle_params(command_parameters),
     }
+}
+
+fn parse_clut_attribute(value: u32) -> (u16, u16) {
+    let clut_x = (value >> 16) & 0x3F;
+    let clut_y = (value >> 22) & 0x1FF;
+    (clut_x as u16, clut_y as u16)
 }
