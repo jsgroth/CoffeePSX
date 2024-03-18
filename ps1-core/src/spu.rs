@@ -300,6 +300,12 @@ impl Spu {
             0x1D96 => log::warn!("Unimplemented noise mode write (high halfword): {value:04X}"),
             0x1D98 => self.reverb.write_reverb_on_low(value),
             0x1D9A => self.reverb.write_reverb_on_high(value),
+            0x1D9C => {
+                log::warn!("ENDX write (voices 0-15): {value:04X}");
+            }
+            0x1D9E => {
+                log::warn!("ENDX write (voices 16-23): {value:04X}");
+            }
             0x1DA2 => self.reverb.write_buffer_start_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
             0x1DA8 => self.write_data_port(value),
@@ -373,6 +379,15 @@ impl Spu {
                 // $1F801C08 + N*$10: ADSR settings, low halfword
                 self.voices[voice].write_adsr_low(value);
                 log::trace!("Voice {voice} ADSR settings (low): {:?}", self.voices[voice].adsr);
+            }
+            0xC => {
+                // $1F801C0C + N*$10: Current ADSR level
+                log::warn!("Unimplemented ADSR level write (voice {voice}): {value:04X}");
+            }
+            0xE => {
+                // $1F801C0E + N*$10: ADPCM repeat address
+                self.voices[voice].write_repeat_address(value);
+                log::trace!("Voice {voice} repeat address: {:05X}", (value & 0xFFFF) << 3);
             }
             0xA => {
                 // $1F801C0A + N*$10: ADSR settings, high halfword

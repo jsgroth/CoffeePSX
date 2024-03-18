@@ -96,6 +96,10 @@ impl Voice {
         self.adsr.level as u32
     }
 
+    pub fn write_repeat_address(&mut self, value: u32) {
+        self.repeat_address = (value & 0xFFFF) << 3;
+    }
+
     pub fn key_on(&mut self, audio_ram: &AudioRam) {
         self.adsr.key_on();
 
