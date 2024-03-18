@@ -132,6 +132,10 @@ impl<'a> Bus<'a> {
         log::debug!("I/O register read: {address:08X} {size:?}");
 
         match address & 0xFFFF {
+            0x1014 => {
+                log::warn!("Unimplemented SPU delay read, returning $200931E1");
+                0x200931E1
+            }
             0x1040 => self.sio0.read_rx_data(),
             0x1044 => self.sio0.read_status(),
             0x104A => self.sio0.read_control(),
