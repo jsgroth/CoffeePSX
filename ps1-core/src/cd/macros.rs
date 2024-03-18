@@ -11,7 +11,7 @@ macro_rules! push_fifo {
 macro_rules! generate_response {
     ($self:expr, $int:expr, $($response:expr),* $(,)?) => {
         {
-            $self.response_fifo.reset(crate::cd::ZeroFill::Yes);
+            $self.response_fifo.reset();
             push_fifo!($self.response_fifo, $($response,)*);
 
             $self.interrupts.flags |= $int;

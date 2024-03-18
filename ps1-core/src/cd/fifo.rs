@@ -1,47 +1,50 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ZeroFill {
-    Yes,
-    No,
-}
+use std::array;
+
+const PARAMETER_CAPACITY: usize = 16;
 
 #[derive(Debug, Clone)]
-pub struct Fifo<const MAX_LEN: usize> {
-    values: [u8; MAX_LEN],
+pub struct ParameterFifo {
+    values: [u8; PARAMETER_CAPACITY],
     idx: usize,
     len: usize,
+    consumed: bool,
 }
 
-impl<const MAX_LEN: usize> Fifo<MAX_LEN> {
+impl ParameterFifo {
     pub fn new() -> Self {
-        Self { values: [0; MAX_LEN], idx: 0, len: 0 }
+        Self { values: array::from_fn(|_| 0), idx: 0, len: 0, consumed: true }
     }
 
-    pub fn reset(&mut self, zero_fill: ZeroFill) {
+    pub fn reset(&mut self) {
+        self.values.fill(0);
         self.idx = 0;
         self.len = 0;
-
-        if zero_fill == ZeroFill::Yes {
-            self.values.fill(0);
-        }
+        self.consumed = true;
     }
 
     pub fn push(&mut self, value: u8) {
-        if self.len == self.values.len() {
-            log::error!("Push to CD-ROM FIFO while full: {value:02X}");
+        if self.len == PARAMETER_CAPACITY {
+            log::error!(
+                "Push to response FIFO while at capacity of {PARAMETER_CAPACITY}, ignoring"
+            );
             return;
         }
 
         self.values[self.len] = value;
         self.len += 1;
+        self.consumed = false;
     }
 
     pub fn pop(&mut self) -> u8 {
         let value = self.values[self.idx];
-
         self.idx += 1;
-        if self.idx == self.values.len() {
-            self.idx = 0;
+
+        if self.idx == self.len {
+            self.consumed = true;
         }
+
+        // Response FIFO loops if the host reads 16 times before a new response is generated
+        self.idx %= PARAMETER_CAPACITY;
 
         value
     }
@@ -51,24 +54,50 @@ impl<const MAX_LEN: usize> Fifo<MAX_LEN> {
     }
 
     pub fn empty(&self) -> bool {
-        self.idx >= self.len
+        self.len == 0
     }
 
     pub fn full(&self) -> bool {
-        self.len == MAX_LEN
+        self.len == PARAMETER_CAPACITY
     }
 
     pub fn fully_consumed(&self) -> bool {
-        self.idx >= self.len
-    }
-
-    pub fn copy_from(&mut self, array: &[u8]) {
-        self.values[..array.len()].copy_from_slice(array);
-        self.idx = 0;
-        self.len = array.len();
+        self.consumed
     }
 }
 
-pub type ParameterFifo = Fifo<16>;
-pub type ResponseFifo = Fifo<16>;
-pub type DataFifo = Fifo<2352>;
+#[derive(Debug, Clone)]
+pub struct DataFifo {
+    values: Box<[u8; cdrom::BYTES_PER_SECTOR as usize]>,
+    idx: usize,
+    len: usize,
+}
+
+impl DataFifo {
+    pub fn new() -> Self {
+        Self { values: Box::new(array::from_fn(|_| 0)), idx: 0, len: 0 }
+    }
+
+    pub fn copy_from_slice(&mut self, slice: &[u8]) {
+        self.values[..slice.len()].copy_from_slice(slice);
+        self.idx = 0;
+        self.len = slice.len();
+    }
+
+    pub fn pop(&mut self) -> u8 {
+        // Data FIFO repeatedly returns the last value if all elements are popped
+        if self.len == 0 {
+            return 0;
+        } else if self.idx == self.len {
+            return self.values[self.len - 1];
+        }
+
+        let value = self.values[self.idx];
+        self.idx += 1;
+        value
+    }
+
+    pub fn fully_consumed(&self) -> bool {
+        self.idx == self.len
+    }
+}

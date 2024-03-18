@@ -8,7 +8,7 @@ mod read;
 mod seek;
 mod status;
 
-use crate::cd::fifo::{DataFifo, ParameterFifo, ResponseFifo, ZeroFill};
+use crate::cd::fifo::{DataFifo, ParameterFifo};
 use crate::cd::status::ErrorFlags;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
@@ -17,6 +17,7 @@ use cdrom::reader::CdRom;
 use cdrom::CdRomResult;
 #[allow(clippy::wildcard_imports)]
 use macros::*;
+use std::array;
 
 // Roughly 23,796 CPU cycles
 const RECEIVE_COMMAND_CYCLES_STOPPED: u32 = 31;
@@ -73,7 +74,7 @@ impl CdInterruptRegisters {
 
         // Bit 6 resets the parameter FIFO if set
         if value.bit(6) {
-            parameter_fifo.reset(ZeroFill::Yes);
+            parameter_fifo.reset();
             log::debug!("  Reset parameter FIFO");
         }
     }
@@ -190,8 +191,8 @@ pub struct CdController {
     disc: Option<CdRom>,
     interrupts: CdInterruptRegisters,
     parameter_fifo: ParameterFifo,
-    response_fifo: ResponseFifo,
-    data_fifo: Box<DataFifo>,
+    response_fifo: ParameterFifo,
+    data_fifo: DataFifo,
     sector_buffer: Box<SectorBuffer>,
     command_state: CommandState,
     drive_state: DriveState,
@@ -206,9 +207,9 @@ impl CdController {
             disc,
             interrupts: CdInterruptRegisters::new(),
             parameter_fifo: ParameterFifo::new(),
-            response_fifo: ResponseFifo::new(),
-            data_fifo: Box::new(DataFifo::new()),
-            sector_buffer: vec![0; BYTES_PER_SECTOR].into_boxed_slice().try_into().unwrap(),
+            response_fifo: ParameterFifo::new(),
+            data_fifo: DataFifo::new(),
+            sector_buffer: Box::new(array::from_fn(|_| 0)),
             command_state: CommandState::default(),
             drive_state: DriveState::default(),
             drive_speed: DriveSpeed::default(),
@@ -253,7 +254,7 @@ impl CdController {
             DriveState::Reading { time, mut int1_generated, cycles_till_next } => {
                 if !int1_generated && !self.interrupts.pending() {
                     int1!(self, [self.status_code(ErrorFlags::NONE)]);
-                    self.data_fifo.copy_from(&self.sector_buffer[24..24 + 2048]);
+                    self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
                     int1_generated = true;
                 }
 
@@ -351,7 +352,7 @@ impl CdController {
             Command::ReadToc => self.execute_read_toc(),
         };
 
-        self.parameter_fifo.reset(ZeroFill::Yes);
+        self.parameter_fifo.reset();
 
         log::debug!("  New state: {new_state:?}");
 
@@ -477,7 +478,7 @@ impl CdController {
             | (u8::from(self.parameter_fifo.empty()) << 3)
             | (u8::from(!self.parameter_fifo.full()) << 4)
             | (u8::from(!self.response_fifo.fully_consumed()) << 5)
-            | (u8::from(!self.data_fifo.empty()) << 6)
+            | (u8::from(!self.data_fifo.fully_consumed()) << 6)
             | (u8::from(receiving_command) << 7);
 
         log::debug!("Status read: {status:02X}");
