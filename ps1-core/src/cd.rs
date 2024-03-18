@@ -97,6 +97,7 @@ enum Command {
     SeekP,
     SetLoc,
     SetMode,
+    Stop,
     Test,
 }
 
@@ -335,6 +336,7 @@ impl CdController {
             Command::SeekL | Command::SeekP => self.execute_seek(command),
             Command::SetLoc => self.execute_set_loc(),
             Command::SetMode => self.execute_set_mode(),
+            Command::Stop => self.execute_stop(),
             Command::Test => self.execute_test(),
         };
 
@@ -343,6 +345,20 @@ impl CdController {
         log::debug!("  New state: {new_state:?}");
 
         new_state
+    }
+
+    fn generate_second_response(&mut self, command: Command) -> CommandState {
+        log::debug!("Generating second response for command {command:?}");
+
+        match command {
+            Command::GetId => self.get_id_second_response(),
+            Command::Init => self.init_second_response(),
+            Command::Pause => self.pause_second_response(),
+            Command::ReadToc => self.read_toc_second_response(),
+            Command::SeekL | Command::SeekP => self.seek_second_response(),
+            Command::Stop => self.stop_second_response(),
+            _ => panic!("Invalid state, command {command:?} should not send a second response"),
+        }
     }
 
     // $19: Test(sub_function) -> varies based on sub-function
@@ -362,19 +378,6 @@ impl CdController {
         }
 
         CommandState::Idle
-    }
-
-    fn generate_second_response(&mut self, command: Command) -> CommandState {
-        log::debug!("Generating second response for command {command:?}");
-
-        match command {
-            Command::GetId => self.get_id_second_response(),
-            Command::Init => self.init_second_response(),
-            Command::Pause => self.pause_second_response(),
-            Command::ReadToc => self.read_toc_second_response(),
-            Command::SeekL | Command::SeekP => self.seek_second_response(),
-            _ => panic!("Invalid state, command {command:?} should not send a second response"),
-        }
     }
 
     pub fn read_port(&mut self, address: u32) -> u8 {
@@ -488,6 +491,7 @@ impl CdController {
             0x01 => (Command::GetStat, std_receive_cycles),
             0x02 => (Command::SetLoc, std_receive_cycles),
             0x06 => (Command::ReadN, std_receive_cycles),
+            0x08 => (Command::Stop, std_receive_cycles),
             0x09 => (Command::Pause, std_receive_cycles),
             0x0A => (Command::Init, INIT_COMMAND_CYCLES),
             0x0C => (Command::Demute, std_receive_cycles),

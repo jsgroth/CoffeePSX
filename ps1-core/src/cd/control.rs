@@ -5,6 +5,9 @@ use crate::cd::{seek, status, CdController, Command, CommandState, DriveSpeed, D
 use crate::num::U8Ext;
 use cdrom::cdtime::CdTime;
 
+// Roughly a second
+const STOP_SECOND_RESPONSE_CYCLES: u32 = 44_100;
+
 impl CdController {
     // $0A: Init() -> INT3(stat), INT2(stat)
     // Resets mode, aborts any in-progress commands, and activates the drive motor if it is stopped
@@ -102,6 +105,32 @@ impl CdController {
     }
 
     pub(super) fn pause_second_response(&mut self) -> CommandState {
+        int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        CommandState::Idle
+    }
+
+    // $08: Stop() -> INT3(stat), INT2(stat)
+    // Stops the drive motor
+    pub(super) fn execute_stop(&mut self) -> CommandState {
+        // Pause drive before generating INT3 stat
+        // TODO also check playing states
+        match self.drive_state {
+            DriveState::PreparingToRead { time, .. } | DriveState::Reading { time, .. } => {
+                self.drive_state = DriveState::Paused(time);
+            }
+            _ => {}
+        }
+
+        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+
+        CommandState::GeneratingSecondResponse {
+            command: Command::Stop,
+            cycles_remaining: STOP_SECOND_RESPONSE_CYCLES,
+        }
+    }
+
+    pub(super) fn stop_second_response(&mut self) -> CommandState {
+        self.drive_state = DriveState::Stopped;
         int2!(self, [self.status_code(ErrorFlags::NONE)]);
         CommandState::Idle
     }
