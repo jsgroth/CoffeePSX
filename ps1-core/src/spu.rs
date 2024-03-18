@@ -66,6 +66,10 @@ impl DataPort {
         Self { mode: DataPortMode::default(), start_address: 0, current_address: 0 }
     }
 
+    fn read_start_address(&self) -> u32 {
+        self.start_address >> 3
+    }
+
     // $1F801DA6: Sound RAM data transfer address
     fn write_transfer_address(&mut self, value: u32) {
         // Address is in 8-byte units
@@ -244,6 +248,7 @@ impl Spu {
             0x1D8A => self.control.last_key_on_write >> 16,
             0x1D8C => self.control.last_key_off_write & 0xFFFF,
             0x1D8E => self.control.last_key_off_write >> 16,
+            0x1DA6 => self.data_port.read_start_address(),
             0x1DAA => self.control.read_spucnt(&self.data_port, &self.reverb),
             // TODO return an actual value for sound RAM data transfer control?
             0x1DAC => 0x0004,
