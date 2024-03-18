@@ -248,6 +248,8 @@ impl Spu {
             // TODO return an actual value for sound RAM data transfer control?
             0x1DAC => 0x0004,
             0x1DAE => self.read_status_register(),
+            0x1DB8 => (self.volume.main_l.volume as u16).into(),
+            0x1DBA => (self.volume.main_r.volume as u16).into(),
             _ => todo!("SPU read register {address:08X}"),
         };
 
