@@ -83,36 +83,21 @@ impl CdInterruptRegisters {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 enum Command {
-    // $01
-    GetStat,
-    // $02
-    SetLoc,
-    // $06
-    ReadN,
-    // $09
-    Pause,
-    // $0A
-    Init,
-    // $0C
     Demute,
-    // $0E
-    SetMode,
-    // $13
-    GetTN,
-    // $14
-    GetTD,
-    // $15
-    SeekL,
-    // $16
-    SeekP,
-    // $19
-    Test,
-    // $1A
     GetId,
-    // $1B
+    GetStat,
+    GetTD,
+    GetTN,
+    Init,
+    Pause,
+    ReadN,
     ReadS,
-    // $1E
     ReadToc,
+    SeekL,
+    SeekP,
+    SetLoc,
+    SetMode,
+    Test,
 }
 
 #[derive(Debug, Clone, Copy, Encode, Decode)]
@@ -311,8 +296,8 @@ impl CdController {
                 | DriveState::Reading { .. }
                 | DriveState::Paused(_)
                 | DriveState::Seeking { .. } => match command {
-                    Command::ReadN | Command::ReadS => self.read_drive_spun_up(),
                     Command::Init => self.init_drive_spun_up(),
+                    Command::ReadN | Command::ReadS => self.read_drive_spun_up(),
                     Command::SeekL | Command::SeekP => self.seek_drive_spun_up(command),
                     _ => panic!("Unexpected command waiting for drive spin-up: {command:?}"),
                 },
@@ -338,19 +323,19 @@ impl CdController {
         log::debug!("Executing command {command:?}");
 
         let new_state = match command {
-            Command::GetStat => self.execute_get_stat(),
-            Command::SetLoc => self.execute_set_loc(),
-            Command::ReadN | Command::ReadS => self.execute_read(),
-            Command::Pause => self.execute_pause(),
-            Command::Init => self.execute_init(),
             Command::Demute => self.execute_demute(),
-            Command::SetMode => self.execute_set_mode(),
-            Command::GetTN => self.execute_get_tn(),
-            Command::GetTD => self.execute_get_td(),
-            Command::SeekL | Command::SeekP => self.execute_seek(command),
-            Command::Test => self.execute_test(),
             Command::GetId => self.execute_get_id(),
+            Command::GetStat => self.execute_get_stat(),
+            Command::GetTD => self.execute_get_td(),
+            Command::GetTN => self.execute_get_tn(),
+            Command::Init => self.execute_init(),
+            Command::Pause => self.execute_pause(),
+            Command::ReadN | Command::ReadS => self.execute_read(),
             Command::ReadToc => self.execute_read_toc(),
+            Command::SeekL | Command::SeekP => self.execute_seek(command),
+            Command::SetLoc => self.execute_set_loc(),
+            Command::SetMode => self.execute_set_mode(),
+            Command::Test => self.execute_test(),
         };
 
         self.parameter_fifo.reset();
@@ -383,11 +368,11 @@ impl CdController {
         log::debug!("Generating second response for command {command:?}");
 
         match command {
+            Command::GetId => self.get_id_second_response(),
             Command::Init => self.init_second_response(),
             Command::Pause => self.pause_second_response(),
-            Command::SeekL | Command::SeekP => self.seek_second_response(),
-            Command::GetId => self.get_id_second_response(),
             Command::ReadToc => self.read_toc_second_response(),
+            Command::SeekL | Command::SeekP => self.seek_second_response(),
             _ => panic!("Invalid state, command {command:?} should not send a second response"),
         }
     }
