@@ -5,6 +5,7 @@ mod envelope;
 mod reverb;
 mod voice;
 
+use crate::cd::CdController;
 use crate::cpu::OpSize;
 use crate::num::U32Ext;
 use crate::spu::envelope::VolumeControl;
@@ -197,7 +198,7 @@ impl Spu {
         }
     }
 
-    pub fn clock(&mut self) -> (f64, f64) {
+    pub fn clock(&mut self, cd_controller: &CdController) -> (f64, f64) {
         self.volume.main_l.clock();
         self.volume.main_r.clock();
 
@@ -225,6 +226,16 @@ impl Spu {
             (i32::from(sample_l) + i32::from(self.reverb.current_output.0)).clamp_to_i16();
         let sample_r =
             (i32::from(sample_r) + i32::from(self.reverb.current_output.1)).clamp_to_i16();
+
+        // Mix in CD audio samples
+        let (cd_l, cd_r) = apply_volume_matrix(
+            cd_controller.current_audio_sample(),
+            cd_controller.spu_volume_matrix(),
+        );
+        let cd_l = multiply_volume(cd_l, self.volume.cd_l);
+        let cd_r = multiply_volume(cd_r, self.volume.cd_r);
+        let sample_l = (i32::from(sample_l) + i32::from(cd_l)).clamp_to_i16();
+        let sample_r = (i32::from(sample_r) + i32::from(cd_r)).clamp_to_i16();
 
         // Convert from i16 to f64
         let sample_l = f64::from(sample_l) / -f64::from(i16::MIN);
@@ -504,4 +515,21 @@ fn multiply_volume(sample: i16, volume: i16) -> i16 {
 
 fn multiply_volume_i32(sample: i32, volume: i32) -> i32 {
     (sample * volume) >> 15
+}
+
+// [ cd_l_to_spu_l  cd_r_to_spu_l ] * [ cd_l ] = [ cd_in_l ]
+// [ cd_l_to_spu_r  cd_r_to_spu_r ] * [ cd_r ]   [ cd_in_r ]
+fn apply_volume_matrix(cd_sample: (i16, i16), matrix: [[u8; 2]; 2]) -> (i16, i16) {
+    // TODO maybe not correct saturation behavior?
+    let cd_l = i32::from(cd_sample.0);
+    let cd_r = i32::from(cd_sample.1);
+
+    let matrix = matrix.map(|row| row.map(i32::from));
+
+    let cd_in_l = ((matrix[0][0] * cd_l) >> 7) + ((matrix[0][1] * cd_r) >> 7);
+    let cd_in_r = ((matrix[1][0] * cd_l) >> 7) + ((matrix[1][1] * cd_r) >> 7);
+
+    let cd_in_l = cd_in_l.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+    let cd_in_r = cd_in_r.clamp(i16::MIN.into(), i16::MAX.into()) as i16;
+    (cd_in_l, cd_in_r)
 }

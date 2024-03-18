@@ -36,11 +36,21 @@ impl CdController {
     pub(super) fn status_code(&self, errors: ErrorFlags) -> u8 {
         let motor_on = !self.drive_state.is_stopped_or_spinning_up();
         let seeking = matches!(self.drive_state, DriveState::Seeking { .. });
-        let reading = matches!(self.drive_state, DriveState::Reading { .. });
+        let reading = matches!(
+            self.drive_state,
+            DriveState::PreparingToRead { .. } | DriveState::Reading { .. }
+        );
+        let playing = matches!(
+            self.drive_state,
+            DriveState::PreparingToPlay { .. } | DriveState::Playing { .. }
+        );
 
         // TODO Bit 4 (shell open)
-        // TODO Bits 7 (Playing)
-        errors.0 | (u8::from(motor_on) << 1) | (u8::from(reading) << 5) | (u8::from(seeking) << 6)
+        errors.0
+            | (u8::from(motor_on) << 1)
+            | (u8::from(reading) << 5)
+            | (u8::from(seeking) << 6)
+            | (u8::from(playing) << 7)
     }
 
     // $01: GetStat() -> INT3(stat)

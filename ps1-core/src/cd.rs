@@ -8,6 +8,7 @@ mod read;
 mod seek;
 mod status;
 
+use crate::cd::audio::PlayState;
 use crate::cd::control::DriveMode;
 use crate::cd::fifo::{DataFifo, ParameterFifo};
 use crate::interrupts::{InterruptRegisters, InterruptType};
@@ -90,6 +91,7 @@ enum Command {
     GetTN,
     Init,
     Pause,
+    Play,
     ReadN,
     ReadS,
     ReadToc,
@@ -118,6 +120,7 @@ impl Default for CommandState {
 enum SeekNextState {
     Pause,
     Read,
+    Play,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
@@ -133,6 +136,8 @@ enum DriveState {
     Seeking { destination: CdTime, cycles_remaining: u32, next: SeekNextState },
     PreparingToRead { time: CdTime, cycles_remaining: u32 },
     Reading { time: CdTime, int1_generated: bool, cycles_till_next: u32 },
+    PreparingToPlay { time: CdTime, cycles_remaining: u32 },
+    Playing(PlayState),
     Paused(CdTime),
 }
 
@@ -149,6 +154,8 @@ impl DriveState {
             Self::Paused(time)
             | Self::PreparingToRead { time, .. }
             | Self::Reading { time, .. }
+            | Self::PreparingToPlay { time, .. }
+            | Self::Playing(PlayState { time, .. })
             | Self::Seeking { destination: time, .. } => time,
         }
     }
@@ -175,6 +182,8 @@ pub struct CdController {
     drive_state: DriveState,
     drive_mode: DriveMode,
     seek_location: Option<CdTime>,
+    current_audio_sample: (i16, i16),
+    cd_to_spu_volume: [[u8; 2]; 2],
 }
 
 impl CdController {
@@ -191,11 +200,15 @@ impl CdController {
             drive_state: DriveState::default(),
             drive_mode: DriveMode::new(),
             seek_location: None,
+            current_audio_sample: (0, 0),
+            cd_to_spu_volume: [[0; 2]; 2],
         }
     }
 
     // 44100 Hz clock
     pub fn clock(&mut self, interrupt_registers: &mut InterruptRegisters) -> CdRomResult<()> {
+        self.current_audio_sample = (0, 0);
+
         self.advance_drive_state()?;
         self.advance_command_state();
 
@@ -238,22 +251,6 @@ impl CdController {
             DriveState::SpinningUp { cycles_remaining, next } => {
                 DriveState::SpinningUp { cycles_remaining: cycles_remaining - 1, next }
             }
-            DriveState::PreparingToRead { time, cycles_remaining: 1 } => {
-                self.read_next_sector(time)?
-            }
-            DriveState::PreparingToRead { time, cycles_remaining } => {
-                DriveState::PreparingToRead { time, cycles_remaining: cycles_remaining - 1 }
-            }
-            DriveState::Reading { time, cycles_till_next: 1, .. } => self.read_next_sector(time)?,
-            DriveState::Reading { time, mut int1_generated, cycles_till_next } => {
-                if !int1_generated && !self.interrupts.pending() {
-                    int1!(self, [stat!(self)]);
-                    self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
-                    int1_generated = true;
-                }
-
-                DriveState::Reading { time, int1_generated, cycles_till_next: cycles_till_next - 1 }
-            }
             DriveState::Seeking {
                 destination,
                 cycles_remaining: 1,
@@ -271,9 +268,39 @@ impl CdController {
                     cycles_remaining: 5 * self.drive_mode.speed.cycles_between_sectors(),
                 }
             }
+            DriveState::Seeking { destination, cycles_remaining: 1, next: SeekNextState::Play } => {
+                log::debug!("Drive finished seeking to {destination}; preparing to read");
+                DriveState::PreparingToPlay {
+                    time: destination,
+                    cycles_remaining: 5 * self.drive_mode.speed.cycles_between_sectors(),
+                }
+            }
             DriveState::Seeking { destination, cycles_remaining, next } => {
                 DriveState::Seeking { destination, cycles_remaining: cycles_remaining - 1, next }
             }
+            DriveState::PreparingToRead { time, cycles_remaining: 1 } => {
+                self.read_data_sector(time)?
+            }
+            DriveState::PreparingToRead { time, cycles_remaining } => {
+                DriveState::PreparingToRead { time, cycles_remaining: cycles_remaining - 1 }
+            }
+            DriveState::Reading { time, cycles_till_next: 1, .. } => self.read_data_sector(time)?,
+            DriveState::Reading { time, mut int1_generated, cycles_till_next } => {
+                if !int1_generated && !self.interrupts.pending() {
+                    int1!(self, [stat!(self)]);
+                    self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
+                    int1_generated = true;
+                }
+
+                DriveState::Reading { time, int1_generated, cycles_till_next: cycles_till_next - 1 }
+            }
+            DriveState::PreparingToPlay { time, cycles_remaining: 1 } => {
+                self.read_audio_sector(PlayState::new(time))?
+            }
+            DriveState::PreparingToPlay { time, cycles_remaining } => {
+                DriveState::PreparingToPlay { time, cycles_remaining: cycles_remaining - 1 }
+            }
+            DriveState::Playing(state) => self.progress_play_state(state)?,
             DriveState::Paused(time) => DriveState::Paused(time),
         };
 
@@ -322,6 +349,7 @@ impl CdController {
             Command::GetTN => self.execute_get_tn(),
             Command::Init => self.execute_init(),
             Command::Pause => self.execute_pause(),
+            Command::Play => self.execute_play(),
             Command::ReadN | Command::ReadS => self.execute_read(),
             Command::ReadToc => self.execute_read_toc(),
             Command::SeekL | Command::SeekP => self.execute_seek(),
@@ -408,7 +436,8 @@ impl CdController {
             }
             (1, 3) => {
                 // $1F801801.3 W: Right CD to Right SPU volume
-                log::warn!("Unimplemented R CD to R SPU write: {value:02X}");
+                log::debug!("R CD to R SPU volume: {value:02X}");
+                self.cd_to_spu_volume[1][1] = value;
             }
             (2, 0) => {
                 // $1F801802.0 W: Parameter FIFO
@@ -420,11 +449,13 @@ impl CdController {
             }
             (2, 2) => {
                 // $1F801802.2 W: Left CD to Left SPU volume
-                log::warn!("Unimplemented L CD to L SPU write: {value:02X}");
+                log::debug!("L CD to L SPU volume: {value:02X}");
+                self.cd_to_spu_volume[0][0] = value;
             }
             (2, 3) => {
                 // $1F801802.3 W: Right CD to Left SPU volume
-                log::warn!("Unimplemented R CD to L SPU write: {value:02X}");
+                log::debug!("R CD to L SPU volume: {value:02X}");
+                self.cd_to_spu_volume[0][1] = value;
             }
             (3, 0) => {
                 // $1F801803.0 W: Request register
@@ -436,7 +467,8 @@ impl CdController {
             }
             (3, 2) => {
                 // $1F801803.2 W: Left CD to Right SPU volume
-                log::warn!("Unimplemented L CD to R SPU write: {value:02X}");
+                log::debug!("L CD to R SPU volume: {value:02X}");
+                self.cd_to_spu_volume[1][0] = value;
             }
             (3, 3) => {
                 // $1F801803.3 W: Apply audio volume changes
@@ -480,6 +512,7 @@ impl CdController {
         let (command, cycles) = match command_byte {
             0x01 => (Command::GetStat, std_receive_cycles),
             0x02 => (Command::SetLoc, std_receive_cycles),
+            0x03 => (Command::Play, std_receive_cycles),
             0x06 => (Command::ReadN, std_receive_cycles),
             0x08 => (Command::Stop, std_receive_cycles),
             0x09 => (Command::Pause, std_receive_cycles),
@@ -522,6 +555,35 @@ impl CdController {
         log::debug!("Request register write: {value:02X}");
         log::debug!("  SMEN: {}", value.bit(5));
         log::debug!("  BFRD: {}", value.bit(7));
+    }
+
+    fn read_sector_atime(&mut self, time: CdTime) -> CdRomResult<()> {
+        let Some(disc) = &mut self.disc else {
+            // TODO separate state for no disc?
+            todo!("Read sector with no disc in the drive");
+        };
+
+        let Some(track) = disc.cue().find_track_by_time(time) else {
+            // TODO INT4+pause at disc end
+            todo!("Read to end of disc");
+        };
+
+        let track_number = track.number;
+        let relative_time = time - track.start_time;
+
+        log::debug!("Reading sector at atime {time}, track {track_number} time {relative_time}");
+
+        disc.read_sector(track_number, relative_time, self.sector_buffer.as_mut())?;
+
+        Ok(())
+    }
+
+    pub fn current_audio_sample(&self) -> (i16, i16) {
+        self.current_audio_sample
+    }
+
+    pub fn spu_volume_matrix(&self) -> [[u8; 2]; 2] {
+        self.cd_to_spu_volume
     }
 
     pub fn take_disc(&mut self) -> Option<CdRom> {

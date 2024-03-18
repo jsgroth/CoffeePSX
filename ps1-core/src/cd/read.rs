@@ -27,24 +27,8 @@ impl CdController {
         CommandState::Idle
     }
 
-    pub(super) fn read_next_sector(&mut self, time: CdTime) -> CdRomResult<DriveState> {
-        let Some(disc) = &mut self.disc else {
-            // TODO separate state for no disc?
-            return Ok(DriveState::Stopped);
-        };
-
-        let Some(track) = disc.cue().find_track_by_time(time) else {
-            // TODO separate state for disc end
-            log::debug!("Read to end of disc");
-            return Ok(DriveState::Stopped);
-        };
-
-        let track_number = track.number;
-        let relative_time = time - track.start_time;
-
-        log::debug!("Reading sector at atime {time}, track {track_number} time {relative_time}");
-
-        disc.read_sector(track_number, relative_time, self.sector_buffer.as_mut())?;
+    pub(super) fn read_data_sector(&mut self, time: CdTime) -> CdRomResult<DriveState> {
+        self.read_sector_atime(time)?;
 
         log::debug!("  Data sector header: {:02X?}", &self.sector_buffer[12..16]);
 

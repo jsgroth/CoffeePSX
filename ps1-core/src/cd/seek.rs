@@ -1,4 +1,5 @@
 use crate::cd;
+use crate::cd::audio::PlayState;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::{status, CdController, CommandState, DriveState, SeekNextState, SpinUpNextState};
@@ -77,6 +78,8 @@ pub(super) fn determine_drive_state(
         DriveState::Seeking { destination: time, .. }
         | DriveState::PreparingToRead { time, .. }
         | DriveState::Reading { time, .. }
+        | DriveState::PreparingToPlay { time, .. }
+        | DriveState::Playing(PlayState { time, .. })
         | DriveState::Paused(time) => {
             let seek_cycles = cmp::max(MIN_SEEK_CYCLES, estimate_seek_cycles(time, destination));
             DriveState::Seeking { destination, cycles_remaining: seek_cycles, next }

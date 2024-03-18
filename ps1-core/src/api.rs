@@ -247,8 +247,8 @@ impl Ps1Emulator {
                     self.audio_buffer.clear();
                 }
                 SchedulerEventType::SpuAndCdClock => {
-                    self.audio_buffer.push(self.spu.clock());
                     self.cd_controller.clock(&mut self.interrupt_registers)?;
+                    self.audio_buffer.push(self.spu.clock(&self.cd_controller));
 
                     self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(
                         event.cpu_cycles + SPU_CLOCK_DIVIDER,

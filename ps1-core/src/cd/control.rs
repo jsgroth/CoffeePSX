@@ -157,12 +157,8 @@ impl CdController {
     // Stops the drive motor
     pub(super) fn execute_stop(&mut self) -> CommandState {
         // Pause drive before generating INT3 stat
-        // TODO also check playing states
-        match self.drive_state {
-            DriveState::PreparingToRead { time, .. } | DriveState::Reading { time, .. } => {
-                self.drive_state = DriveState::Paused(time);
-            }
-            _ => {}
+        if !self.drive_state.is_stopped_or_spinning_up() {
+            self.drive_state = DriveState::Paused(self.drive_state.current_time());
         }
 
         int3!(self, [stat!(self)]);
