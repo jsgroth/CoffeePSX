@@ -420,6 +420,10 @@ impl CdController {
                 // $1F801801.0 W: Command register
                 self.write_command(value);
             }
+            (1, 3) => {
+                // $1F801801.3 W: Right CD to Right SPU volume
+                log::warn!("Unimplemented R CD to R SPU write: {value:02X}");
+            }
             (2, 0) => {
                 // $1F801802.0 W: Parameter FIFO
                 self.write_parameter_fifo(value);
@@ -428,6 +432,14 @@ impl CdController {
                 // $1F801802.1 W: Interrupts enabled register
                 self.interrupts.write_enabled(value);
             }
+            (2, 2) => {
+                // $1F801802.2 W: Left CD to Left SPU volume
+                log::warn!("Unimplemented L CD to L SPU write: {value:02X}");
+            }
+            (2, 3) => {
+                // $1F801802.3 W: Right CD to Left SPU volume
+                log::warn!("Unimplemented R CD to L SPU write: {value:02X}");
+            }
             (3, 0) => {
                 // $1F801803.0 W: Request register
                 self.write_request_register(value);
@@ -435,6 +447,14 @@ impl CdController {
             (3, 1) => {
                 // $1F801803.1 W: Interrupt flags register
                 self.interrupts.write_flags(value, &mut self.parameter_fifo);
+            }
+            (3, 2) => {
+                // $1F801803.2 W: Left CD to Right SPU volume
+                log::warn!("Unimplemented L CD to R SPU write: {value:02X}");
+            }
+            (3, 3) => {
+                // $1F801803.3 W: Apply audio volume changes
+                log::warn!("Unimplemented 'apply audio volume' write: {value:02X}");
             }
             _ => todo!("CD-ROM write {address:08X}.{} {value:02X}", self.index),
         }
