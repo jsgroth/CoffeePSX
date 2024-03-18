@@ -45,9 +45,19 @@ macro_rules! int5 {
     }
 }
 
+macro_rules! stat {
+    ($self:expr, $error_flags:ident) => {
+        $self.status_code(crate::cd::status::ErrorFlags::$error_flags)
+    };
+    ($self:expr) => {
+        stat!($self, NONE)
+    };
+}
+
 pub(super) use generate_response;
 pub(super) use int1;
 pub(super) use int2;
 pub(super) use int3;
 pub(super) use int5;
 pub(super) use push_fifo;
+pub(super) use stat;

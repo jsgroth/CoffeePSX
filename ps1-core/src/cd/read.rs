@@ -1,6 +1,5 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::status::ErrorFlags;
 use crate::cd::{seek, CdController, Command, CommandState, DriveState};
 use cdrom::cdtime::CdTime;
 use cdrom::CdRomResult;
@@ -14,7 +13,7 @@ impl CdController {
     // commands it to pause or stop.
     // ReadN reads with retry while ReadS reads without retry. These are emulated the same way.
     pub(super) fn execute_read(&mut self) -> CommandState {
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
 
         if let Some(state) = seek::check_if_spin_up_needed(Command::ReadN, &mut self.drive_state) {
             return state;

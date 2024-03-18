@@ -9,7 +9,6 @@ mod seek;
 mod status;
 
 use crate::cd::fifo::{DataFifo, ParameterFifo};
-use crate::cd::status::ErrorFlags;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};
@@ -240,7 +239,7 @@ impl CdController {
             DriveState::Reading { time, cycles_till_next: 1, .. } => self.read_next_sector(time)?,
             DriveState::Reading { time, mut int1_generated, cycles_till_next } => {
                 if !int1_generated && !self.interrupts.pending() {
-                    int1!(self, [self.status_code(ErrorFlags::NONE)]);
+                    int1!(self, [stat!(self)]);
                     self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
                     int1_generated = true;
                 }
@@ -365,7 +364,7 @@ impl CdController {
     // Only sub-function $20 (get CD controller ROM version) is implemented
     fn execute_test(&mut self) -> CommandState {
         if self.parameter_fifo.len() != 1 {
-            int5!(self, [self.status_code(ErrorFlags::ERROR), status::INVALID_COMMAND]);
+            int5!(self, [stat!(self, ERROR), status::INVALID_COMMAND]);
             return CommandState::Idle;
         }
 

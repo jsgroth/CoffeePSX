@@ -1,7 +1,6 @@
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::status::ErrorFlags;
 use crate::cd::{status, CdController, Command, CommandState, DriveState};
 use cdrom::cdtime::CdTime;
 use std::cmp;
@@ -14,7 +13,7 @@ impl CdController {
     // Sets seek location to the specified absolute time
     pub(super) fn execute_set_loc(&mut self) -> CommandState {
         if self.parameter_fifo.len() < 3 {
-            int5!(self, [self.status_code(ErrorFlags::ERROR), status::WRONG_NUM_PARAMETERS]);
+            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
@@ -25,12 +24,12 @@ impl CdController {
         match CdTime::new_checked(minutes, seconds, frames) {
             Some(cd_time) => {
                 self.seek_location = cd_time;
-                int3!(self, [self.status_code(ErrorFlags::NONE)]);
+                int3!(self, [stat!(self)]);
 
                 log::debug!("Set seek location to {cd_time}");
             }
             None => {
-                int5!(self, [self.status_code(ErrorFlags::ERROR), status::INVALID_COMMAND]);
+                int5!(self, [stat!(self, ERROR), status::INVALID_COMMAND]);
 
                 log::warn!("Invalid seek location: {minutes:02}:{seconds:02}:{frames:02}");
             }
@@ -46,7 +45,7 @@ impl CdController {
     // SeekP seeks in audio mode (uses Subchannel Q for positioning)
     // TODO do SeekL and SeekP need to behave differently?
     pub(super) fn execute_seek(&mut self, command: Command) -> CommandState {
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
 
         if let Some(state) = check_if_spin_up_needed(command, &mut self.drive_state) {
             return state;
@@ -67,7 +66,7 @@ impl CdController {
     }
 
     pub(super) fn seek_second_response(&mut self) -> CommandState {
-        int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        int2!(self, [stat!(self)]);
         CommandState::Idle
     }
 }

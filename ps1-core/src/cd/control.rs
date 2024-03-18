@@ -1,6 +1,5 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::status::ErrorFlags;
 use crate::cd::{seek, status, CdController, Command, CommandState, DriveSpeed, DriveState};
 use crate::num::U8Ext;
 use cdrom::cdtime::CdTime;
@@ -12,7 +11,7 @@ impl CdController {
     // $0A: Init() -> INT3(stat), INT2(stat)
     // Resets mode, aborts any in-progress commands, and activates the drive motor if it is stopped
     pub(super) fn execute_init(&mut self) -> CommandState {
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
 
         self.drive_speed = DriveSpeed::Normal;
 
@@ -35,7 +34,7 @@ impl CdController {
     }
 
     pub(super) fn init_second_response(&mut self) -> CommandState {
-        int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        int2!(self, [stat!(self)]);
         CommandState::Idle
     }
 
@@ -43,7 +42,7 @@ impl CdController {
     // Configures drive mode
     pub(super) fn execute_set_mode(&mut self) -> CommandState {
         if self.parameter_fifo.len() < 1 {
-            int5!(self, [self.status_code(ErrorFlags::ERROR), status::WRONG_NUM_PARAMETERS]);
+            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
@@ -80,7 +79,7 @@ impl CdController {
             todo!("CD-DA mode enabled via SetMode");
         }
 
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
         CommandState::Idle
     }
 
@@ -89,7 +88,7 @@ impl CdController {
     // staying in roughly the same position
     pub(super) fn execute_pause(&mut self) -> CommandState {
         // Generate INT3 before pausing the drive
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
 
         // TODO check if motor is stopped
 
@@ -105,7 +104,7 @@ impl CdController {
     }
 
     pub(super) fn pause_second_response(&mut self) -> CommandState {
-        int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        int2!(self, [stat!(self)]);
         CommandState::Idle
     }
 
@@ -121,7 +120,7 @@ impl CdController {
             _ => {}
         }
 
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
 
         CommandState::GeneratingSecondResponse {
             command: Command::Stop,
@@ -131,7 +130,7 @@ impl CdController {
 
     pub(super) fn stop_second_response(&mut self) -> CommandState {
         self.drive_state = DriveState::Stopped;
-        int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        int2!(self, [stat!(self)]);
         CommandState::Idle
     }
 }

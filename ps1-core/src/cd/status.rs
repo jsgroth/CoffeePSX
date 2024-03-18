@@ -47,7 +47,7 @@ impl CdController {
     // $01: GetStat() -> INT3(stat)
     // Simply returns current status code
     pub(super) fn execute_get_stat(&mut self) -> CommandState {
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
         CommandState::Idle
     }
 
@@ -57,7 +57,7 @@ impl CdController {
     pub(super) fn execute_get_id(&mut self) -> CommandState {
         // TODO return error response if drive is open, spinning up, or "seek busy"
 
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
         CommandState::GeneratingSecondResponse {
             command: Command::GetId,
             cycles_remaining: GET_ID_SECOND_CYCLES,
@@ -68,7 +68,7 @@ impl CdController {
         match &self.disc {
             // TODO don't hardcode region
             Some(disc) => {
-                let status = self.status_code(ErrorFlags::NONE);
+                let status = stat!(self);
                 let mode_byte = match disc.cue().track(1).mode {
                     TrackMode::Mode2 => 0x20,
                     TrackMode::Mode1 | TrackMode::Audio => 0x00,
@@ -88,7 +88,7 @@ impl CdController {
     // $1E: ReadTOC() -> INT3(stat), INT2(stat)
     // Forces the drive to re-read the TOC
     pub(super) fn execute_read_toc(&mut self) -> CommandState {
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
 
         CommandState::GeneratingSecondResponse {
             command: Command::ReadToc,
@@ -97,7 +97,7 @@ impl CdController {
     }
 
     pub(super) fn read_toc_second_response(&mut self) -> CommandState {
-        int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        int2!(self, [stat!(self)]);
         CommandState::Idle
     }
 
@@ -112,7 +112,7 @@ impl CdController {
             }
         };
 
-        int3!(self, [self.status_code(ErrorFlags::NONE), first, last]);
+        int3!(self, [stat!(self), first, last]);
 
         CommandState::Idle
     }
@@ -121,7 +121,7 @@ impl CdController {
     // Return the start time for the specified track
     pub(super) fn execute_get_td(&mut self) -> CommandState {
         if self.parameter_fifo.len() < 1 {
-            int5!(self, [self.status_code(ErrorFlags::ERROR), WRONG_NUM_PARAMETERS]);
+            int5!(self, [stat!(self, ERROR), WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
@@ -139,14 +139,14 @@ impl CdController {
         }
 
         if track > last_track {
-            int5!(self, [self.status_code(ErrorFlags::ERROR), INVALID_PARAMETER]);
+            int5!(self, [stat!(self, ERROR), INVALID_PARAMETER]);
             return CommandState::Idle;
         }
 
         let start_time = disc.cue().track(track).effective_start_time();
         let minutes = cd::binary_to_bcd(start_time.minutes);
         let seconds = cd::binary_to_bcd(start_time.seconds);
-        int3!(self, [self.status_code(ErrorFlags::NONE), minutes, seconds]);
+        int3!(self, [stat!(self), minutes, seconds]);
 
         CommandState::Idle
     }

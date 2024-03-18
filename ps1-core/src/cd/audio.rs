@@ -1,6 +1,5 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::status::ErrorFlags;
 use crate::cd::{CdController, CommandState};
 
 impl CdController {
@@ -9,7 +8,7 @@ impl CdController {
     pub(super) fn execute_demute(&mut self) -> CommandState {
         log::warn!("Demute command not yet implemented");
 
-        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+        int3!(self, [stat!(self)]);
 
         CommandState::Idle
     }
