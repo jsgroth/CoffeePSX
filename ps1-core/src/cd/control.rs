@@ -1,9 +1,9 @@
+use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{seek, status, CdController, Command, CommandState, DriveState};
+use crate::cd::{status, CdController, Command, CommandState, DriveState, SpinUpNextState};
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};
-use cdrom::cdtime::CdTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum DriveSpeed {
@@ -75,24 +75,32 @@ impl CdController {
     // $0A: Init() -> INT3(stat), INT2(stat)
     // Resets mode, aborts any in-progress commands, and activates the drive motor if it is stopped
     pub(super) fn execute_init(&mut self) -> CommandState {
-        int3!(self, [stat!(self)]);
-
         // TODO should set mode to $20 (everything 0 except 2340-byte sectors)
         self.drive_mode = DriveMode::from(0);
 
-        if let Some(state) = seek::check_if_spin_up_needed(Command::Init, &mut self.drive_state) {
-            return state;
+        if !self.drive_state.is_stopped_or_spinning_up() {
+            self.drive_state = DriveState::Paused(self.drive_state.current_time());
         }
 
-        self.init_drive_spun_up()
-    }
+        int3!(self, [stat!(self)]);
 
-    pub(super) fn init_drive_spun_up(&mut self) -> CommandState {
-        self.drive_state = DriveState::Paused(CdTime::ZERO);
-
-        CommandState::GeneratingSecondResponse {
-            command: Command::Init,
-            cycles_remaining: status::GET_ID_SECOND_CYCLES,
+        match self.drive_state {
+            DriveState::Stopped => {
+                self.drive_state = DriveState::SpinningUp {
+                    cycles_remaining: cd::SPIN_UP_CYCLES,
+                    next: SpinUpNextState::Pause,
+                };
+                CommandState::Idle
+            }
+            DriveState::SpinningUp { cycles_remaining, .. } => {
+                self.drive_state =
+                    DriveState::SpinningUp { cycles_remaining, next: SpinUpNextState::Pause };
+                CommandState::Idle
+            }
+            _ => CommandState::GeneratingSecondResponse {
+                command: Command::Init,
+                cycles_remaining: status::GET_ID_SECOND_CYCLES,
+            },
         }
     }
 

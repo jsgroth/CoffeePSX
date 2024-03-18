@@ -34,8 +34,7 @@ impl BitOr for ErrorFlags {
 
 impl CdController {
     pub(super) fn status_code(&self, errors: ErrorFlags) -> u8 {
-        let motor_on =
-            !matches!(self.drive_state, DriveState::Stopped | DriveState::SpinningUp { .. });
+        let motor_on = !self.drive_state.is_stopped_or_spinning_up();
         let seeking = matches!(self.drive_state, DriveState::Seeking { .. });
         let reading = matches!(self.drive_state, DriveState::Reading { .. });
 

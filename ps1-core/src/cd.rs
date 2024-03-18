@@ -18,7 +18,7 @@ use cdrom::reader::CdRom;
 use cdrom::CdRomResult;
 #[allow(clippy::wildcard_imports)]
 use macros::*;
-use std::array;
+use std::{array, cmp};
 
 // Roughly 23,796 CPU cycles
 const RECEIVE_COMMAND_CYCLES_STOPPED: u32 = 31;
@@ -106,8 +106,6 @@ enum CommandState {
     Idle,
     ReceivingCommand { command: Command, cycles_remaining: u32 },
     GeneratingSecondResponse { command: Command, cycles_remaining: u32 },
-    WaitingForSpinUp(Command),
-    WaitingForSeek(Command),
 }
 
 impl Default for CommandState {
@@ -117,13 +115,25 @@ impl Default for CommandState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+enum SeekNextState {
+    Pause,
+    Read,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+enum SpinUpNextState {
+    Pause,
+    Seek(CdTime, SeekNextState),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 enum DriveState {
     Stopped,
-    SpinningUp { cycles_remaining: u32 },
+    SpinningUp { cycles_remaining: u32, next: SpinUpNextState },
+    Seeking { destination: CdTime, cycles_remaining: u32, next: SeekNextState },
     PreparingToRead { time: CdTime, cycles_remaining: u32 },
     Reading { time: CdTime, int1_generated: bool, cycles_till_next: u32 },
     Paused(CdTime),
-    Seeking { destination: CdTime, cycles_remaining: u32 },
 }
 
 impl Default for DriveState {
@@ -141,6 +151,10 @@ impl DriveState {
             | Self::Reading { time, .. }
             | Self::Seeking { destination: time, .. } => time,
         }
+    }
+
+    fn is_stopped_or_spinning_up(self) -> bool {
+        matches!(self, Self::Stopped | Self::SpinningUp { .. })
     }
 }
 
@@ -200,12 +214,29 @@ impl CdController {
     fn advance_drive_state(&mut self) -> CdRomResult<()> {
         self.drive_state = match self.drive_state {
             DriveState::Stopped => DriveState::Stopped,
-            DriveState::SpinningUp { cycles_remaining: 1 } => {
-                log::debug!("Drive finished spinning up");
+            DriveState::SpinningUp { cycles_remaining: 1, next: SpinUpNextState::Pause } => {
+                log::debug!(
+                    "Drive finished spinning up; generating INT2 and pausing at start of disc"
+                );
+                // TODO wait to generate INT2?
+                int2!(self, [stat!(self)]);
                 DriveState::Paused(CdTime::ZERO)
             }
-            DriveState::SpinningUp { cycles_remaining } => {
-                DriveState::SpinningUp { cycles_remaining: cycles_remaining - 1 }
+            DriveState::SpinningUp {
+                cycles_remaining: 1,
+                next: SpinUpNextState::Seek(time, seek_next),
+            } => {
+                log::debug!("Drive finished spinning up, now seeking to {time}");
+                let seek_cycles =
+                    cmp::max(seek::MIN_SEEK_CYCLES, seek::estimate_seek_cycles(CdTime::ZERO, time));
+                DriveState::Seeking {
+                    destination: time,
+                    cycles_remaining: seek_cycles,
+                    next: seek_next,
+                }
+            }
+            DriveState::SpinningUp { cycles_remaining, next } => {
+                DriveState::SpinningUp { cycles_remaining: cycles_remaining - 1, next }
             }
             DriveState::PreparingToRead { time, cycles_remaining: 1 } => {
                 self.read_next_sector(time)?
@@ -223,12 +254,25 @@ impl CdController {
 
                 DriveState::Reading { time, int1_generated, cycles_till_next: cycles_till_next - 1 }
             }
-            DriveState::Seeking { destination, cycles_remaining: 1 } => {
-                log::debug!("Drive finished seeking to {destination}");
+            DriveState::Seeking {
+                destination,
+                cycles_remaining: 1,
+                next: SeekNextState::Pause,
+            } => {
+                log::debug!("Drive finished seeking to {destination}; generating INT2 and pausing");
+                // TODO wait to generate INT2?
+                int2!(self, [stat!(self)]);
                 DriveState::Paused(destination)
             }
-            DriveState::Seeking { destination, cycles_remaining } => {
-                DriveState::Seeking { destination, cycles_remaining: cycles_remaining - 1 }
+            DriveState::Seeking { destination, cycles_remaining: 1, next: SeekNextState::Read } => {
+                log::debug!("Drive finished seeking to {destination}; preparing to read");
+                DriveState::PreparingToRead {
+                    time: destination,
+                    cycles_remaining: 5 * self.drive_mode.speed.cycles_between_sectors(),
+                }
+            }
+            DriveState::Seeking { destination, cycles_remaining, next } => {
+                DriveState::Seeking { destination, cycles_remaining: cycles_remaining - 1, next }
             }
             DriveState::Paused(time) => DriveState::Paused(time),
         };
@@ -264,35 +308,6 @@ impl CdController {
                     cycles_remaining: cycles_remaining - 1,
                 }
             }
-            CommandState::WaitingForSpinUp(command) => match self.drive_state {
-                DriveState::Stopped => {
-                    panic!("Drive is stopped while command {command:?} is waiting for spin-up")
-                }
-                DriveState::SpinningUp { .. } => CommandState::WaitingForSpinUp(command),
-                DriveState::PreparingToRead { .. }
-                | DriveState::Reading { .. }
-                | DriveState::Paused(_)
-                | DriveState::Seeking { .. } => match command {
-                    Command::Init => self.init_drive_spun_up(),
-                    Command::ReadN | Command::ReadS => self.read_drive_spun_up(),
-                    Command::SeekL | Command::SeekP => self.seek_drive_spun_up(command),
-                    _ => panic!("Unexpected command waiting for drive spin-up: {command:?}"),
-                },
-            },
-            CommandState::WaitingForSeek(command) => match self.drive_state {
-                DriveState::Stopped | DriveState::SpinningUp { .. } => panic!(
-                    "Invalid drive state while command is waiting for seek: {:?}",
-                    self.drive_state
-                ),
-                DriveState::Seeking { .. } => CommandState::WaitingForSeek(command),
-                DriveState::PreparingToRead { .. }
-                | DriveState::Reading { .. }
-                | DriveState::Paused(_) => match command {
-                    Command::ReadN | Command::ReadS => self.read_seek_complete(),
-                    Command::SeekL | Command::SeekP => self.seek_second_response(),
-                    _ => panic!("Unexpected command waiting for seek: {command:?}"),
-                },
-            },
         };
     }
 
@@ -309,7 +324,7 @@ impl CdController {
             Command::Pause => self.execute_pause(),
             Command::ReadN | Command::ReadS => self.execute_read(),
             Command::ReadToc => self.execute_read_toc(),
-            Command::SeekL | Command::SeekP => self.execute_seek(command),
+            Command::SeekL | Command::SeekP => self.execute_seek(),
             Command::SetLoc => self.execute_set_loc(),
             Command::SetMode => self.execute_set_mode(),
             Command::Stop => self.execute_stop(),
@@ -331,7 +346,6 @@ impl CdController {
             Command::Init => self.init_second_response(),
             Command::Pause => self.pause_second_response(),
             Command::ReadToc => self.read_toc_second_response(),
-            Command::SeekL | Command::SeekP => self.seek_second_response(),
             Command::Stop => self.stop_second_response(),
             _ => panic!("Invalid state, command {command:?} should not send a second response"),
         }

@@ -1,12 +1,12 @@
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{status, CdController, Command, CommandState, DriveState};
+use crate::cd::{status, CdController, CommandState, DriveState, SeekNextState, SpinUpNextState};
 use cdrom::cdtime::CdTime;
 use std::cmp;
 
 // The BIOS does not like if a seek finishes too quickly
-const MIN_SEEK_CYCLES: u32 = 24;
+pub const MIN_SEEK_CYCLES: u32 = 24;
 
 impl CdController {
     // $02: SetLoc(amm, ass, asect) -> INT3(stat)
@@ -44,58 +44,44 @@ impl CdController {
     // SeekL seeks in data mode (uses data sector headers for positioning)
     // SeekP seeks in audio mode (uses Subchannel Q for positioning)
     // TODO do SeekL and SeekP need to behave differently?
-    pub(super) fn execute_seek(&mut self, command: Command) -> CommandState {
+    pub(super) fn execute_seek(&mut self) -> CommandState {
         int3!(self, [stat!(self)]);
 
-        if let Some(state) = check_if_spin_up_needed(command, &mut self.drive_state) {
-            return state;
-        }
-
-        self.seek_drive_spun_up(command)
-    }
-
-    pub(super) fn seek_drive_spun_up(&mut self, command: Command) -> CommandState {
         let seek_location = self.seek_location.take().unwrap_or(self.drive_state.current_time());
+        self.drive_state =
+            determine_drive_state(self.drive_state, seek_location, SeekNextState::Pause);
 
-        let (drive_state, command_state) =
-            seek_to_location(command, self.drive_state.current_time(), seek_location);
-        self.drive_state = drive_state;
-        command_state
-    }
+        log::debug!(
+            "Executed Seek command to {seek_location}, drive state is {:?}",
+            self.drive_state
+        );
 
-    pub(super) fn seek_second_response(&mut self) -> CommandState {
-        int2!(self, [stat!(self)]);
         CommandState::Idle
     }
 }
 
-pub(super) fn check_if_spin_up_needed(
-    command: Command,
-    drive_state: &mut DriveState,
-) -> Option<CommandState> {
-    match *drive_state {
-        DriveState::Stopped => {
-            *drive_state = DriveState::SpinningUp { cycles_remaining: cd::SPIN_UP_CYCLES };
-            Some(CommandState::WaitingForSpinUp(command))
+pub(super) fn determine_drive_state(
+    drive_state: DriveState,
+    destination: CdTime,
+    next: SeekNextState,
+) -> DriveState {
+    match drive_state {
+        DriveState::Stopped => DriveState::SpinningUp {
+            cycles_remaining: cd::SPIN_UP_CYCLES,
+            next: SpinUpNextState::Seek(destination, next),
+        },
+        DriveState::SpinningUp { cycles_remaining, .. } => DriveState::SpinningUp {
+            cycles_remaining,
+            next: SpinUpNextState::Seek(destination, next),
+        },
+        DriveState::Seeking { destination: time, .. }
+        | DriveState::PreparingToRead { time, .. }
+        | DriveState::Reading { time, .. }
+        | DriveState::Paused(time) => {
+            let seek_cycles = cmp::max(MIN_SEEK_CYCLES, estimate_seek_cycles(time, destination));
+            DriveState::Seeking { destination, cycles_remaining: seek_cycles, next }
         }
-        DriveState::SpinningUp { .. } => Some(CommandState::WaitingForSpinUp(command)),
-        _ => None,
     }
-}
-
-pub(super) fn seek_to_location(
-    command: Command,
-    current_time: CdTime,
-    seek_location: CdTime,
-) -> (DriveState, CommandState) {
-    let seek_cycles = estimate_seek_cycles(current_time, seek_location);
-    let drive_state = DriveState::Seeking {
-        destination: seek_location,
-        cycles_remaining: cmp::max(MIN_SEEK_CYCLES, seek_cycles),
-    };
-    let command_state = CommandState::WaitingForSeek(command);
-
-    (drive_state, command_state)
 }
 
 pub(super) fn estimate_seek_cycles(current: CdTime, destination: CdTime) -> u32 {

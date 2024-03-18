@@ -1,6 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{seek, CdController, Command, CommandState, DriveState};
+use crate::cd::{seek, CdController, CommandState, DriveState, SeekNextState};
 use cdrom::cdtime::CdTime;
 use cdrom::CdRomResult;
 
@@ -15,33 +15,14 @@ impl CdController {
     pub(super) fn execute_read(&mut self) -> CommandState {
         int3!(self, [stat!(self)]);
 
-        if let Some(state) = seek::check_if_spin_up_needed(Command::ReadN, &mut self.drive_state) {
-            return state;
-        }
-
-        self.read_drive_spun_up()
-    }
-
-    pub(super) fn read_drive_spun_up(&mut self) -> CommandState {
         let seek_location = self.seek_location.take().unwrap_or(self.drive_state.current_time());
+        self.drive_state =
+            seek::determine_drive_state(self.drive_state, seek_location, SeekNextState::Read);
 
-        let current_time = self.drive_state.current_time();
-        if current_time != seek_location {
-            let (drive_state, command_state) =
-                seek::seek_to_location(Command::ReadN, current_time, seek_location);
-            self.drive_state = drive_state;
-            return command_state;
-        }
-
-        self.read_seek_complete()
-    }
-
-    pub(super) fn read_seek_complete(&mut self) -> CommandState {
-        // TODO is this right? delay by 5 sectors before first read
-        self.drive_state = DriveState::PreparingToRead {
-            time: self.drive_state.current_time(),
-            cycles_remaining: 5 * self.drive_mode.speed.cycles_between_sectors(),
-        };
+        log::debug!(
+            "Executed Read command at {seek_location}, drive state is {:?}",
+            self.drive_state
+        );
 
         CommandState::Idle
     }
