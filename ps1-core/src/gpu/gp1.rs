@@ -152,10 +152,27 @@ impl Gpu {
 
     // GP1($10)
     fn get_gpu_info(&mut self, value: u32) {
-        match value & 0xF {
+        self.gpu_read_buffer = match value & 0xF {
+            // Drawing area top left
+            0x3 => {
+                let (x, y) = self.gp0.draw_settings.draw_area_top_left;
+                x | (y << 10)
+            }
+            // Drawing area bottom right
+            0x4 => {
+                let (x, y) = self.gp0.draw_settings.draw_area_bottom_right;
+                x | (y << 10)
+            }
+            // Drawing offset
+            0x5 => {
+                let (x, y) = self.gp0.draw_settings.draw_offset;
+                let x = (x & 0x7FF) as u32;
+                let y = (y & 0x7FF) as u32;
+                x | (y << 11)
+            }
             // GPU version (hardcoded to 2)
-            0x7 => self.gpu_read_buffer = 2,
+            0x7 => 2,
             _ => todo!("GP1 GPU info command {value:08X}"),
-        }
+        };
     }
 }

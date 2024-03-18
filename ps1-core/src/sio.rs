@@ -181,19 +181,21 @@ impl SerialPort {
         log::debug!("Processing SIO0 TX_DATA write {value:02X}");
 
         self.port_state = match (self.port_state, value) {
-            (PortState::Idle, 0x01) => {
+            (PortState::Idle, _) => {
                 self.rx_fifo.push(0);
                 PortState::ReceivedControllerAddress
             }
-            (PortState::Idle, _) => todo!("SIO0 address {value:02X}"),
+            // TODO memory cards
+            // (PortState::Idle, _) => todo!("SIO0 address {value:02X}"),
             // TODO ID hardcoded to $5A41 (digital controller)
-            (PortState::ReceivedControllerAddress, 0x42) => {
+            (PortState::ReceivedControllerAddress, _) => {
                 self.rx_fifo.push(0x41);
                 PortState::SentIdLow
             }
-            (PortState::ReceivedControllerAddress, _) => {
-                todo!("SIO0 controller, second byte was {value:02X}")
-            }
+            // TODO memory cards
+            // (PortState::ReceivedControllerAddress, _) => {
+            //     todo!("SIO0 controller, second byte was {value:02X}")
+            // }
             (PortState::SentIdLow, _) => {
                 self.rx_fifo.push(0x5A);
                 PortState::SentIdHigh
