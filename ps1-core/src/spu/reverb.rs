@@ -2,9 +2,10 @@ use crate::num::U32Ext;
 use crate::spu;
 use crate::spu::voice::Voice;
 use crate::spu::{multiply_volume_i32, AudioRam, I32Ext};
+use bincode::{Decode, Encode};
 use std::cmp;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum ReverbClock {
     #[default]
     Left,
@@ -43,7 +44,7 @@ impl SampleTupleExt for (i16, i16) {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
 struct StereoValue<T> {
     l: T,
     r: T,
@@ -81,7 +82,7 @@ impl AudioRamExt for AudioRam {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Encode, Decode)]
 pub struct ReverbUnit {
     pub writes_enabled: bool,
     voices_enabled: [bool; spu::NUM_VOICES],

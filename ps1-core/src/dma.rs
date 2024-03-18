@@ -6,9 +6,10 @@ use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::memory::Memory;
 use crate::num::U32Ext;
 use crate::spu::Spu;
+use bincode::{Decode, Encode};
 use std::array;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum DmaDirection {
     #[default]
     ToRam = 0,
@@ -21,7 +22,7 @@ impl DmaDirection {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum Step {
     #[default]
     Forwards = 0,
@@ -34,7 +35,7 @@ impl Step {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum SyncMode {
     // Transfer all at once; used for CD-ROM and OTC
     #[default]
@@ -60,7 +61,7 @@ impl SyncMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
 struct ChannelConfig {
     start_address: u32,
     // total length for SyncMode=0, block size for SyncMode=1
@@ -82,7 +83,7 @@ impl ChannelConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 struct DmaControlRegister {
     channel_priority: [u8; 7],
     channel_enabled: [bool; 7],
@@ -126,7 +127,7 @@ impl DmaControlRegister {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Encode, Decode)]
 struct DmaInterruptRegister {
     channel_irq_enabled: u8,
     irq_enabled: bool,
@@ -160,7 +161,7 @@ impl DmaInterruptRegister {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct DmaController {
     control: DmaControlRegister,
     interrupt: DmaInterruptRegister,

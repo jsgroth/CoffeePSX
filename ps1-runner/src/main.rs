@@ -4,12 +4,14 @@ use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use ps1_core::api::{AudioOutput, Ps1Emulator, Renderer};
 use ps1_core::input::Ps1Inputs;
 use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -33,6 +35,7 @@ struct MiniFbRenderer<'a> {
     inputs: &'a mut Ps1Inputs,
     frame_count: &'a mut u64,
     last_fps_log: &'a mut SystemTime,
+    frame_rendered: &'a mut bool,
 }
 
 impl<'a> Renderer for MiniFbRenderer<'a> {
@@ -64,6 +67,8 @@ impl<'a> Renderer for MiniFbRenderer<'a> {
             *self.frame_count = 0;
             *self.last_fps_log = SystemTime::now();
         }
+
+        *self.frame_rendered = true;
 
         Ok(())
     }
@@ -227,6 +232,7 @@ fn main() -> anyhow::Result<()> {
                     inputs: &mut inputs,
                     frame_count: &mut 0,
                     last_fps_log: &mut SystemTime::now(),
+                    frame_rendered: &mut false,
                 },
                 &mut audio_output,
             )?;
@@ -238,11 +244,22 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    let save_state_path = match (&args.exe_path, &args.disc_path) {
+        (Some(_), Some(_)) => unreachable!(),
+        (Some(path), None) | (None, Some(path)) => Path::new(path).with_extension("ss0"),
+        (None, None) => Path::new(&args.bios_path).with_extension("ss0"),
+    };
+
+    let bincode_config = bincode::config::standard()
+        .with_little_endian()
+        .with_fixed_int_encoding()
+        .with_limit::<1_000_000_000>();
+
     let mut frame_count = 0;
     let mut last_fps_log = SystemTime::now();
     let mut paused = false;
-    let mut pause_pressed = false;
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        let mut frame_rendered = false;
         if !paused {
             emulator.tick(
                 inputs,
@@ -252,28 +269,54 @@ fn main() -> anyhow::Result<()> {
                     inputs: &mut inputs,
                     frame_count: &mut frame_count,
                     last_fps_log: &mut last_fps_log,
+                    frame_rendered: &mut frame_rendered,
                 },
                 &mut audio_output,
             )?;
         } else {
             thread::sleep(Duration::from_micros(16667));
             window.update_with_buffer(&frame_buffer, 1024, 512)?;
+            frame_rendered = true;
         }
 
-        if !pause_pressed && window.is_key_down(Key::P) {
-            paused = !paused;
-            pause_pressed = true;
+        if frame_rendered {
+            if window.is_key_pressed(Key::P, KeyRepeat::No) {
+                paused = !paused;
 
-            if paused {
-                *audio_output.audio_queue.lock().unwrap() =
-                    iter::once((0.0, 0.0)).cycle().take(1024 * 1024).collect();
-            } else {
-                audio_output.audio_queue.lock().unwrap().clear();
+                if paused {
+                    *audio_output.audio_queue.lock().unwrap() =
+                        iter::once((0.0, 0.0)).cycle().take(1024 * 1024).collect();
+                } else {
+                    audio_output.audio_queue.lock().unwrap().clear();
+                }
             }
-        }
 
-        if !window.is_key_down(Key::P) {
-            pause_pressed = false;
+            if window.is_key_pressed(Key::F5, KeyRepeat::No) {
+                let save_state_file = File::create(&save_state_path)?;
+                let mut writer = BufWriter::new(save_state_file);
+                bincode::encode_into_std_write(&emulator, &mut writer, bincode_config)?;
+                log::info!("Wrote save state to '{}'", save_state_path.display());
+            }
+
+            if window.is_key_pressed(Key::F6, KeyRepeat::No) {
+                match File::open(&save_state_path) {
+                    Ok(save_state_file) => {
+                        let disc = emulator.take_disc();
+
+                        let mut reader = BufReader::new(save_state_file);
+                        emulator = bincode::decode_from_std_read(&mut reader, bincode_config)?;
+                        emulator.set_disc(disc);
+
+                        log::info!("Loaded save state from '{}'", save_state_path.display());
+                    }
+                    Err(err) => {
+                        log::error!(
+                            "Error loading save state from '{}': {err}",
+                            save_state_path.display()
+                        );
+                    }
+                }
+            }
         }
     }
 

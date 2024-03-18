@@ -1,4 +1,6 @@
-#[derive(Debug, Clone)]
+use bincode::{Decode, Encode};
+
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct GeometryTransformationEngine;
 
 impl GeometryTransformationEngine {

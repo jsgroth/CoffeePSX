@@ -1,11 +1,12 @@
 use crate::cpu::Exception;
 use crate::num::U32Ext;
+use bincode::{Decode, Encode};
 
 const I_CACHE_LEN: usize = 4 * 1024;
 
 type ICache = [u8; I_CACHE_LEN];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct CacheControl {
     pub i_cache_enabled: bool,
     pub d_cache_enabled: bool,
@@ -26,7 +27,7 @@ impl CacheControl {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct StatusRegister {
     pub boot_exception_vectors: bool,
     pub isolate_cache: bool,
@@ -108,7 +109,7 @@ impl StatusRegister {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum ExceptionCode {
     #[default]
     Interrupt = 0,
@@ -138,7 +139,7 @@ impl ExceptionCode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct CauseRegister {
     pub branch_delay: bool,
     pub interrupts_pending: u8,
@@ -180,7 +181,7 @@ impl CauseRegister {
 // PRId register (15) always reads $00000002 on the PS1
 const PRID_VALUE: u32 = 0x00000002;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct SystemControlCoprocessor {
     pub cache_control: CacheControl,
     pub status: StatusRegister,

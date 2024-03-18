@@ -1,5 +1,7 @@
 //! PS1 control registers (e.g. interrupt registers)
 
+use bincode::{Decode, Encode};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptType {
     VBlank,
@@ -25,7 +27,7 @@ impl InterruptType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct InterruptRegisters {
     interrupt_mask: u16,
     interrupt_status: u16,

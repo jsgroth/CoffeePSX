@@ -1,7 +1,9 @@
+use bincode::{Decode, Encode};
+
 const FIFO_LEN: u8 = 8;
 const FIFO_MASK: u8 = FIFO_LEN - 1;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct RxFifo {
     values: [u8; FIFO_LEN as usize],
     write_idx: u8,

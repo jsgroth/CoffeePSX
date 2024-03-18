@@ -9,13 +9,14 @@ mod instructions;
 use crate::bus::Bus;
 use crate::cpu::cp0::ExceptionCode;
 use crate::cpu::gte::GeometryTransformationEngine;
+use bincode::{Decode, Encode};
 use cp0::SystemControlCoprocessor;
 
 const RESET_VECTOR: u32 = 0xBFC0_0000;
 const EXCEPTION_VECTOR: u32 = 0x8000_0080;
 const BOOT_EXCEPTION_VECTOR: u32 = 0xBFC0_0180;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 struct Registers {
     gpr: [u32; 32],
     pc: u32,
@@ -115,7 +116,7 @@ pub enum OpSize {
     Word,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct R3000 {
     registers: Registers,
     cp0: SystemControlCoprocessor,

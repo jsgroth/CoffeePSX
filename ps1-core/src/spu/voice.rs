@@ -4,9 +4,10 @@ use crate::spu;
 use crate::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
 use crate::spu::envelope::{AdsrEnvelope, AdsrState, SweepEnvelope};
 use crate::spu::{adpcm, multiply_volume, AudioRam};
+use bincode::{Decode, Encode};
 use std::cmp;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Voice {
     pub volume_l: SweepEnvelope,
     pub volume_r: SweepEnvelope,

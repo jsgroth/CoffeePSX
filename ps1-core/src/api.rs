@@ -12,6 +12,7 @@ use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
 use crate::sio::SerialPort;
 use crate::spu::Spu;
 use crate::timers::Timers;
+use bincode::{Decode, Encode};
 use cdrom::reader::CdRom;
 use cdrom::CdRomError;
 use thiserror::Error;
@@ -54,7 +55,7 @@ pub enum TickError<RErr, AErr> {
     CdRom(#[from] CdRomError),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 pub struct Ps1Emulator {
     cpu: R3000,
     gpu: Gpu,
@@ -289,5 +290,14 @@ impl Ps1Emulator {
                 self.tty_buffer.push(c);
             }
         }
+    }
+
+    #[must_use]
+    pub fn take_disc(&mut self) -> Option<CdRom> {
+        self.cd_controller.take_disc()
+    }
+
+    pub fn set_disc(&mut self, disc: Option<CdRom>) {
+        self.cd_controller.set_disc(disc);
     }
 }

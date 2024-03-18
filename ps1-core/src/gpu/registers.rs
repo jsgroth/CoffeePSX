@@ -1,9 +1,10 @@
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
+use bincode::{Decode, Encode};
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum DmaMode {
     #[default]
     Off = 0,
@@ -24,7 +25,7 @@ impl DmaMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum HorizontalResolution {
     // 256px
     #[default]
@@ -71,7 +72,7 @@ impl HorizontalResolution {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum VerticalResolution {
     // 240px
     #[default]
@@ -86,7 +87,7 @@ impl VerticalResolution {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum VideoMode {
     #[default]
     Ntsc = 0,
@@ -108,7 +109,7 @@ impl VideoMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum ColorDepthBits {
     #[default]
     Fifteen = 0,
@@ -133,7 +134,7 @@ impl ColorDepthBits {
 pub const DEFAULT_X_DISPLAY_RANGE: (u32, u32) = (0x200, 0x200 + 256 * 10);
 pub const DEFAULT_Y_DISPLAY_RANGE: (u32, u32) = (0x010, 0x010 + 240);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Registers {
     pub irq: bool,
     pub display_enabled: bool,

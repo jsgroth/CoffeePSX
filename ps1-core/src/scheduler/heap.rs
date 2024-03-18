@@ -1,12 +1,13 @@
+use bincode::{Decode, Encode};
 use std::array;
 
-#[derive(Debug, Clone)]
-pub struct UpdateableMinHeap<T, const CAPACITY: usize> {
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct UpdateableMinHeap<T: 'static, const CAPACITY: usize> {
     heap: [T; CAPACITY],
     len: usize,
 }
 
-impl<T: Copy + Default + Ord, const CAPACITY: usize> UpdateableMinHeap<T, CAPACITY> {
+impl<T: 'static + Copy + Default + Ord, const CAPACITY: usize> UpdateableMinHeap<T, CAPACITY> {
     pub fn new() -> Self {
         Self { heap: array::from_fn(|_| T::default()), len: 0 }
     }

@@ -1,6 +1,7 @@
 //! PS1 system memory (main RAM / scratchpad / BIOS ROM)
 
 use crate::api::{Ps1Error, Ps1Result};
+use bincode::{Decode, Encode};
 
 const BIOS_ROM_LEN: usize = 512 * 1024;
 const MAIN_RAM_LEN: usize = 2 * 1024 * 1024;
@@ -15,7 +16,7 @@ type MainRam = [u8; MAIN_RAM_LEN];
 type Scratchpad = [u8; SCRATCHPAD_LEN];
 
 // TODO I-cache (or is this stored in CP0?)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Memory {
     bios_rom: Box<BiosRom>,
     main_ram: Box<MainRam>,

@@ -2,6 +2,7 @@
 
 use crate::num::U32Ext;
 use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
+use bincode::{Decode, Encode};
 use std::cmp;
 
 const NTSC_GPU_CLOCK_SPEED: u64 = 53_693_175;
@@ -14,7 +15,7 @@ const PROGRESSIVE_CYCLES_PER_FRAME: u64 = NTSC_LINES_PER_FRAME * NTSC_DOTS_PER_L
 const INTERLACED_CYCLES_PER_FRAME: u64 =
     (NTSC_LINES_PER_FRAME - 1) * NTSC_DOTS_PER_LINE + NTSC_DOTS_PER_LINE / 2;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 struct GpuTimer {
     last_update_cpu_cycles: u64,
     leftover_product_cycles: u64,
@@ -181,7 +182,7 @@ impl GpuTimer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum ResetMode {
     #[default]
     Overflow = 0,
@@ -194,7 +195,7 @@ impl ResetMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum IrqMode {
     #[default]
     Once = 0,
@@ -207,7 +208,7 @@ impl IrqMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum ClockSource {
     Dot,
     HBlank,
@@ -216,7 +217,7 @@ enum ClockSource {
     SystemDiv8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 struct SystemTimer {
     idx: u8,
     interrupt_type: SchedulerEventType,
@@ -406,7 +407,7 @@ impl SystemTimer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Timers {
     gpu: GpuTimer,
     timers: [SystemTimer; 3],

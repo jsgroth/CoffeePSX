@@ -6,9 +6,10 @@ use crate::input::Ps1Inputs;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
 use crate::sio::rxfifo::RxFifo;
+use bincode::{Decode, Encode};
 use std::cmp;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 struct BaudrateTimer {
     timer: u32,
     raw_reload_value: u32,
@@ -56,7 +57,7 @@ impl BaudrateTimer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum Port {
     #[default]
     One = 0,
@@ -69,7 +70,7 @@ impl Port {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 enum TxFifoState {
     Empty,
     Queued(u8),
@@ -82,7 +83,7 @@ impl TxFifoState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 enum PortState {
     Idle,
     ReceivedControllerAddress,
@@ -94,7 +95,7 @@ enum PortState {
 
 const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct SerialPort {
     port_state: PortState,
     tx_fifo: TxFifoState,

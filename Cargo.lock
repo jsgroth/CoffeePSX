@@ -1147,6 +1147,7 @@ dependencies = [
 name = "ps1-core"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "cdrom",
  "log",
  "proc-bitfield",
@@ -1159,6 +1160,7 @@ name = "ps1-runner"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "cdrom",
  "clap",
  "cpal",

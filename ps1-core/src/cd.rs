@@ -12,6 +12,7 @@ use crate::cd::fifo::{DataFifo, ParameterFifo};
 use crate::cd::status::ErrorFlags;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
+use bincode::{Decode, Encode};
 use cdrom::cdtime::CdTime;
 use cdrom::reader::CdRom;
 use cdrom::CdRomResult;
@@ -32,7 +33,7 @@ const INIT_COMMAND_CYCLES: u32 = 105;
 // TODO is this too fast?
 const SPIN_UP_CYCLES: u32 = 22_050;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 struct CdInterruptRegisters {
     enabled: u8,
     flags: u8,
@@ -80,7 +81,7 @@ impl CdInterruptRegisters {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 enum Command {
     // $01
     GetStat,
@@ -114,7 +115,7 @@ enum Command {
     ReadToc,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 enum CommandState {
     Idle,
     ReceivingCommand { command: Command, cycles_remaining: u32 },
@@ -129,7 +130,7 @@ impl Default for CommandState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 enum DriveState {
     Stopped,
     SpinningUp { cycles_remaining: u32 },
@@ -157,7 +158,7 @@ impl DriveState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum DriveSpeed {
     #[default]
     Normal,
@@ -185,7 +186,7 @@ const BYTES_PER_SECTOR: usize = 2352;
 
 type SectorBuffer = [u8; BYTES_PER_SECTOR];
 
-#[derive(Debug)]
+#[derive(Debug, Encode, Decode)]
 pub struct CdController {
     index: u8,
     disc: Option<CdRom>,
@@ -542,6 +543,14 @@ impl CdController {
         log::debug!("Request register write: {value:02X}");
         log::debug!("  SMEN: {}", value.bit(5));
         log::debug!("  BFRD: {}", value.bit(7));
+    }
+
+    pub fn take_disc(&mut self) -> Option<CdRom> {
+        self.disc.take()
+    }
+
+    pub fn set_disc(&mut self, disc: Option<CdRom>) {
+        self.disc = disc;
     }
 }
 

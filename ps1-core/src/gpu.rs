@@ -8,12 +8,13 @@ use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::gpu::registers::Registers;
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
+use bincode::{Decode, Encode};
 
 const VRAM_LEN: usize = 1024 * 1024;
 
 type Vram = [u8; VRAM_LEN];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Gpu {
     vram: Box<Vram>,
     registers: Registers,

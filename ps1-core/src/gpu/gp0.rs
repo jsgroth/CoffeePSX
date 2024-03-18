@@ -6,6 +6,7 @@ use crate::gpu::gp0::rasterize::{
 };
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
+use bincode::{Decode, Encode};
 use std::array;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -14,7 +15,7 @@ struct Vertex {
     y: i32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub struct Color {
     pub r: u8,
     pub g: u8,
@@ -32,7 +33,7 @@ impl Color {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum PolygonVertices {
     Three,
     Four,
@@ -53,7 +54,7 @@ impl From<PolygonVertices> for u8 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum RectangleSize {
     Variable,
     One,
@@ -73,7 +74,7 @@ impl RectangleSize {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct LineCommandParameters {
     pub gouraud_shading: bool,
     pub polyline: bool,
@@ -81,7 +82,7 @@ pub struct LineCommandParameters {
     pub color: Color,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct PolygonCommandParameters {
     pub vertices: PolygonVertices,
     pub gouraud_shading: bool,
@@ -91,7 +92,7 @@ pub struct PolygonCommandParameters {
     pub color: Color,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct RectangleCommandParameters {
     pub size: RectangleSize,
     pub textured: bool,
@@ -100,7 +101,7 @@ pub struct RectangleCommandParameters {
     pub color: Color,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub enum DrawCommand {
     Fill(Color),
     DrawLine(LineCommandParameters),
@@ -111,7 +112,7 @@ pub enum DrawCommand {
     VramToCpuBlit,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct VramTransferFields {
     destination_x: u32,
     destination_y: u32,
@@ -151,7 +152,7 @@ impl VramTransferFields {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub enum Gp0CommandState {
     WaitingForCommand,
     WaitingForParameters { command: DrawCommand, index: u8, remaining: u8 },
@@ -253,7 +254,7 @@ impl Gp0CommandState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum SemiTransparencyMode {
     // B/2 + F/2
     #[default]
@@ -278,7 +279,7 @@ impl SemiTransparencyMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum TextureColorDepthBits {
     #[default]
     Four = 0,
@@ -298,7 +299,7 @@ impl TextureColorDepthBits {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
 pub struct TexturePage {
     // In 64-halfword steps
     pub x_base: u32,
@@ -323,7 +324,7 @@ impl TexturePage {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Encode, Decode)]
 pub struct TextureWindow {
     // All values in 8-pixel steps
     pub x_mask: u32,
@@ -343,7 +344,7 @@ impl TextureWindow {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Encode, Decode)]
 pub struct DrawSettings {
     pub drawing_in_display_allowed: bool,
     pub dithering_enabled: bool,
@@ -370,7 +371,7 @@ impl DrawSettings {
 
 const PARAMETERS_LEN: usize = 11;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Gp0State {
     pub command_state: Gp0CommandState,
     pub parameters: [u32; PARAMETERS_LEN],

@@ -1,6 +1,7 @@
 use crate::spu::I32Ext;
+use bincode::{Decode, Encode};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
 pub struct AdpcmHeader {
     pub shift: u8,
     pub filter: u8,
@@ -27,7 +28,7 @@ impl AdpcmHeader {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct SpuAdpcmBuffer {
     pub header: AdpcmHeader,
     samples: [i16; 32],

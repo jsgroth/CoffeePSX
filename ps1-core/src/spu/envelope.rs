@@ -1,7 +1,8 @@
 use crate::num::U32Ext;
+use bincode::{Decode, Encode};
 use std::cmp;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum EnvelopeMode {
     #[default]
     Linear,
@@ -14,7 +15,7 @@ impl EnvelopeMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum EnvelopeDirection {
     #[default]
     Increasing,
@@ -27,7 +28,7 @@ impl EnvelopeDirection {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct EnvelopeSettings {
     pub step: u8,
     pub shift: u8,
@@ -69,7 +70,7 @@ impl EnvelopeSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum SweepPhase {
     Positive,
     Negative,
@@ -81,7 +82,7 @@ impl SweepPhase {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub enum SweepSetting {
     Fixed,
     Sweep(EnvelopeSettings, SweepPhase),
@@ -111,7 +112,7 @@ impl SweepSetting {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct SweepEnvelope {
     pub volume: i16,
     pub setting: SweepSetting,
@@ -159,7 +160,7 @@ impl SweepEnvelope {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct VolumeControl {
     pub main_l: SweepEnvelope,
     pub main_r: SweepEnvelope,
@@ -197,7 +198,7 @@ impl VolumeControl {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct AdsrSettings {
     pub attack_step: u8,
     pub attack_shift: u8,
@@ -253,7 +254,7 @@ fn parse_sustain_level(value: u32) -> u16 {
     (((value & 0xF) + 1) << 11) as u16
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum AdsrState {
     Attack,
     Decay,
@@ -262,7 +263,7 @@ pub enum AdsrState {
     Release,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct AdsrEnvelope {
     pub level: i16,
     pub settings: AdsrSettings,

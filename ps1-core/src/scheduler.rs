@@ -1,9 +1,10 @@
 use crate::scheduler::heap::UpdateableMinHeap;
+use bincode::{Decode, Encode};
 use std::cmp::Ordering;
 
 mod heap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum SchedulerEventType {
     VBlank,
     SpuAndCdClock,
@@ -12,7 +13,7 @@ pub enum SchedulerEventType {
     Timer2Irq,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub struct SchedulerEvent {
     pub event_type: SchedulerEventType,
     pub cpu_cycles: u64,
@@ -48,7 +49,7 @@ impl Ord for SchedulerEvent {
 
 type SchedulerHeap = UpdateableMinHeap<SchedulerEvent, 20>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Scheduler {
     cpu_cycle_counter: u64,
     heap: SchedulerHeap,

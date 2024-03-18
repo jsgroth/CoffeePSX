@@ -10,6 +10,7 @@ use crate::num::U32Ext;
 use crate::spu::envelope::VolumeControl;
 use crate::spu::reverb::ReverbUnit;
 use crate::spu::voice::Voice;
+use bincode::{Decode, Encode};
 use std::array;
 
 const AUDIO_RAM_LEN: usize = 512 * 1024;
@@ -29,7 +30,7 @@ impl I32Ext for i32 {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 enum DataPortMode {
     #[default]
     Off = 0,
@@ -54,7 +55,7 @@ impl DataPortMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 struct DataPort {
     mode: DataPortMode,
     start_address: u32,
@@ -81,7 +82,7 @@ impl DataPort {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 struct ControlRegisters {
     spu_enabled: bool,
     amplifier_enabled: bool,
@@ -174,7 +175,7 @@ impl ControlRegisters {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct Spu {
     audio_ram: Box<AudioRam>,
     voices: [Voice; NUM_VOICES],

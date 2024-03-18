@@ -1,8 +1,9 @@
+use bincode::{Decode, Encode};
 use std::array;
 
 const PARAMETER_CAPACITY: usize = 16;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct ParameterFifo {
     values: [u8; PARAMETER_CAPACITY],
     idx: usize,
@@ -66,7 +67,7 @@ impl ParameterFifo {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct DataFifo {
     values: Box<[u8; cdrom::BYTES_PER_SECTOR as usize]>,
     idx: usize,
