@@ -135,6 +135,10 @@ impl<'a> Bus<'a> {
             0x1040 => self.sio0.read_rx_data(),
             0x1044 => self.sio0.read_status(),
             0x104A => self.sio0.read_control(),
+            0x1060 => {
+                log::warn!("Unimplemented RAM size read, returning $00000B88");
+                0x0B88
+            }
             0x1070 => self.interrupt_registers.read_interrupt_status(),
             0x1074 => self.interrupt_registers.read_interrupt_mask(),
             0x10F0 => self.dma_controller.read_control(),
