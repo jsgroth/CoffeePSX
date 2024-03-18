@@ -1,10 +1,41 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::status::ErrorFlags;
-use crate::cd::{status, CdController, Command, CommandState, DriveSpeed, DriveState};
+use crate::cd::{seek, status, CdController, Command, CommandState, DriveSpeed, DriveState};
 use crate::num::U8Ext;
+use cdrom::cdtime::CdTime;
 
 impl CdController {
+    // $0A: Init() -> INT3(stat), INT2(stat)
+    // Resets mode, aborts any in-progress commands, and activates the drive motor if it is stopped
+    pub(super) fn execute_init(&mut self) -> CommandState {
+        int3!(self, [self.status_code(ErrorFlags::NONE)]);
+
+        self.drive_speed = DriveSpeed::Normal;
+
+        // TODO other SetMode bits
+
+        if let Some(state) = seek::check_if_spin_up_needed(Command::Init, &mut self.drive_state) {
+            return state;
+        }
+
+        self.init_drive_spun_up()
+    }
+
+    pub(super) fn init_drive_spun_up(&mut self) -> CommandState {
+        self.drive_state = DriveState::Paused(CdTime::ZERO);
+
+        CommandState::GeneratingSecondResponse {
+            command: Command::Init,
+            cycles_remaining: status::GET_ID_SECOND_CYCLES,
+        }
+    }
+
+    pub(super) fn init_second_response(&mut self) -> CommandState {
+        int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        CommandState::Idle
+    }
+
     // $0E: SetMode(mode) -> INT3(stat)
     // Configures drive mode
     pub(super) fn execute_set_mode(&mut self) -> CommandState {
@@ -14,6 +45,7 @@ impl CdController {
         }
 
         let mode = self.parameter_fifo.pop();
+        log::debug!("Mode: {mode:02X}");
 
         self.drive_speed = DriveSpeed::from_bit(mode.bit(7));
 
@@ -44,8 +76,6 @@ impl CdController {
         if mode.bit(0) {
             todo!("CD-DA mode enabled via SetMode");
         }
-
-        log::debug!("Drive speed: {:?}", self.drive_speed);
 
         int3!(self, [self.status_code(ErrorFlags::NONE)]);
         CommandState::Idle

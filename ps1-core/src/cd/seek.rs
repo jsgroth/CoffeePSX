@@ -6,6 +6,9 @@ use crate::cd::{status, CdController, Command, CommandState, DriveState};
 use cdrom::cdtime::CdTime;
 use std::cmp;
 
+// The BIOS does not like if a seek finishes too quickly
+const MIN_SEEK_CYCLES: u32 = 24;
+
 impl CdController {
     // $02: SetLoc(amm, ass, asect) -> INT3(stat)
     // Sets seek location to the specified absolute time
@@ -15,9 +18,9 @@ impl CdController {
             return CommandState::Idle;
         }
 
-        let minutes = self.parameter_fifo.pop();
-        let seconds = self.parameter_fifo.pop();
-        let frames = self.parameter_fifo.pop();
+        let minutes = bcd_to_binary(self.parameter_fifo.pop());
+        let seconds = bcd_to_binary(self.parameter_fifo.pop());
+        let frames = bcd_to_binary(self.parameter_fifo.pop());
 
         match CdTime::new_checked(minutes, seconds, frames) {
             Some(cd_time) => {
@@ -57,7 +60,7 @@ impl CdController {
         let seek_cycles = estimate_seek_cycles(current_time, self.seek_location);
         self.drive_state = DriveState::Seeking {
             destination: self.seek_location,
-            cycles_remaining: cmp::max(24, seek_cycles),
+            cycles_remaining: cmp::max(MIN_SEEK_CYCLES, seek_cycles),
         };
 
         CommandState::WaitingForSeek(command)
@@ -67,6 +70,10 @@ impl CdController {
         int2!(self, [self.status_code(ErrorFlags::NONE)]);
         CommandState::Idle
     }
+}
+
+fn bcd_to_binary(value: u8) -> u8 {
+    10 * (value >> 4) + (value & 0xF)
 }
 
 pub(super) fn check_if_spin_up_needed(

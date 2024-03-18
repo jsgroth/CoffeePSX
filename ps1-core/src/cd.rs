@@ -88,6 +88,8 @@ enum Command {
     ReadN,
     // $09
     Pause,
+    // $0A
+    Init,
     // $0E
     SetMode,
     // $15
@@ -244,6 +246,7 @@ impl CdController {
             DriveState::Reading { time, mut int1_generated, cycles_till_next } => {
                 if !int1_generated && !self.interrupts.pending() {
                     int1!(self, [self.status_code(ErrorFlags::NONE)]);
+                    self.data_fifo.copy_from(&self.sector_buffer[24..24 + 2048]);
                     int1_generated = true;
                 }
 
@@ -300,6 +303,7 @@ impl CdController {
                 | DriveState::Paused(_)
                 | DriveState::Seeking { .. } => match command {
                     Command::ReadN | Command::ReadS => self.read_drive_spun_up(),
+                    Command::Init => self.init_drive_spun_up(),
                     Command::SeekL | Command::SeekP => self.seek_drive_spun_up(command),
                     _ => panic!("Unexpected command waiting for drive spin-up: {command:?}"),
                 },
@@ -329,6 +333,7 @@ impl CdController {
             Command::SetLoc => self.execute_set_loc(),
             Command::ReadN | Command::ReadS => self.execute_read(),
             Command::Pause => self.execute_pause(),
+            Command::Init => self.execute_init(),
             Command::SetMode => self.execute_set_mode(),
             Command::SeekL | Command::SeekP => self.execute_seek(command),
             Command::Test => self.execute_test(),
@@ -366,6 +371,7 @@ impl CdController {
         log::debug!("Generating second response for command {command:?}");
 
         match command {
+            Command::Init => self.init_second_response(),
             Command::Pause => self.pause_second_response(),
             Command::SeekL | Command::SeekP => self.seek_second_response(),
             Command::GetId => self.get_id_second_response(),
@@ -436,12 +442,12 @@ impl CdController {
 
     fn read_status_register(&self) -> u8 {
         // TODO Bit 2: XA-ADPCM FIFO not empty (hardcoded to 0)
-        // TODO Bit 6: Data FIFO not empty (hardcoded to 0)
         let receiving_command = matches!(self.command_state, CommandState::ReceivingCommand { .. });
         let status = self.index
             | (u8::from(self.parameter_fifo.empty()) << 3)
             | (u8::from(!self.parameter_fifo.full()) << 4)
             | (u8::from(!self.response_fifo.fully_consumed()) << 5)
+            | (u8::from(!self.data_fifo.empty()) << 6)
             | (u8::from(receiving_command) << 7);
 
         log::debug!("Status read: {status:02X}");
@@ -466,6 +472,7 @@ impl CdController {
             0x02 => (Command::SetLoc, std_receive_cycles),
             0x06 => (Command::ReadN, std_receive_cycles),
             0x09 => (Command::Pause, std_receive_cycles),
+            0x0A => (Command::Init, INIT_COMMAND_CYCLES),
             0x0E => (Command::SetMode, std_receive_cycles),
             0x15 => (Command::SeekL, std_receive_cycles),
             0x16 => (Command::SeekP, std_receive_cycles),
@@ -496,13 +503,7 @@ impl CdController {
             todo!("SMEN bit set in request register (command start interrupt)");
         }
 
-        // BFRD bit: Set by the host to accept a sector into the data FIFO
-        if !value.bit(7) {
-            self.data_fifo.reset(ZeroFill::No);
-        } else {
-            // TODO 2340-byte sector mode
-            self.data_fifo.copy_from(&self.sector_buffer[16..16 + 2048]);
-        }
+        // TODO BFRD bit: Set by the host to accept a sector into the data FIFO (?)
 
         log::debug!("Request register write: {value:02X}");
         log::debug!("  SMEN: {}", value.bit(5));

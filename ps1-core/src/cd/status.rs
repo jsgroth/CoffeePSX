@@ -8,7 +8,7 @@ pub const WRONG_NUM_PARAMETERS: u8 = 0x20;
 pub const INVALID_COMMAND: u8 = 0x40;
 
 // Roughly 18,944 CPU cycles
-const GET_ID_SECOND_CYCLES: u32 = 24;
+pub const GET_ID_SECOND_CYCLES: u32 = 24;
 
 // Roughly a second
 const READ_TOC_SECOND_CYCLES: u32 = 44_100;

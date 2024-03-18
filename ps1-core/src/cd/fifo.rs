@@ -51,7 +51,7 @@ impl<const MAX_LEN: usize> Fifo<MAX_LEN> {
     }
 
     pub fn empty(&self) -> bool {
-        self.len == 0
+        self.idx >= self.len
     }
 
     pub fn full(&self) -> bool {
