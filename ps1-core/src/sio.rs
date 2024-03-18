@@ -89,6 +89,7 @@ enum PortState {
     SentIdLow,
     SentIdHigh,
     SentDigitalLow,
+    SendingZeroes,
 }
 
 const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
@@ -181,12 +182,15 @@ impl SerialPort {
         log::debug!("Processing SIO0 TX_DATA write {value:02X}");
 
         self.port_state = match (self.port_state, value) {
-            (PortState::Idle, _) => {
+            (PortState::Idle, 0x01) if self.selected_port == Port::One => {
                 self.rx_fifo.push(0);
                 PortState::ReceivedControllerAddress
             }
-            // TODO memory cards
-            // (PortState::Idle, _) => todo!("SIO0 address {value:02X}"),
+            // TODO memory cards and P2
+            (PortState::Idle, _) => {
+                self.rx_fifo.push(0);
+                PortState::SendingZeroes
+            }
             // TODO ID hardcoded to $5A41 (digital controller)
             (PortState::ReceivedControllerAddress, _) => {
                 self.rx_fifo.push(0x41);
@@ -206,6 +210,10 @@ impl SerialPort {
             }
             (PortState::SentDigitalLow, _) => {
                 self.rx_fifo.push((!(u16::from(inputs.p1) >> 8)) as u8);
+                PortState::Idle
+            }
+            (PortState::SendingZeroes, _) => {
+                self.rx_fifo.push(0);
                 PortState::Idle
             }
         };
