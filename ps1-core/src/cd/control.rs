@@ -1,8 +1,72 @@
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{seek, status, CdController, Command, CommandState, DriveSpeed, DriveState};
+use crate::cd::{seek, status, CdController, Command, CommandState, DriveState};
 use crate::num::U8Ext;
+use bincode::{Decode, Encode};
 use cdrom::cdtime::CdTime;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
+pub enum DriveSpeed {
+    #[default]
+    Normal,
+    Double,
+}
+
+impl DriveSpeed {
+    pub fn from_bit(bit: bool) -> Self {
+        if bit { Self::Double } else { Self::Normal }
+    }
+
+    pub fn cycles_between_sectors(self) -> u32 {
+        match self {
+            // 44100 Hz / 75 Hz
+            Self::Normal => 588,
+            // 44100 Hz / (2 * 75 Hz)
+            Self::Double => 294,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct DriveMode {
+    pub speed: DriveSpeed,
+    pub audio_report_interrupts: bool,
+    pub auto_pause_audio: bool,
+    pub cd_da_enabled: bool,
+}
+
+impl DriveMode {
+    pub fn new() -> Self {
+        Self::from(0)
+    }
+}
+
+impl From<u8> for DriveMode {
+    fn from(mode: u8) -> Self {
+        let speed = DriveSpeed::from_bit(mode.bit(7));
+        let audio_report_interrupts = mode.bit(2);
+        let auto_pause_audio = mode.bit(1);
+        let cd_da_enabled = mode.bit(0);
+
+        if mode.bit(6) {
+            todo!("CD-XA ADPCM enabled via SetMode");
+        }
+
+        if mode.bit(5) {
+            todo!("2340-byte sector mode enabled via SetMode");
+        }
+
+        if mode.bit(4) {
+            todo!("SetMode 'ignore bit' was set");
+        }
+
+        if mode.bit(3) {
+            todo!("CD-XA ADPCM SetFilter enabled via SetMode");
+        }
+
+        Self { speed, audio_report_interrupts, auto_pause_audio, cd_da_enabled }
+    }
+}
 
 // Roughly a second
 const STOP_SECOND_RESPONSE_CYCLES: u32 = 44_100;
@@ -13,9 +77,8 @@ impl CdController {
     pub(super) fn execute_init(&mut self) -> CommandState {
         int3!(self, [stat!(self)]);
 
-        self.drive_speed = DriveSpeed::Normal;
-
-        // TODO other SetMode bits
+        // TODO should set mode to $20 (everything 0 except 2340-byte sectors)
+        self.drive_mode = DriveMode::from(0);
 
         if let Some(state) = seek::check_if_spin_up_needed(Command::Init, &mut self.drive_state) {
             return state;
@@ -49,35 +112,9 @@ impl CdController {
         let mode = self.parameter_fifo.pop();
         log::debug!("Mode: {mode:02X}");
 
-        self.drive_speed = DriveSpeed::from_bit(mode.bit(7));
+        self.drive_mode = mode.into();
 
-        if mode.bit(6) {
-            todo!("CD-XA ADPCM enabled via SetMode");
-        }
-
-        if mode.bit(5) {
-            todo!("2340-byte sector mode enabled via SetMode");
-        }
-
-        if mode.bit(4) {
-            todo!("SetMode 'ignore bit' was set");
-        }
-
-        if mode.bit(3) {
-            todo!("CD-XA ADPCM SetFilter enabled via SetMode");
-        }
-
-        if mode.bit(2) {
-            todo!("Audio report interrupts enabled via SetMode");
-        }
-
-        if mode.bit(1) {
-            todo!("Auto-pause enabled via SetMode");
-        }
-
-        if mode.bit(0) {
-            todo!("CD-DA mode enabled via SetMode");
-        }
+        log::debug!("Parsed mode: {:?}", self.drive_mode);
 
         int3!(self, [stat!(self)]);
         CommandState::Idle
@@ -96,7 +133,7 @@ impl CdController {
 
         log::debug!("Paused drive at {}", self.drive_state.current_time());
 
-        let cycles_till_second_response = 5 * self.drive_speed.cycles_between_sectors();
+        let cycles_till_second_response = 5 * self.drive_mode.speed.cycles_between_sectors();
         CommandState::GeneratingSecondResponse {
             command: Command::Pause,
             cycles_remaining: cycles_till_second_response,

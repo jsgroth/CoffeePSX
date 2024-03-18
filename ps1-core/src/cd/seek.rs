@@ -23,7 +23,7 @@ impl CdController {
 
         match CdTime::new_checked(minutes, seconds, frames) {
             Some(cd_time) => {
-                self.seek_location = cd_time;
+                self.seek_location = Some(cd_time);
                 int3!(self, [stat!(self)]);
 
                 log::debug!("Set seek location to {cd_time}");
@@ -55,14 +55,12 @@ impl CdController {
     }
 
     pub(super) fn seek_drive_spun_up(&mut self, command: Command) -> CommandState {
-        let current_time = self.drive_state.current_time();
-        let seek_cycles = estimate_seek_cycles(current_time, self.seek_location);
-        self.drive_state = DriveState::Seeking {
-            destination: self.seek_location,
-            cycles_remaining: cmp::max(MIN_SEEK_CYCLES, seek_cycles),
-        };
+        let seek_location = self.seek_location.take().unwrap_or(self.drive_state.current_time());
 
-        CommandState::WaitingForSeek(command)
+        let (drive_state, command_state) =
+            seek_to_location(command, self.drive_state.current_time(), seek_location);
+        self.drive_state = drive_state;
+        command_state
     }
 
     pub(super) fn seek_second_response(&mut self) -> CommandState {
@@ -83,6 +81,21 @@ pub(super) fn check_if_spin_up_needed(
         DriveState::SpinningUp { .. } => Some(CommandState::WaitingForSpinUp(command)),
         _ => None,
     }
+}
+
+pub(super) fn seek_to_location(
+    command: Command,
+    current_time: CdTime,
+    seek_location: CdTime,
+) -> (DriveState, CommandState) {
+    let seek_cycles = estimate_seek_cycles(current_time, seek_location);
+    let drive_state = DriveState::Seeking {
+        destination: seek_location,
+        cycles_remaining: cmp::max(MIN_SEEK_CYCLES, seek_cycles),
+    };
+    let command_state = CommandState::WaitingForSeek(command);
+
+    (drive_state, command_state)
 }
 
 pub(super) fn estimate_seek_cycles(current: CdTime, destination: CdTime) -> u32 {

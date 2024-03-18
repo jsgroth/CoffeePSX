@@ -8,6 +8,7 @@ mod read;
 mod seek;
 mod status;
 
+use crate::cd::control::DriveMode;
 use crate::cd::fifo::{DataFifo, ParameterFifo};
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
@@ -143,30 +144,6 @@ impl DriveState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
-enum DriveSpeed {
-    #[default]
-    Normal,
-    Double,
-}
-
-impl DriveSpeed {
-    fn from_bit(bit: bool) -> Self {
-        if bit { Self::Double } else { Self::Normal }
-    }
-}
-
-impl DriveSpeed {
-    fn cycles_between_sectors(self) -> u32 {
-        match self {
-            // 44100 Hz / 75 Hz
-            Self::Normal => 588,
-            // 44100 Hz / (2 * 75 Hz)
-            Self::Double => 294,
-        }
-    }
-}
-
 const BYTES_PER_SECTOR: usize = 2352;
 
 type SectorBuffer = [u8; BYTES_PER_SECTOR];
@@ -182,8 +159,8 @@ pub struct CdController {
     sector_buffer: Box<SectorBuffer>,
     command_state: CommandState,
     drive_state: DriveState,
-    drive_speed: DriveSpeed,
-    seek_location: CdTime,
+    drive_mode: DriveMode,
+    seek_location: Option<CdTime>,
 }
 
 impl CdController {
@@ -198,8 +175,8 @@ impl CdController {
             sector_buffer: Box::new(array::from_fn(|_| 0)),
             command_state: CommandState::default(),
             drive_state: DriveState::default(),
-            drive_speed: DriveSpeed::default(),
-            seek_location: CdTime::ZERO,
+            drive_mode: DriveMode::new(),
+            seek_location: None,
         }
     }
 
