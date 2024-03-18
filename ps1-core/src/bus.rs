@@ -197,6 +197,7 @@ impl<'a> Bus<'a> {
                     address,
                     value,
                     self.gpu,
+                    self.spu,
                     self.memory,
                     self.cd_controller,
                     self.interrupt_registers,

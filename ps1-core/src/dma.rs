@@ -5,6 +5,7 @@ use crate::gpu::Gpu;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::memory::Memory;
 use crate::num::U32Ext;
+use crate::spu::Spu;
 use std::array;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -251,11 +252,13 @@ impl DmaController {
             | (channel_config.chopping_cpu_window_size << 20)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn write_channel_control(
         &mut self,
         address: u32,
         value: u32,
         gpu: &mut Gpu,
+        spu: &mut Spu,
         memory: &mut Memory,
         cd_controller: &mut CdController,
         interrupt_registers: &mut InterruptRegisters,
@@ -304,6 +307,11 @@ impl DmaController {
                     );
                     run_cdrom_dma(&self.channel_configs[3], memory, cd_controller);
                     log::debug!("CD-ROM DMA complete");
+                }
+                4 => {
+                    log::debug!("Running SPU DMA");
+                    run_spu_dma(&mut self.channel_configs[4], memory, spu);
+                    log::debug!("SPU DMA complete");
                 }
                 6 => {
                     log::trace!("Running OTC DMA");
@@ -404,6 +412,29 @@ fn run_cdrom_dma(config: &ChannelConfig, memory: &mut Memory, cd_controller: &mu
 
         memory.write_main_ram_u32(address, u32::from_le_bytes(bytes));
         address = address.wrapping_add(4);
+    }
+}
+
+// SPU DMA
+// Copies data between main RAM and SPU audio RAM
+fn run_spu_dma(config: &mut ChannelConfig, memory: &mut Memory, spu: &mut Spu) {
+    match config.direction {
+        DmaDirection::FromRam => {
+            let mut address = config.start_address & !3;
+            for _ in 0..config.block_size * config.num_blocks {
+                let word = memory.read_main_ram_u32(address);
+                spu.write_data_port(word as u16);
+                spu.write_data_port((word >> 16) as u16);
+
+                address = match config.step {
+                    Step::Forwards => address.wrapping_add(4),
+                    Step::Backwards => address.wrapping_sub(4),
+                };
+            }
+
+            config.start_address = address;
+        }
+        DmaDirection::ToRam => todo!("SPU DMA from SPU RAM to main RAM"),
     }
 }
 

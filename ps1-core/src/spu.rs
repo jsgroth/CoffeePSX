@@ -313,7 +313,7 @@ impl Spu {
             }
             0x1DA2 => self.reverb.write_buffer_start_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
-            0x1DA8 => self.write_data_port(value),
+            0x1DA8 => self.write_data_port(value as u16),
             0x1DAA => self.control.write_spucnt(value, &mut self.data_port, &mut self.reverb),
             0x1DAC => {
                 // Sound RAM data transfer control register; writing any value other than $0004
@@ -424,10 +424,10 @@ impl Spu {
     }
 
     // $1F801DA8: Sound RAM data transfer FIFO port
-    fn write_data_port(&mut self, value: u32) {
+    pub fn write_data_port(&mut self, value: u16) {
         // TODO emulate the 32-halfword FIFO?
         // TODO check current state? (requires FIFO emulation, the BIOS writes while mode is off)
-        let [lsb, msb] = (value as u16).to_le_bytes();
+        let [lsb, msb] = value.to_le_bytes();
         self.audio_ram[self.data_port.current_address as usize] = lsb;
         self.audio_ram[(self.data_port.current_address + 1) as usize] = msb;
 
