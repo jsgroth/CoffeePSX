@@ -1,9 +1,11 @@
+use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::{CdController, Command, CommandState, DriveState};
 use cdrom::cue::TrackMode;
 use std::ops::BitOr;
 
+pub const INVALID_PARAMETER: u8 = 0x10;
 pub const WRONG_NUM_PARAMETERS: u8 = 0x20;
 pub const INVALID_COMMAND: u8 = 0x40;
 
@@ -96,6 +98,56 @@ impl CdController {
 
     pub(super) fn read_toc_second_response(&mut self) -> CommandState {
         int2!(self, [self.status_code(ErrorFlags::NONE)]);
+        CommandState::Idle
+    }
+
+    // $13: GetTN() -> INT3(stat, first, last)
+    // Returns the first and last track numbers on the disc
+    pub(super) fn execute_get_tn(&mut self) -> CommandState {
+        let (first, last) = match &self.disc {
+            Some(disc) => (1_u8, cd::binary_to_bcd(disc.cue().last_track().number)),
+            None => {
+                // TODO this should be an INT5 error?
+                (1, 1)
+            }
+        };
+
+        int3!(self, [self.status_code(ErrorFlags::NONE), first, last]);
+
+        CommandState::Idle
+    }
+
+    // $14: GetTD(track) -> INT3(stat, mm, ss)
+    // Return the start time for the specified track
+    pub(super) fn execute_get_td(&mut self) -> CommandState {
+        if self.parameter_fifo.len() < 1 {
+            int5!(self, [self.status_code(ErrorFlags::ERROR), WRONG_NUM_PARAMETERS]);
+            return CommandState::Idle;
+        }
+
+        let Some(disc) = &self.disc else {
+            // TODO this should be an INT5 error?
+            todo!("GetTD commmand with no disc in the drive");
+        };
+
+        let last_track = disc.cue().last_track().number;
+
+        let mut track = cd::bcd_to_binary(self.parameter_fifo.pop());
+        if track == 0 {
+            // 0 means last track
+            track = last_track;
+        }
+
+        if track > last_track {
+            int5!(self, [self.status_code(ErrorFlags::ERROR), INVALID_PARAMETER]);
+            return CommandState::Idle;
+        }
+
+        let start_time = disc.cue().track(track).effective_start_time();
+        let minutes = cd::binary_to_bcd(start_time.minutes);
+        let seconds = cd::binary_to_bcd(start_time.seconds);
+        int3!(self, [self.status_code(ErrorFlags::NONE), minutes, seconds]);
+
         CommandState::Idle
     }
 }

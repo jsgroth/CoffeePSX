@@ -18,9 +18,9 @@ impl CdController {
             return CommandState::Idle;
         }
 
-        let minutes = bcd_to_binary(self.parameter_fifo.pop());
-        let seconds = bcd_to_binary(self.parameter_fifo.pop());
-        let frames = bcd_to_binary(self.parameter_fifo.pop());
+        let minutes = cd::bcd_to_binary(self.parameter_fifo.pop());
+        let seconds = cd::bcd_to_binary(self.parameter_fifo.pop());
+        let frames = cd::bcd_to_binary(self.parameter_fifo.pop());
 
         match CdTime::new_checked(minutes, seconds, frames) {
             Some(cd_time) => {
@@ -70,10 +70,6 @@ impl CdController {
         int2!(self, [self.status_code(ErrorFlags::NONE)]);
         CommandState::Idle
     }
-}
-
-fn bcd_to_binary(value: u8) -> u8 {
-    10 * (value >> 4) + (value & 0xF)
 }
 
 pub(super) fn check_if_spin_up_needed(

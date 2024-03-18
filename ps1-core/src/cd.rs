@@ -95,6 +95,10 @@ enum Command {
     Demute,
     // $0E
     SetMode,
+    // $13
+    GetTN,
+    // $14
+    GetTD,
     // $15
     SeekL,
     // $16
@@ -339,6 +343,8 @@ impl CdController {
             Command::Init => self.execute_init(),
             Command::Demute => self.execute_demute(),
             Command::SetMode => self.execute_set_mode(),
+            Command::GetTN => self.execute_get_tn(),
+            Command::GetTD => self.execute_get_td(),
             Command::SeekL | Command::SeekP => self.execute_seek(command),
             Command::Test => self.execute_test(),
             Command::GetId => self.execute_get_id(),
@@ -499,6 +505,8 @@ impl CdController {
             0x0A => (Command::Init, INIT_COMMAND_CYCLES),
             0x0C => (Command::Demute, std_receive_cycles),
             0x0E => (Command::SetMode, std_receive_cycles),
+            0x13 => (Command::GetTN, std_receive_cycles),
+            0x14 => (Command::GetTD, std_receive_cycles),
             0x15 => (Command::SeekL, std_receive_cycles),
             0x16 => (Command::SeekP, std_receive_cycles),
             0x19 => (Command::Test, std_receive_cycles),
@@ -534,4 +542,12 @@ impl CdController {
         log::debug!("  SMEN: {}", value.bit(5));
         log::debug!("  BFRD: {}", value.bit(7));
     }
+}
+
+fn bcd_to_binary(value: u8) -> u8 {
+    10 * (value >> 4) + (value & 0xF)
+}
+
+fn binary_to_bcd(value: u8) -> u8 {
+    ((value / 10) << 4) | (value % 10)
 }
