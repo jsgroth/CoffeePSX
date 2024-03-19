@@ -2,9 +2,7 @@
 
 use std::cmp;
 
-use crate::cpu::gte::fixedpoint::{
-    DivisionResult, FixedPointDecimal, ScreenCoordinate, TranslationComponent,
-};
+use crate::cpu::gte::fixedpoint::{DivisionResult, FixedPointDecimal, ScreenCoordinate};
 use crate::cpu::gte::registers::{Flag, Register};
 use crate::cpu::gte::{fixedpoint, GeometryTransformationEngine, MatrixMultiplyBehavior};
 use crate::num::U32Ext;
@@ -185,14 +183,6 @@ impl GeometryTransformationEngine {
         self.r[Register::SZ1] = self.r[Register::SZ2];
         self.r[Register::SZ2] = self.r[Register::SZ3];
         self.r[Register::SZ3] = sz3.into();
-    }
-
-    fn read_translation_vector(&self) -> [TranslationComponent; 3] {
-        [
-            fixedpoint::translation_component(self.r[Register::TRX]),
-            fixedpoint::translation_component(self.r[Register::TRY]),
-            fixedpoint::translation_component(self.r[Register::TRZ]),
-        ]
     }
 
     fn read_screen_xy(&self, xy_register: usize) -> (ScreenCoordinate, ScreenCoordinate) {

@@ -1,3 +1,5 @@
+//! GTE color calculation instructions
+
 use crate::cpu::gte;
 use crate::cpu::gte::fixedpoint::{FarColor, FixedPointDecimal, Vector16Component};
 use crate::cpu::gte::registers::Register;
@@ -116,7 +118,7 @@ impl GeometryTransformationEngine {
         self.set_ir(mac1, mac2, mac3, opcode.bit(gte::LM_BIT));
     }
 
-    fn read_background_color(&self) -> [Vector16Component; 3] {
+    pub(super) fn read_background_color(&self) -> [Vector16Component; 3] {
         [
             fixedpoint::vector16_component(self.r[Register::RBK]),
             fixedpoint::vector16_component(self.r[Register::GBK]),
@@ -129,18 +131,6 @@ impl GeometryTransformationEngine {
             fixedpoint::far_color(self.r[Register::RFC]),
             fixedpoint::far_color(self.r[Register::GFC]),
             fixedpoint::far_color(self.r[Register::BFC]),
-        ]
-    }
-
-    fn read_ir_vector(&self) -> [Vector16Component; 3] {
-        self.read_vector16_unpacked(Register::IR1, Register::IR2, Register::IR3)
-    }
-
-    fn read_mac_vector<const FRACTION_BITS: u8>(&self) -> [FixedPointDecimal<FRACTION_BITS>; 3] {
-        [
-            FixedPointDecimal::new((self.r[Register::MAC1] as i32).into()),
-            FixedPointDecimal::new((self.r[Register::MAC2] as i32).into()),
-            FixedPointDecimal::new((self.r[Register::MAC3] as i32).into()),
         ]
     }
 }

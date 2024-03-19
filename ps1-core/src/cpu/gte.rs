@@ -1,5 +1,6 @@
 //! Geometry Transformation Engine (GTE), a 3D math coprocessor
 
+mod calculation;
 mod colors;
 mod coordinates;
 mod fixedpoint;
@@ -135,6 +136,7 @@ impl GeometryTransformationEngine {
         match command {
             0x01 => self.rtps(opcode),
             0x06 => self.nclip(),
+            0x12 => self.mvmva(opcode),
             0x13 => self.ncds(opcode),
             0x2D => self.avsz3(),
             0x2E => self.avsz4(),
@@ -348,6 +350,26 @@ impl GeometryTransformationEngine {
             fixedpoint::vector16_component(self.r[x_register]),
             fixedpoint::vector16_component(self.r[y_register]),
             fixedpoint::vector16_component(self.r[z_register]),
+        ]
+    }
+
+    fn read_ir_vector(&self) -> [Vector16Component; 3] {
+        self.read_vector16_unpacked(Register::IR1, Register::IR2, Register::IR3)
+    }
+
+    fn read_mac_vector<const FRACTION_BITS: u8>(&self) -> [FixedPointDecimal<FRACTION_BITS>; 3] {
+        [
+            FixedPointDecimal::new((self.r[Register::MAC1] as i32).into()),
+            FixedPointDecimal::new((self.r[Register::MAC2] as i32).into()),
+            FixedPointDecimal::new((self.r[Register::MAC3] as i32).into()),
+        ]
+    }
+
+    fn read_translation_vector(&self) -> [TranslationComponent; 3] {
+        [
+            fixedpoint::translation_component(self.r[Register::TRX]),
+            fixedpoint::translation_component(self.r[Register::TRY]),
+            fixedpoint::translation_component(self.r[Register::TRZ]),
         ]
     }
 }
