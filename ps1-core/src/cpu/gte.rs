@@ -111,6 +111,8 @@ impl GeometryTransformationEngine {
         match command {
             0x01 => self.rtps(opcode),
             0x06 => self.nclip(),
+            0x2D => self.avsz3(),
+            0x2E => self.avsz4(),
             0x30 => self.rtpt(opcode),
             _ => log::warn!("Unimplemented GTE command {command:02X} {opcode:08X}"),
         }

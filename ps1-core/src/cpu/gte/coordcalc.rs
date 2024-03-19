@@ -41,6 +41,8 @@ enum Ir3SaturationFlagBehavior {
 impl GeometryTransformationEngine {
     // RTPS: Perspective transformation, single
     // Applies perspective transformation to V0
+    // Coordinates are written to the screen X/Y/Z FIFOs, and the depth cueing interpolation factor
+    // is written to IR0
     pub(super) fn rtps(&mut self, opcode: u32) {
         log::trace!("GTE RTPS: {opcode:08X}");
 
@@ -98,8 +100,11 @@ impl GeometryTransformationEngine {
     }
 
     // NCLIP: Normal clipping
-    // Sets MAC0 to the Z component of the cross product of the 3 screen X/Y coordinates in the FIFO
+    // Computes the Z component of the cross product of the 3 screen X/Y coordinates in the FIFO,
+    // and writes the result to MAC0
     pub(super) fn nclip(&mut self) {
+        log::trace!("GTE NCLIP");
+
         let (sx0, sy0) = self.read_screen_xy(Register::SXY0);
         let (sx1, sy1) = self.read_screen_xy(Register::SXY1);
         let (sx2, sy2) = self.read_screen_xy(Register::SXY2);
@@ -107,6 +112,52 @@ impl GeometryTransformationEngine {
         let mac0 = sx0 * sy1 + sx1 * sy2 + sx2 * sy0 - sx0 * sy2 - sx1 * sy0 - sx2 * sy1;
         self.check_mac0_overflow(mac0);
         self.r[Register::MAC0] = i64::from(mac0) as u32;
+    }
+
+    // AVSZ3: Average of three Z values
+    // Averages the last three screen Z coordinates in the FIFO using the specified scale factor (ZSF3),
+    // and writes the result to MAC0 and OTZ
+    pub(super) fn avsz3(&mut self) {
+        log::trace!("GTE AVSZ3");
+
+        let sz1 = fixedpoint::screen_z(self.r[Register::SZ1]);
+        let sz2 = fixedpoint::screen_z(self.r[Register::SZ2]);
+        let sz3 = fixedpoint::screen_z(self.r[Register::SZ3]);
+        let zsf3 = fixedpoint::z_scale_factor(self.r[Register::ZSF3]);
+
+        let mac0 = zsf3 * (sz1 + sz2 + sz3);
+        self.check_mac0_overflow(mac0);
+        self.r[Register::MAC0] = i64::from(mac0) as u32;
+
+        self.set_otz();
+    }
+
+    // AVSZ4: Average of four Z values
+    // Averages all four screen Z coordinates in he FIFO using the specified scale factor (ZSF4), and
+    // writes the result to MAC0 and OTZ
+    pub(super) fn avsz4(&mut self) {
+        log::trace!("GTE AVSZ4");
+
+        let sz0 = fixedpoint::screen_z(self.r[Register::SZ0]);
+        let sz1 = fixedpoint::screen_z(self.r[Register::SZ1]);
+        let sz2 = fixedpoint::screen_z(self.r[Register::SZ2]);
+        let sz3 = fixedpoint::screen_z(self.r[Register::SZ3]);
+        let zsf4 = fixedpoint::z_scale_factor(self.r[Register::ZSF4]);
+
+        let mac0 = zsf4 * (sz0 + sz1 + sz2 + sz3);
+        self.check_mac0_overflow(mac0);
+        self.r[Register::MAC0] = i64::from(mac0) as u32;
+
+        self.set_otz();
+    }
+
+    fn set_otz(&mut self) {
+        let otz = (self.r[Register::MAC0] as i32) >> 12;
+        let clamped_otz = otz.clamp(U16_MIN, U16_MAX);
+        if otz != clamped_otz {
+            self.r[Register::FLAG] |= Flag::SZ3_OTZ_SATURATED | Flag::ERROR;
+        }
+        self.r[Register::OTZ] = clamped_otz as u32;
     }
 
     fn matrix_multiply_add(
@@ -330,8 +381,8 @@ impl GeometryTransformationEngine {
 
     fn read_screen_xy(&self, xy_register: usize) -> (ScreenCoordinate, ScreenCoordinate) {
         let value = self.r[xy_register];
-        let sx = fixedpoint::screen_coordinate(value);
-        let sy = fixedpoint::screen_coordinate(value >> 16);
+        let sx = fixedpoint::screen_xy(value);
+        let sy = fixedpoint::screen_xy(value >> 16);
 
         (sx, sy)
     }

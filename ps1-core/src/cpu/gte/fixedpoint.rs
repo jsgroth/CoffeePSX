@@ -94,7 +94,19 @@ pub fn screen_offset(value: u32) -> ScreenOffset {
 // SX/SY components are 1/15/0
 pub type ScreenCoordinate = FixedPointDecimal<0>;
 
-pub fn screen_coordinate(value: u32) -> ScreenCoordinate {
+pub fn screen_xy(value: u32) -> ScreenCoordinate {
+    FixedPointDecimal((value as i16).into())
+}
+
+// SZ components are 0/16/0
+pub fn screen_z(value: u32) -> ScreenCoordinate {
+    FixedPointDecimal((value as u16).into())
+}
+
+// ZSF3/ZSF4 are 1/3/12
+pub type ZScaleFactor = FixedPointDecimal<12>;
+
+pub fn z_scale_factor(value: u32) -> ZScaleFactor {
     FixedPointDecimal((value as i16).into())
 }
 
