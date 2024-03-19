@@ -4,12 +4,22 @@ use std::ops::{Add, Mul, Sub};
 pub struct FixedPointDecimal<const FRACTION_BITS: u8>(i64);
 
 impl<const FRACTION_BITS: u8> FixedPointDecimal<FRACTION_BITS> {
+    pub const ZERO: Self = Self(0);
+
+    pub fn new(value: i64) -> Self {
+        Self(value)
+    }
+
     pub fn shift_to<const NEW_FRACTION_BITS: u8>(self) -> FixedPointDecimal<NEW_FRACTION_BITS> {
         if NEW_FRACTION_BITS > FRACTION_BITS {
             FixedPointDecimal(self.0 << (NEW_FRACTION_BITS - FRACTION_BITS))
         } else {
             FixedPointDecimal(self.0 >> (FRACTION_BITS - NEW_FRACTION_BITS))
         }
+    }
+
+    pub fn reinterpret<const NEW_FRACTION_BITS: u8>(self) -> FixedPointDecimal<NEW_FRACTION_BITS> {
+        FixedPointDecimal(self.0)
     }
 }
 
@@ -53,6 +63,7 @@ macro_rules! impl_mul {
 
 impl_mul!(@single 0, 0);
 impl_mul!(0, 12);
+impl_mul!(4, 12);
 impl_mul!(0, 16);
 impl_mul!(8, 16);
 
@@ -120,4 +131,26 @@ pub fn dqa(value: u32) -> DepthCueingCoefficient {
 
 pub fn dqb(value: u32) -> DepthCueingOffset {
     FixedPointDecimal((value as i32).into())
+}
+
+// FC components are 1/27/4
+pub type FarColor = FixedPointDecimal<4>;
+
+pub fn far_color(value: u32) -> FarColor {
+    FixedPointDecimal((value as i32).into())
+}
+
+// RGBC components are 0/8/0
+pub type RgbComponent = FixedPointDecimal<0>;
+
+pub fn rgb(value: u32) -> [RgbComponent; 3] {
+    let [r, g, b, _] = value.to_le_bytes();
+    [FixedPointDecimal(r.into()), FixedPointDecimal(g.into()), FixedPointDecimal(b.into())]
+}
+
+// IR0 is 1/3/12
+pub type DepthInterpolationFactor = FixedPointDecimal<12>;
+
+pub fn ir0(value: u32) -> DepthInterpolationFactor {
+    FixedPointDecimal((value as i16).into())
 }
