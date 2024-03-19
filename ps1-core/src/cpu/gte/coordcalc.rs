@@ -3,7 +3,8 @@
 use std::cmp;
 
 use crate::cpu::gte::fixedpoint::{
-    DivisionResult, FixedPointDecimal, MatrixComponent, TranslationComponent, Vector16Component,
+    DivisionResult, FixedPointDecimal, MatrixComponent, ScreenCoordinate, TranslationComponent,
+    Vector16Component,
 };
 use crate::cpu::gte::registers::{Flag, Register};
 use crate::cpu::gte::{fixedpoint, GeometryTransformationEngine};
@@ -43,9 +44,9 @@ impl GeometryTransformationEngine {
     pub(super) fn rtps(&mut self, opcode: u32) {
         log::trace!("GTE RTPS: {opcode:08X}");
 
-        let translation = self.translation_vector();
-        let rotation = self.matrix(Register::RT1112);
-        let v0 = self.vector16(Register::VXY0, Register::VZ0);
+        let translation = self.read_translation_vector();
+        let rotation = self.read_matrix(Register::RT1112);
+        let v0 = self.read_vector16(Register::VXY0, Register::VZ0);
 
         self.matrix_multiply_add(
             opcode,
@@ -62,10 +63,10 @@ impl GeometryTransformationEngine {
     pub(super) fn rtpt(&mut self, opcode: u32) {
         log::trace!("GTE RTPT: {opcode:08X}");
 
-        let translation = self.translation_vector();
-        let rotation = self.matrix(Register::RT1112);
+        let translation = self.read_translation_vector();
+        let rotation = self.read_matrix(Register::RT1112);
 
-        let v0 = self.vector16(Register::VXY0, Register::VZ0);
+        let v0 = self.read_vector16(Register::VXY0, Register::VZ0);
         self.matrix_multiply_add(
             opcode,
             &v0,
@@ -75,7 +76,7 @@ impl GeometryTransformationEngine {
         );
         self.perform_perspective_transformation(opcode);
 
-        let v1 = self.vector16(Register::VXY1, Register::VZ1);
+        let v1 = self.read_vector16(Register::VXY1, Register::VZ1);
         self.matrix_multiply_add(
             opcode,
             &v1,
@@ -85,7 +86,7 @@ impl GeometryTransformationEngine {
         );
         self.perform_perspective_transformation(opcode);
 
-        let v2 = self.vector16(Register::VXY2, Register::VZ2);
+        let v2 = self.read_vector16(Register::VXY2, Register::VZ2);
         self.matrix_multiply_add(
             opcode,
             &v2,
@@ -94,6 +95,18 @@ impl GeometryTransformationEngine {
             Ir3SaturationFlagBehavior::Rtp,
         );
         self.perform_perspective_transformation(opcode);
+    }
+
+    // NCLIP: Normal clipping
+    // Sets MAC0 to the Z component of the cross product of the 3 screen X/Y coordinates in the FIFO
+    pub(super) fn nclip(&mut self) {
+        let (sx0, sy0) = self.read_screen_xy(Register::SXY0);
+        let (sx1, sy1) = self.read_screen_xy(Register::SXY1);
+        let (sx2, sy2) = self.read_screen_xy(Register::SXY2);
+
+        let mac0 = sx0 * sy1 + sx1 * sy2 + sx2 * sy0 - sx0 * sy2 - sx1 * sy0 - sx2 * sy1;
+        self.check_mac0_overflow(mac0);
+        self.r[Register::MAC0] = i64::from(mac0) as u32;
     }
 
     fn matrix_multiply_add(
@@ -279,7 +292,7 @@ impl GeometryTransformationEngine {
         self.r[Register::SZ3] = sz3.into();
     }
 
-    fn translation_vector(&self) -> [TranslationComponent; 3] {
+    fn read_translation_vector(&self) -> [TranslationComponent; 3] {
         [
             fixedpoint::translation_component(self.r[Register::TRX]),
             fixedpoint::translation_component(self.r[Register::TRY]),
@@ -287,7 +300,7 @@ impl GeometryTransformationEngine {
         ]
     }
 
-    fn vector16(&self, xy_register: usize, z_register: usize) -> [Vector16Component; 3] {
+    fn read_vector16(&self, xy_register: usize, z_register: usize) -> [Vector16Component; 3] {
         [
             fixedpoint::vector16_component(self.r[xy_register]),
             fixedpoint::vector16_component(self.r[xy_register] >> 16),
@@ -295,7 +308,7 @@ impl GeometryTransformationEngine {
         ]
     }
 
-    fn matrix(&self, base_register: usize) -> [[MatrixComponent; 3]; 3] {
+    fn read_matrix(&self, base_register: usize) -> [[MatrixComponent; 3]; 3] {
         [
             [
                 fixedpoint::matrix_component(self.r[base_register]),
@@ -313,6 +326,14 @@ impl GeometryTransformationEngine {
                 fixedpoint::matrix_component(self.r[base_register + 4]),
             ],
         ]
+    }
+
+    fn read_screen_xy(&self, xy_register: usize) -> (ScreenCoordinate, ScreenCoordinate) {
+        let value = self.r[xy_register];
+        let sx = fixedpoint::screen_coordinate(value);
+        let sy = fixedpoint::screen_coordinate(value >> 16);
+
+        (sx, sy)
     }
 }
 

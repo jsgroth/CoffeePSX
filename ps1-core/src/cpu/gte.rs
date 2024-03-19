@@ -110,6 +110,7 @@ impl GeometryTransformationEngine {
         let command = opcode & 0x3F;
         match command {
             0x01 => self.rtps(opcode),
+            0x06 => self.nclip(),
             0x30 => self.rtpt(opcode),
             _ => log::warn!("Unimplemented GTE command {command:02X} {opcode:08X}"),
         }

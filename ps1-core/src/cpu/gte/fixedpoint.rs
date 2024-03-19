@@ -1,4 +1,4 @@
-use std::ops::{Add, Mul};
+use std::ops::{Add, Mul, Sub};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixedPointDecimal<const FRACTION_BITS: u8>(i64);
@@ -27,8 +27,16 @@ impl<const FRACTION_BITS: u8> Add for FixedPointDecimal<FRACTION_BITS> {
     }
 }
 
+impl<const FRACTION_BITS: u8> Sub for FixedPointDecimal<FRACTION_BITS> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
 macro_rules! impl_mul {
-    (@inner $lhs:literal, $rhs:literal) => {
+    (@single $lhs:literal, $rhs:literal) => {
         impl Mul<FixedPointDecimal<$rhs>> for FixedPointDecimal<$lhs> {
             type Output = FixedPointDecimal<{$lhs + $rhs}>;
 
@@ -38,11 +46,12 @@ macro_rules! impl_mul {
         }
     };
     ($lhs:literal, $rhs:literal) => {
-        impl_mul!(@inner $lhs, $rhs);
-        impl_mul!(@inner $rhs, $lhs);
+        impl_mul!(@single $lhs, $rhs);
+        impl_mul!(@single $rhs, $lhs);
     };
 }
 
+impl_mul!(@single 0, 0);
 impl_mul!(0, 12);
 impl_mul!(0, 16);
 impl_mul!(8, 16);
@@ -80,6 +89,13 @@ pub type ScreenOffset = FixedPointDecimal<16>;
 
 pub fn screen_offset(value: u32) -> ScreenOffset {
     FixedPointDecimal((value as i32).into())
+}
+
+// SX/SY components are 1/15/0
+pub type ScreenCoordinate = FixedPointDecimal<0>;
+
+pub fn screen_coordinate(value: u32) -> ScreenCoordinate {
+    FixedPointDecimal((value as i16).into())
 }
 
 // DQA is 1/7/8, DQB is 1/7/24
