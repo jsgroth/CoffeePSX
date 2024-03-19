@@ -26,7 +26,7 @@ impl GeometryTransformationEngine {
     // IR = MAC
     fn apply_light_matrix(&mut self, opcode: u32, vxy: usize, vz: usize) {
         let vector = self.read_vector16_packed(vxy, vz);
-        let light_matrix = self.read_matrix(Register::LLM1112);
+        let light_matrix = self.read_matrix(Register::LLM_START);
         self.matrix_multiply_add(
             opcode,
             &vector,
@@ -41,7 +41,7 @@ impl GeometryTransformationEngine {
     fn apply_light_color_matrix(&mut self, opcode: u32) {
         let ir_vector = self.read_ir_vector();
         let background_color = self.read_background_color();
-        let light_color_matrix = self.read_matrix(Register::LCM1112);
+        let light_color_matrix = self.read_matrix(Register::LCM_START);
         self.matrix_multiply_add(
             opcode,
             &ir_vector,

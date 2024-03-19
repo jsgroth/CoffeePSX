@@ -1,5 +1,6 @@
 pub struct Register;
 
+#[allow(dead_code)]
 impl Register {
     // V0-2: 16-bit vectors
     pub const VXY0: usize = 0;
@@ -46,32 +47,20 @@ impl Register {
     pub const LZCS: usize = 30;
     // LZCR: Count leading bits result
     pub const LZCR: usize = 31;
-    // RT: Rotation matrix
-    pub const RT1112: usize = 32;
-    pub const RT1321: usize = 33;
-    pub const RT2223: usize = 34;
-    pub const RT3132: usize = 35;
-    pub const RT33: usize = 36;
+    // RT: Rotation matrix (R32-36)
+    pub const RT_START: usize = 32;
     // TR: Translation vector
     pub const TRX: usize = 37;
     pub const TRY: usize = 38;
     pub const TRZ: usize = 39;
-    // LLM: Light matrix
-    pub const LLM1112: usize = 40;
-    pub const LLM1321: usize = 41;
-    pub const LLM2223: usize = 42;
-    pub const LLM3132: usize = 43;
-    pub const LLM33: usize = 44;
+    // LLM: Light matrix (R40-44)
+    pub const LLM_START: usize = 40;
     // BK: Background color
     pub const RBK: usize = 45;
     pub const GBK: usize = 46;
     pub const BBK: usize = 47;
-    // LCM: Light color matrix
-    pub const LCM1112: usize = 48;
-    pub const LCM1321: usize = 49;
-    pub const LCM2223: usize = 50;
-    pub const LCM3132: usize = 51;
-    pub const LCM33: usize = 52;
+    // LCM: Light color matrix (R48-52)
+    pub const LCM_START: usize = 48;
     // FC: Far color
     pub const RFC: usize = 53;
     pub const GFC: usize = 54;
