@@ -598,7 +598,7 @@ impl R3000 {
             2 => self.gte.read_register(register),
             cp => todo!("MFC{cp} {register}"),
         };
-        self.registers.write_gpr(parse_rt(opcode), value);
+        self.registers.write_gpr_delayed(parse_rt(opcode), value);
     }
 
     // MTCz: Move to coprocessor
@@ -620,7 +620,7 @@ impl R3000 {
             cp => todo!("CFC{cp} {register} {opcode:08X}"),
         };
 
-        self.registers.write_gpr(parse_rt(opcode), value);
+        self.registers.write_gpr_delayed(parse_rt(opcode), value);
     }
 
     // CTCz: Move control to coprocessor
@@ -638,9 +638,7 @@ impl R3000 {
         let operation = opcode & 0xFFFFFF;
         match parse_coprocessor(opcode) {
             0 => self.cp0.execute_operation(operation),
-            2 => {
-                log::warn!("Unimplemented GTE opcode: {opcode:08X}");
-            }
+            2 => self.gte.execute_opcode(opcode),
             cp => todo!("COP{cp} {opcode:08X}"),
         }
     }
