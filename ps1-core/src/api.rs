@@ -68,6 +68,7 @@ pub struct Ps1Emulator {
     sio0: SerialPort,
     timers: Timers,
     scheduler: Scheduler,
+    last_render_cycles: u64,
     tty_enabled: bool,
     tty_buffer: String,
 }
@@ -133,6 +134,7 @@ impl Ps1Emulator {
             sio0: SerialPort::new(),
             timers: Timers::new(),
             scheduler: Scheduler::new(),
+            last_render_cycles: 0,
             tty_enabled,
             tty_buffer: String::new(),
         };
@@ -226,7 +228,29 @@ impl Ps1Emulator {
         // TODO use scheduler instead of advancing SIO0 every CPU tick
         self.sio0.tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
-        self.process_scheduler_events(renderer, audio_output)
+        self.process_scheduler_events(renderer, audio_output)?;
+
+        if self.scheduler.cpu_cycle_counter() - self.last_render_cycles >= 33_868_800 / 30 {
+            // Force a frame render
+            self.render_frame(renderer, audio_output)?;
+        }
+
+        Ok(())
+    }
+
+    fn render_frame<R: Renderer, A: AudioOutput>(
+        &mut self,
+        renderer: &mut R,
+        audio_output: &mut A,
+    ) -> Result<(), TickError<R::Err, A::Err>> {
+        self.last_render_cycles = self.scheduler.cpu_cycle_counter();
+
+        renderer.render_frame(self.gpu.vram()).map_err(TickError::Render)?;
+
+        audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
+        self.audio_buffer.clear();
+
+        Ok(())
     }
 
     fn process_scheduler_events<R: Renderer, A: AudioOutput>(
@@ -241,10 +265,7 @@ impl Ps1Emulator {
                     self.interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
                     self.timers.schedule_next_vblank(&mut self.scheduler);
 
-                    renderer.render_frame(self.gpu.vram()).map_err(TickError::Render)?;
-
-                    audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
-                    self.audio_buffer.clear();
+                    self.render_frame(renderer, audio_output)?;
                 }
                 SchedulerEventType::SpuAndCdClock => {
                     self.cd_controller.clock(&mut self.interrupt_registers)?;
