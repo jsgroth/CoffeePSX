@@ -1,6 +1,6 @@
 # ps1-emu
 
-Work-in-progress attempt at a PlayStation emulator. Barely anything is implemented right now, does not boot anything yet. Display is simply a dump of VRAM, interpreted as a 1024x512 grid of RGB555 pixels.
+Work-in-progress attempt at a PlayStation emulator. Barely anything is implemented right now, very few games boot. Display is simply a dump of VRAM, interpreted as a 1024x512 grid of RGB555 pixels.
 
 For now at least I am doing this as a standalone emulator instead of adding it to my multi-system emulator so that I can more easily experiment with different ways of handling rendering and parallelism.
 
@@ -17,7 +17,7 @@ Implemented:
 * The R3000-compatible CPU, minus I-cache and remotely accurate timing
 * Most of the GPU, using a software rasterizer
 * Part of the SPU (Sound Processing Unit), enough to get basic audio output
-* Enough of the CD-ROM controller to make the BIOS think there's no disc in the drive
+* Bare minimum CD-ROM functionality to get the simplest games to boot
 * Digital controllers (P1 only)
 * Most of the hardware timers
 
