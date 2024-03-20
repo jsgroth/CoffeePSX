@@ -106,6 +106,12 @@ impl Ps1EmulatorBuilder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TickEffect {
+    None,
+    FrameRendered,
+}
+
 // The SPU clock rate is exactly 1/768 the CPU clock rate
 // This _should_ be 44100 Hz, but it may not be exactly depending on the exact oscillator speed
 const SPU_CLOCK_DIVIDER: u64 = 768;
@@ -200,7 +206,7 @@ impl Ps1Emulator {
         inputs: Ps1Inputs,
         renderer: &mut R,
         audio_output: &mut A,
-    ) -> Result<(), TickError<R::Err, A::Err>> {
+    ) -> Result<TickEffect, TickError<R::Err, A::Err>> {
         self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
             spu: &mut self.spu,
@@ -228,14 +234,15 @@ impl Ps1Emulator {
         // TODO use scheduler instead of advancing SIO0 every CPU tick
         self.sio0.tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
-        self.process_scheduler_events(renderer, audio_output)?;
+        let tick_effect = self.process_scheduler_events(renderer, audio_output)?;
 
         if self.scheduler.cpu_cycle_counter() - self.last_render_cycles >= 33_868_800 / 30 {
             // Force a frame render
             self.render_frame(renderer, audio_output)?;
+            return Ok(TickEffect::FrameRendered);
         }
 
-        Ok(())
+        Ok(tick_effect)
     }
 
     fn render_frame<R: Renderer, A: AudioOutput>(
@@ -257,7 +264,9 @@ impl Ps1Emulator {
         &mut self,
         renderer: &mut R,
         audio_output: &mut A,
-    ) -> Result<(), TickError<R::Err, A::Err>> {
+    ) -> Result<TickEffect, TickError<R::Err, A::Err>> {
+        let mut tick_effect = TickEffect::None;
+
         while self.scheduler.is_event_ready() {
             let event = self.scheduler.pop_event();
             match event.event_type {
@@ -266,6 +275,8 @@ impl Ps1Emulator {
                     self.timers.schedule_next_vblank(&mut self.scheduler);
 
                     self.render_frame(renderer, audio_output)?;
+
+                    tick_effect = TickEffect::FrameRendered;
                 }
                 SchedulerEventType::SpuAndCdClock => {
                     self.cd_controller.clock(&mut self.interrupt_registers)?;
@@ -290,7 +301,7 @@ impl Ps1Emulator {
             }
         }
 
-        Ok(())
+        Ok(tick_effect)
     }
 
     fn check_for_putchar_call(&mut self) {

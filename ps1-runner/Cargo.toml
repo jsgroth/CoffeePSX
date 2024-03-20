@@ -11,13 +11,16 @@ ps1-core = { path = "../ps1-core" }
 
 anyhow = "1"
 bincode = "2.0.0-rc.3"
+bytemuck = { version = "1", features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
 cpal = "0.15"
 env_logger = "0.11"
 log = "0.4"
-minifb = "0.25"
+pollster = "0.3"
 rand = "0.8"
-rayon = "1"
+thiserror = "1"
+wgpu = "0.19"
+winit = "0.29"
 
 [lints]
 workspace = true

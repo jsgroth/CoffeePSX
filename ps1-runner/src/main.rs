@@ -1,21 +1,25 @@
+mod renderer;
+
+use crate::renderer::WgpuRenderer;
 use anyhow::anyhow;
 use cdrom::reader::{CdRom, CdRomFileFormat};
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
-use ps1_core::api::{AudioOutput, Ps1Emulator, Renderer};
+use ps1_core::api::{AudioOutput, Ps1Emulator, TickEffect};
 use ps1_core::input::Ps1Inputs;
-use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
-use std::fs::File;
-use std::io::{BufReader, BufWriter};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
-use std::{fs, iter, thread};
+use std::time::Duration;
+use std::{fs, thread};
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::WindowBuilder;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -27,79 +31,6 @@ struct Args {
     disc_path: Option<String>,
     #[arg(short = 't', long, default_value_t)]
     tty_enabled: bool,
-}
-
-struct MiniFbRenderer<'a> {
-    window: &'a mut Window,
-    frame_buffer: &'a mut [u32],
-    inputs: &'a mut Ps1Inputs,
-    frame_count: &'a mut u64,
-    last_fps_log: &'a mut SystemTime,
-    frame_rendered: &'a mut bool,
-}
-
-impl<'a> Renderer for MiniFbRenderer<'a> {
-    type Err = anyhow::Error;
-
-    fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err> {
-        self.frame_buffer.par_chunks_exact_mut(1024).enumerate().for_each(|(y, row)| {
-            for (x, fb_color) in row.iter_mut().enumerate() {
-                let vram_addr = 2048 * y + 2 * x;
-                let color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
-
-                let r = color & 0x1F;
-                let g = (color >> 5) & 0x1F;
-                let b = (color >> 10) & 0x1F;
-
-                *fb_color = rgb_5_to_8(b) | (rgb_5_to_8(g) << 8) | (rgb_5_to_8(r) << 16);
-            }
-        });
-
-        self.window.update_with_buffer(self.frame_buffer, 1024, 512)?;
-
-        update_inputs(self.window, self.inputs);
-
-        *self.frame_count += 1;
-
-        let elapsed = SystemTime::now().duration_since(*self.last_fps_log).unwrap();
-        if elapsed >= Duration::from_secs(5) {
-            log::info!("FPS: {}", *self.frame_count as f64 / elapsed.as_secs_f64());
-            *self.frame_count = 0;
-            *self.last_fps_log = SystemTime::now();
-        }
-
-        *self.frame_rendered = true;
-
-        Ok(())
-    }
-}
-
-fn update_inputs(window: &Window, inputs: &mut Ps1Inputs) {
-    inputs.p1 = inputs
-        .p1
-        .with_up(window.is_key_down(Key::Up))
-        .with_left(window.is_key_down(Key::Left))
-        .with_right(window.is_key_down(Key::Right))
-        .with_down(window.is_key_down(Key::Down))
-        .with_cross(window.is_key_down(Key::X))
-        .with_circle(window.is_key_down(Key::S))
-        .with_square(window.is_key_down(Key::Z))
-        .with_triangle(window.is_key_down(Key::A))
-        .with_l1(window.is_key_down(Key::W))
-        .with_l2(window.is_key_down(Key::Q))
-        .with_r1(window.is_key_down(Key::E))
-        .with_r2(window.is_key_down(Key::R))
-        .with_start(window.is_key_down(Key::Enter))
-        .with_select(window.is_key_down(Key::RightShift));
-}
-
-const RGB_5_TO_8: &[u32; 32] = &[
-    0, 8, 16, 25, 33, 41, 49, 58, 66, 74, 82, 90, 99, 107, 115, 123, 132, 140, 148, 156, 165, 173,
-    181, 189, 197, 206, 214, 222, 230, 239, 247, 255,
-];
-
-fn rgb_5_to_8(color: u16) -> u32 {
-    RGB_5_TO_8[color as usize]
 }
 
 struct CpalAudioOutput {
@@ -164,6 +95,32 @@ fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> 
     Ok((audio_output, audio_stream))
 }
 
+fn handle_key_event(event: KeyEvent, elwt: &EventLoopWindowTarget<()>, inputs: &mut Ps1Inputs) {
+    let pressed = event.state == ElementState::Pressed;
+
+    match event.physical_key {
+        PhysicalKey::Code(keycode) => match keycode {
+            KeyCode::ArrowUp => inputs.p1.set_up(pressed),
+            KeyCode::ArrowLeft => inputs.p1.set_left(pressed),
+            KeyCode::ArrowRight => inputs.p1.set_right(pressed),
+            KeyCode::ArrowDown => inputs.p1.set_down(pressed),
+            KeyCode::KeyX => inputs.p1.set_cross(pressed),
+            KeyCode::KeyS => inputs.p1.set_circle(pressed),
+            KeyCode::KeyZ => inputs.p1.set_square(pressed),
+            KeyCode::KeyA => inputs.p1.set_triangle(pressed),
+            KeyCode::KeyW => inputs.p1.set_l1(pressed),
+            KeyCode::KeyQ => inputs.p1.set_l2(pressed),
+            KeyCode::KeyE => inputs.p1.set_r1(pressed),
+            KeyCode::KeyR => inputs.p1.set_r2(pressed),
+            KeyCode::Enter => inputs.p1.set_start(pressed),
+            KeyCode::ShiftRight => inputs.p1.set_select(pressed),
+            KeyCode::Escape => elwt.exit(),
+            _ => {}
+        },
+        PhysicalKey::Unidentified(_) => {}
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
@@ -192,7 +149,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut emulator = emulator_builder.build()?;
 
-    let mut frame_buffer = vec![0; 1024 * 512];
+    let mut inputs = Ps1Inputs::default();
 
     let window_title = match (&args.disc_path, &args.exe_path) {
         (None, None) => "PS1 - (BIOS only)".into(),
@@ -208,117 +165,50 @@ fn main() -> anyhow::Result<()> {
         (Some(_), Some(_)) => unreachable!(),
     };
 
-    let mut window = Window::new(&window_title, 1024, 512, WindowOptions::default())?;
+    let event_loop = EventLoop::new()?;
+    let window = WindowBuilder::new()
+        .with_title(window_title)
+        .with_inner_size(LogicalSize::new(1024, 512))
+        .build(&event_loop)?;
+
+    let mut renderer = pollster::block_on(WgpuRenderer::new(&window))?;
 
     let (mut audio_output, audio_stream) = create_audio_output()?;
     audio_stream.play()?;
 
-    let mut inputs = Ps1Inputs::default();
+    event_loop.set_control_flow(ControlFlow::Poll);
 
-    if let Some(exe_path) = &args.exe_path {
-        log::info!("Sideloading EXE from '{exe_path}'");
-
-        let exe = fs::read(exe_path)?;
-
-        // The BIOS copies its shell to $00030000 in main RAM, and after it's initialized the kernel
-        // it jumps to $80030000 to begin shell execution.
-        // Sideload EXEs by stealing execution from the BIOS once it reaches this point.
-        loop {
-            emulator.tick(
-                inputs,
-                &mut MiniFbRenderer {
-                    window: &mut window,
-                    frame_buffer: &mut frame_buffer,
-                    inputs: &mut inputs,
-                    frame_count: &mut 0,
-                    last_fps_log: &mut SystemTime::now(),
-                    frame_rendered: &mut false,
-                },
-                &mut audio_output,
-            )?;
-            if emulator.cpu_pc() == 0x80030000 {
-                emulator.sideload_exe(&exe)?;
-                log::info!("EXE sideloaded");
-                break;
-            }
+    event_loop.run(move |event, elwt| match event {
+        Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+            elwt.exit();
         }
-    }
-
-    let save_state_path = match (&args.exe_path, &args.disc_path) {
-        (Some(_), Some(_)) => unreachable!(),
-        (Some(path), None) | (None, Some(path)) => Path::new(path).with_extension("ss0"),
-        (None, None) => Path::new(&args.bios_path).with_extension("ss0"),
-    };
-
-    let bincode_config = bincode::config::standard()
-        .with_little_endian()
-        .with_fixed_int_encoding()
-        .with_limit::<1_000_000_000>();
-
-    let mut frame_count = 0;
-    let mut last_fps_log = SystemTime::now();
-    let mut paused = false;
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        let mut frame_rendered = false;
-        if !paused {
-            emulator.tick(
-                inputs,
-                &mut MiniFbRenderer {
-                    window: &mut window,
-                    frame_buffer: &mut frame_buffer,
-                    inputs: &mut inputs,
-                    frame_count: &mut frame_count,
-                    last_fps_log: &mut last_fps_log,
-                    frame_rendered: &mut frame_rendered,
-                },
-                &mut audio_output,
-            )?;
-        } else {
-            thread::sleep(Duration::from_micros(16667));
-            window.update_with_buffer(&frame_buffer, 1024, 512)?;
-            frame_rendered = true;
+        Event::WindowEvent {
+            event: WindowEvent::KeyboardInput { event: key_event, .. }, ..
+        } => {
+            handle_key_event(key_event, elwt, &mut inputs);
         }
-
-        if frame_rendered {
-            if window.is_key_pressed(Key::P, KeyRepeat::No) {
-                paused = !paused;
-
-                if paused {
-                    *audio_output.audio_queue.lock().unwrap() =
-                        iter::once((0.0, 0.0)).cycle().take(1024 * 1024).collect();
-                } else {
-                    audio_output.audio_queue.lock().unwrap().clear();
-                }
+        Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+            renderer.handle_resize(size.width, size.height);
+        }
+        Event::AboutToWait => {
+            if audio_output.audio_queue.lock().unwrap().len() >= 2400 {
+                return;
             }
 
-            if window.is_key_pressed(Key::F5, KeyRepeat::No) {
-                let save_state_file = File::create(&save_state_path)?;
-                let mut writer = BufWriter::new(save_state_file);
-                bincode::encode_into_std_write(&emulator, &mut writer, bincode_config)?;
-                log::info!("Wrote save state to '{}'", save_state_path.display());
-            }
-
-            if window.is_key_pressed(Key::F6, KeyRepeat::No) {
-                match File::open(&save_state_path) {
-                    Ok(save_state_file) => {
-                        let disc = emulator.take_disc();
-
-                        let mut reader = BufReader::new(save_state_file);
-                        emulator = bincode::decode_from_std_read(&mut reader, bincode_config)?;
-                        emulator.set_disc(disc);
-
-                        log::info!("Loaded save state from '{}'", save_state_path.display());
-                    }
+            loop {
+                match emulator.tick(inputs, &mut renderer, &mut audio_output) {
+                    Ok(TickEffect::None) => {}
+                    Ok(TickEffect::FrameRendered) => break,
                     Err(err) => {
-                        log::error!(
-                            "Error loading save state from '{}': {err}",
-                            save_state_path.display()
-                        );
+                        log::error!("Emulator error: {err}");
+                        elwt.exit();
+                        break;
                     }
                 }
             }
         }
-    }
+        _ => {}
+    })?;
 
     Ok(())
 }
