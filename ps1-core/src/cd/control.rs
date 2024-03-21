@@ -49,7 +49,7 @@ impl From<u8> for DriveMode {
         let cd_da_enabled = mode.bit(0);
 
         if mode.bit(6) {
-            todo!("CD-XA ADPCM enabled via SetMode");
+            log::warn!("CD-XA ADPCM enabled via SetMode; not implemented");
         }
 
         if mode.bit(5) {
@@ -61,7 +61,7 @@ impl From<u8> for DriveMode {
         }
 
         if mode.bit(3) {
-            todo!("CD-XA ADPCM SetFilter enabled via SetMode");
+            log::warn!("CD-XA filtering enabled via SetMode; not implemented");
         }
 
         Self { speed, audio_report_interrupts, auto_pause_audio, cd_da_enabled }
