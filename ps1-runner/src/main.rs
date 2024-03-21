@@ -176,6 +176,20 @@ fn main() -> anyhow::Result<()> {
     let (mut audio_output, audio_stream) = create_audio_output()?;
     audio_stream.play()?;
 
+    if let Some(exe_path) = &args.exe_path {
+        log::info!("Sideloading EXE from '{exe_path}'");
+
+        let exe = fs::read(exe_path)?;
+        loop {
+            emulator.tick(inputs, &mut renderer, &mut audio_output)?;
+            if emulator.cpu_pc() == 0x80030000 {
+                emulator.sideload_exe(&exe)?;
+                log::info!("EXE sideloaded");
+                break;
+            }
+        }
+    }
+
     event_loop.set_control_flow(ControlFlow::Poll);
 
     event_loop.run(move |event, elwt| match event {
