@@ -1,3 +1,4 @@
+use crate::api::ColorDepthBits;
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
@@ -115,28 +116,6 @@ impl Display for VideoMode {
 impl VideoMode {
     pub fn from_bit(bit: bool) -> Self {
         if bit { Self::Pal } else { Self::Ntsc }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
-pub enum ColorDepthBits {
-    #[default]
-    Fifteen = 0,
-    TwentyFour = 1,
-}
-
-impl Display for ColorDepthBits {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Fifteen => write!(f, "15-bit"),
-            Self::TwentyFour => write!(f, "24-bit"),
-        }
-    }
-}
-
-impl ColorDepthBits {
-    pub fn from_bit(bit: bool) -> Self {
-        if bit { Self::TwentyFour } else { Self::Fifteen }
     }
 }
 

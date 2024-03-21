@@ -15,10 +15,34 @@ use crate::timers::Timers;
 use bincode::{Decode, Encode};
 use cdrom::reader::CdRom;
 use cdrom::CdRomError;
+use std::fmt::{Display, Formatter};
 use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
+pub enum ColorDepthBits {
+    #[default]
+    Fifteen = 0,
+    TwentyFour = 1,
+}
+
+impl Display for ColorDepthBits {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fifteen => write!(f, "15-bit"),
+            Self::TwentyFour => write!(f, "24-bit"),
+        }
+    }
+}
+
+impl ColorDepthBits {
+    pub(crate) fn from_bit(bit: bool) -> Self {
+        if bit { Self::TwentyFour } else { Self::Fifteen }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderParams {
+    pub color_depth: ColorDepthBits,
     pub frame_x: u32,
     pub frame_y: u32,
     pub frame_width: u32,

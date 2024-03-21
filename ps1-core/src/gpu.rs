@@ -69,6 +69,7 @@ impl Gpu {
         let (y1, y2) = self.registers.y_display_range;
 
         RenderParams {
+            color_depth: self.registers.display_area_color_depth,
             frame_x: self.registers.display_area_x,
             frame_y: self.registers.display_area_y,
             frame_width: if self.registers.force_h_368px {

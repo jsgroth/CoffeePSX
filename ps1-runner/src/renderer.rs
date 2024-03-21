@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use ps1_core::api::{RenderParams, Renderer};
+use ps1_core::api::{ColorDepthBits, RenderParams, Renderer};
 use std::collections::HashMap;
 use std::{cmp, iter};
 use thiserror::Error;
@@ -221,12 +221,29 @@ impl WgpuRenderer {
             let vram_row = (2048 * vram_y) as usize;
             let frame_buffer_row = (params.frame_width * y) as usize;
 
-            for x in 0..params.frame_width {
-                let vram_x = x.wrapping_add(params.frame_x) & 1023;
-                let vram_addr = vram_row + (2 * vram_x) as usize;
-                let rgb555_color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
-                self.frame_buffer[frame_buffer_row + x as usize] =
-                    convert_rgb555_color(rgb555_color);
+            match params.color_depth {
+                ColorDepthBits::Fifteen => {
+                    for x in 0..params.frame_width {
+                        let vram_x = x.wrapping_add(params.frame_x) & 1023;
+                        let vram_addr = vram_row + (2 * vram_x) as usize;
+
+                        let rgb555_color =
+                            u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
+                        self.frame_buffer[frame_buffer_row + x as usize] =
+                            convert_rgb555_color(rgb555_color);
+                    }
+                }
+                ColorDepthBits::TwentyFour => {
+                    for x in 0..params.frame_width {
+                        let vram_x = x.wrapping_add(params.frame_x);
+                        let vram_row_offset = (3 * vram_x) as usize;
+
+                        let r = vram[vram_row | (vram_row_offset & 2047)];
+                        let g = vram[vram_row | ((vram_row_offset + 1) & 2047)];
+                        let b = vram[vram_row | ((vram_row_offset + 2) & 2047)];
+                        self.frame_buffer[frame_buffer_row + x as usize] = Color::rgb(r, g, b);
+                    }
+                }
             }
         }
 

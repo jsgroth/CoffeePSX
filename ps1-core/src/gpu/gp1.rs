@@ -1,7 +1,8 @@
+use crate::api::ColorDepthBits;
 use crate::gpu::gp0::Gp0CommandState;
 use crate::gpu::registers::{
-    ColorDepthBits, DmaMode, HorizontalResolution, VerticalResolution, VideoMode,
-    DEFAULT_X_DISPLAY_RANGE, DEFAULT_Y_DISPLAY_RANGE,
+    DmaMode, HorizontalResolution, VerticalResolution, VideoMode, DEFAULT_X_DISPLAY_RANGE,
+    DEFAULT_Y_DISPLAY_RANGE,
 };
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
