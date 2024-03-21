@@ -21,7 +21,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::WindowBuilder;
+use winit::window::{Window, WindowBuilder};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -97,9 +97,10 @@ fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> 
     Ok((audio_output, audio_stream))
 }
 
-struct HandleKeyEventArgs<'a, 'window, Stream> {
+struct HandleKeyEventArgs<'a, Stream> {
     emulator: &'a mut Ps1Emulator,
-    renderer: &'a mut WgpuRenderer<'window>,
+    window: &'a Window,
+    renderer: &'a mut WgpuRenderer,
     audio_output: &'a CpalAudioOutput,
     audio_stream: &'a Stream,
     elwt: &'a EventLoopWindowTarget<()>,
@@ -112,6 +113,7 @@ fn handle_key_event<Stream: StreamTrait>(
     event: KeyEvent,
     HandleKeyEventArgs {
         emulator,
+        window,
         renderer,
         audio_output,
         audio_stream,
@@ -119,7 +121,7 @@ fn handle_key_event<Stream: StreamTrait>(
         inputs,
         save_state_path,
         paused,
-    }: HandleKeyEventArgs<'_, '_, Stream>,
+    }: HandleKeyEventArgs<'_, Stream>,
 ) -> anyhow::Result<()> {
     let pressed = event.state == ElementState::Pressed;
 
@@ -144,6 +146,7 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::F6 if pressed => load_state(save_state_path, emulator),
             KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
             KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
+            KeyCode::Quote if pressed => renderer.toggle_dumping_vram(window),
             _ => {}
         },
         PhysicalKey::Unidentified(_) => {}
@@ -268,7 +271,8 @@ fn main() -> anyhow::Result<()> {
         .with_inner_size(LogicalSize::new(585, 448))
         .build(&event_loop)?;
 
-    let mut renderer = pollster::block_on(WgpuRenderer::new(&window))?;
+    // SAFETY: The renderer does not outlive the window
+    let mut renderer = pollster::block_on(unsafe { WgpuRenderer::new(&window) })?;
 
     let (mut audio_output, audio_stream) = create_audio_output()?;
     audio_stream.play()?;
@@ -302,6 +306,7 @@ fn main() -> anyhow::Result<()> {
                 key_event,
                 HandleKeyEventArgs {
                     emulator: &mut emulator,
+                    window: &window,
                     renderer: &mut renderer,
                     audio_output: &audio_output,
                     audio_stream: &audio_stream,

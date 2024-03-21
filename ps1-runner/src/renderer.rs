@@ -14,9 +14,11 @@ use wgpu::{
     PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
     RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType,
     SamplerDescriptor, ShaderModule, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
-    SurfaceError, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
-    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexState,
+    SurfaceError, SurfaceTargetUnsafe, Texture, TextureAspect, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
+    VertexState,
 };
+use winit::dpi::LogicalSize;
 use winit::window::Window;
 
 #[repr(C)]
@@ -42,8 +44,8 @@ struct FrameSize {
     height: u32,
 }
 
-pub struct WgpuRenderer<'window> {
-    surface: Surface<'window>,
+pub struct WgpuRenderer {
+    surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
     device: Device,
     queue: Queue,
@@ -54,10 +56,14 @@ pub struct WgpuRenderer<'window> {
     frame_textures: HashMap<FrameSize, Texture>,
     sampler: Sampler,
     filter_mode: FilterMode,
+    dumping_vram: bool,
 }
 
-impl<'window> WgpuRenderer<'window> {
-    pub async fn new(window: &'window Window) -> anyhow::Result<Self> {
+impl WgpuRenderer {
+    /// # Safety
+    ///
+    /// The referenced window must live at least as long as the returned `WgpuRenderer`.
+    pub async unsafe fn new(window: &Window) -> anyhow::Result<Self> {
         let instance = Instance::new(InstanceDescriptor {
             backends: Backends::PRIMARY,
             flags: InstanceFlags::default(),
@@ -65,7 +71,8 @@ impl<'window> WgpuRenderer<'window> {
             gles_minor_version: Gles3MinorVersion::default(),
         });
 
-        let surface = instance.create_surface(window)?;
+        let surface_target = SurfaceTargetUnsafe::from_window(window)?;
+        let surface = instance.create_surface_unsafe(surface_target)?;
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -142,6 +149,7 @@ impl<'window> WgpuRenderer<'window> {
             frame_textures: HashMap::new(),
             sampler,
             filter_mode,
+            dumping_vram: false,
         })
     }
 
@@ -161,9 +169,29 @@ impl<'window> WgpuRenderer<'window> {
         log::info!("Current filter mode is {:?}", self.filter_mode);
     }
 
+    pub fn toggle_dumping_vram(&mut self, window: &Window) {
+        self.dumping_vram = !self.dumping_vram;
+
+        if self.dumping_vram {
+            let _ = window.request_inner_size(LogicalSize::new(1024, 512));
+        } else {
+            let _ = window.request_inner_size(LogicalSize::new(585, 448));
+        }
+
+        log::info!("Dumping VRAM: {}", self.dumping_vram);
+    }
+
     // TODO pay attention to display width and X offset?
     fn populate_frame_buffer(&mut self, vram: &[u8], params: RenderParams) {
         log::debug!("Populating frame buffer using parameters {params:?}");
+
+        if self.dumping_vram {
+            for (i, chunk) in vram.chunks_exact(2).enumerate() {
+                let rgb555_color = u16::from_le_bytes([chunk[0], chunk[1]]);
+                self.frame_buffer[i] = convert_rgb555_color(rgb555_color);
+            }
+            return;
+        }
 
         if !params.display_enabled || params.display_width == 0 || params.display_height == 0 {
             self.frame_buffer[..(params.frame_width * params.frame_height) as usize]
@@ -334,16 +362,23 @@ const RGB_5_TO_8: &[u8; 32] = &[
     181, 189, 197, 206, 214, 222, 230, 239, 247, 255,
 ];
 
-impl<'window> Renderer for WgpuRenderer<'window> {
+impl Renderer for WgpuRenderer {
     type Err = WgpuError;
 
     fn render_frame(&mut self, vram: &[u8], params: RenderParams) -> Result<(), Self::Err> {
         self.populate_frame_buffer(vram, params);
 
-        let cropped_frame_height = params.frame_height * 14 / 15;
-        let overscan_rows_top = params.frame_height / 30;
+        let (overscan_rows_top, frame_size) = if self.dumping_vram {
+            (0, FrameSize { width: 1024, height: 512 })
+        } else {
+            let cropped_frame_height = params.frame_height * 14 / 15;
+            let overscan_rows_top = params.frame_height / 30;
 
-        let frame_size = FrameSize { width: params.frame_width, height: cropped_frame_height };
+            let frame_size = FrameSize { width: params.frame_width, height: cropped_frame_height };
+
+            (overscan_rows_top, frame_size)
+        };
+
         let frame_texture = self.frame_textures.entry(frame_size).or_insert_with(|| {
             create_frame_texture(&self.device, self.frame_texture_format, frame_size)
         });
