@@ -5,7 +5,7 @@ use crate::cpu::OpSize;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::interrupts::InterruptRegisters;
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryControl};
 use crate::scheduler::Scheduler;
 use crate::sio::SerialPort;
 use crate::spu::Spu;
@@ -16,6 +16,7 @@ pub struct Bus<'a> {
     pub spu: &'a mut Spu,
     pub cd_controller: &'a mut CdController,
     pub memory: &'a mut Memory,
+    pub memory_control: &'a mut MemoryControl,
     pub dma_controller: &'a mut DmaController,
     pub interrupt_registers: &'a mut InterruptRegisters,
     pub sio0: &'a mut SerialPort,
@@ -132,17 +133,11 @@ impl<'a> Bus<'a> {
         log::debug!("I/O register read: {address:08X} {size:?}");
 
         match address & 0xFFFF {
-            0x1014 => {
-                log::warn!("Unimplemented SPU delay read, returning $200931E1");
-                0x200931E1
-            }
+            0x1000..=0x1020 => self.memory_control.read_register(address),
             0x1040 => self.sio0.read_rx_data(),
             0x1044 => self.sio0.read_status(),
             0x104A => self.sio0.read_control(),
-            0x1060 => {
-                log::warn!("Unimplemented RAM size read, returning $00000B88");
-                0x0B88
-            }
+            0x1060 => self.memory_control.read_ram_size(),
             0x1070 => self.interrupt_registers.read_interrupt_status(),
             0x1074 => self.interrupt_registers.read_interrupt_mask(),
             0x10F0 => self.dma_controller.read_control(),
@@ -164,30 +159,12 @@ impl<'a> Bus<'a> {
         log::debug!("I/O register write: {address:08X} {value:08X} {size:?}");
 
         match address & 0xFFFF {
-            0x1000 => {
-                unimplemented_register_write("Expansion 1 Address", address, value, size);
-            }
-            0x1004 => {
-                unimplemented_register_write("Expansion 2 Address", address, value, size);
-            }
-            0x1008 => {
-                unimplemented_register_write("Expansion 1 Memory Control", address, value, size);
-            }
-            0x100C => {
-                unimplemented_register_write("Expansion 3 Memory Control", address, value, size);
-            }
-            0x1010 => unimplemented_register_write("BIOS Memory Control", address, value, size),
-            0x1014 => unimplemented_register_write("SPU Memory Control", address, value, size),
-            0x1018 => unimplemented_register_write("CD-ROM Memory Control", address, value, size),
-            0x101C => {
-                unimplemented_register_write("Expansion 2 Memory Control", address, value, size);
-            }
-            0x1020 => unimplemented_register_write("Common Delay", address, value, size),
+            0x1000..=0x1020 => self.memory_control.write_register(address, value),
             0x1040 => self.sio0.write_tx_data(value),
             0x1048 => self.sio0.write_mode(value),
             0x104A => self.sio0.write_control(value),
             0x104E => self.sio0.write_baudrate_reload(value),
-            0x1060 => unimplemented_register_write("RAM Size", address, value, size),
+            0x1060 => self.memory_control.write_ram_size(value),
             0x1070 => self.interrupt_registers.write_interrupt_status(value),
             0x1074 => self.interrupt_registers.write_interrupt_mask(value),
             0x1080..=0x10EF => match (address >> 2) & 3 {

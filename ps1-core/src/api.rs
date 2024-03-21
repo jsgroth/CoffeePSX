@@ -7,7 +7,7 @@ use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::input::Ps1Inputs;
 use crate::interrupts::{InterruptRegisters, InterruptType};
-use crate::memory::Memory;
+use crate::memory::{Memory, MemoryControl};
 use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
 use crate::sio::SerialPort;
 use crate::spu::Spu;
@@ -76,6 +76,7 @@ pub struct Ps1Emulator {
     audio_buffer: Vec<(f64, f64)>,
     cd_controller: CdController,
     memory: Memory,
+    memory_control: MemoryControl,
     dma_controller: DmaController,
     interrupt_registers: InterruptRegisters,
     sio0: SerialPort,
@@ -148,6 +149,7 @@ impl Ps1Emulator {
             audio_buffer: Vec::with_capacity(1600),
             cd_controller: CdController::new(disc),
             memory,
+            memory_control: MemoryControl::new(),
             dma_controller: DmaController::new(),
             interrupt_registers: InterruptRegisters::new(),
             sio0: SerialPort::new(),
@@ -225,6 +227,7 @@ impl Ps1Emulator {
             spu: &mut self.spu,
             cd_controller: &mut self.cd_controller,
             memory: &mut self.memory,
+            memory_control: &mut self.memory_control,
             dma_controller: &mut self.dma_controller,
             interrupt_registers: &mut self.interrupt_registers,
             sio0: &mut self.sio0,
