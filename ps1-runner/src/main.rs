@@ -97,8 +97,9 @@ fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> 
     Ok((audio_output, audio_stream))
 }
 
-struct HandleKeyEventArgs<'a, Stream> {
+struct HandleKeyEventArgs<'a, 'window, Stream> {
     emulator: &'a mut Ps1Emulator,
+    renderer: &'a mut WgpuRenderer<'window>,
     audio_output: &'a CpalAudioOutput,
     audio_stream: &'a Stream,
     elwt: &'a EventLoopWindowTarget<()>,
@@ -111,13 +112,14 @@ fn handle_key_event<Stream: StreamTrait>(
     event: KeyEvent,
     HandleKeyEventArgs {
         emulator,
+        renderer,
         audio_output,
         audio_stream,
         elwt,
         inputs,
         save_state_path,
         paused,
-    }: HandleKeyEventArgs<'_, Stream>,
+    }: HandleKeyEventArgs<'_, '_, Stream>,
 ) -> anyhow::Result<()> {
     let pressed = event.state == ElementState::Pressed;
 
@@ -141,6 +143,7 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::F5 if pressed => save_state(save_state_path, emulator)?,
             KeyCode::F6 if pressed => load_state(save_state_path, emulator),
             KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
+            KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
             _ => {}
         },
         PhysicalKey::Unidentified(_) => {}
@@ -299,6 +302,7 @@ fn main() -> anyhow::Result<()> {
                 key_event,
                 HandleKeyEventArgs {
                     emulator: &mut emulator,
+                    renderer: &mut renderer,
                     audio_output: &audio_output,
                     audio_stream: &audio_stream,
                     elwt,

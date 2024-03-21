@@ -12,10 +12,10 @@ use wgpu::{
     InstanceFlags, Limits, LoadOp, MultisampleState, Operations, Origin3d,
     PipelineLayoutDescriptor, PolygonMode, PowerPreference, PresentMode, PrimitiveState,
     PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, SamplerDescriptor,
-    ShaderModule, ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceError, Texture,
-    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
-    TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexState,
+    RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModule, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
+    SurfaceError, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use winit::window::Window;
 
@@ -52,6 +52,8 @@ pub struct WgpuRenderer<'window> {
     frame_buffer: Vec<Color>,
     frame_texture_format: TextureFormat,
     frame_textures: HashMap<FrameSize, Texture>,
+    sampler: Sampler,
+    filter_mode: FilterMode,
 }
 
 impl<'window> WgpuRenderer<'window> {
@@ -125,6 +127,9 @@ impl<'window> WgpuRenderer<'window> {
             surface_format,
         );
 
+        let filter_mode = FilterMode::Linear;
+        let sampler = create_sampler(&device, filter_mode);
+
         Ok(Self {
             surface,
             surface_config,
@@ -135,6 +140,8 @@ impl<'window> WgpuRenderer<'window> {
             frame_buffer: vec![Color::BLACK; 1024 * 512],
             frame_texture_format,
             frame_textures: HashMap::new(),
+            sampler,
+            filter_mode,
         })
     }
 
@@ -142,6 +149,16 @@ impl<'window> WgpuRenderer<'window> {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    pub fn toggle_filter_mode(&mut self) {
+        self.filter_mode = match self.filter_mode {
+            FilterMode::Nearest => FilterMode::Linear,
+            FilterMode::Linear => FilterMode::Nearest,
+        };
+        self.sampler = create_sampler(&self.device, self.filter_mode);
+
+        log::info!("Current filter mode is {:?}", self.filter_mode);
     }
 
     // TODO pay attention to display width and X offset?
@@ -238,26 +255,30 @@ fn create_frame_texture(device: &Device, format: TextureFormat, size: FrameSize)
     })
 }
 
+fn create_sampler(device: &Device, filter_mode: FilterMode) -> Sampler {
+    device.create_sampler(&SamplerDescriptor {
+        label: "sampler".into(),
+        mag_filter: filter_mode,
+        min_filter: filter_mode,
+        mipmap_filter: filter_mode,
+        ..SamplerDescriptor::default()
+    })
+}
+
 fn create_render_bind_group(
     device: &Device,
     layout: &BindGroupLayout,
     texture: &Texture,
+    sampler: &Sampler,
 ) -> BindGroup {
     let texture_view = texture.create_view(&TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&SamplerDescriptor {
-        label: "sampler".into(),
-        mag_filter: FilterMode::Linear,
-        min_filter: FilterMode::Linear,
-        mipmap_filter: FilterMode::Linear,
-        ..SamplerDescriptor::default()
-    });
 
     device.create_bind_group(&BindGroupDescriptor {
         label: "render_bind_group".into(),
         layout,
         entries: &[
             BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&texture_view) },
-            BindGroupEntry { binding: 1, resource: BindingResource::Sampler(&sampler) },
+            BindGroupEntry { binding: 1, resource: BindingResource::Sampler(sampler) },
         ],
     })
 }
@@ -354,8 +375,12 @@ impl<'window> Renderer for WgpuRenderer<'window> {
         let output_texture = self.surface.get_current_texture()?;
         let output_view = output_texture.texture.create_view(&TextureViewDescriptor::default());
 
-        let render_bind_group =
-            create_render_bind_group(&self.device, &self.render_bind_group_layout, frame_texture);
+        let render_bind_group = create_render_bind_group(
+            &self.device,
+            &self.render_bind_group_layout,
+            frame_texture,
+            &self.sampler,
+        );
 
         {
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
