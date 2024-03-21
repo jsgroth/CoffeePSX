@@ -136,11 +136,26 @@ impl GeometryTransformationEngine {
         match command {
             0x01 => self.rtps(opcode),
             0x06 => self.nclip(),
+            // TODO 0x0C: OP
+            // TODO 0x10: DPCS
+            // TODO 0x11: INTPL
             0x12 => self.mvmva(opcode),
             0x13 => self.ncds(opcode),
+            // TODO 0x14: CDP
+            // TODO 0x16: NCDT
+            // TODO 0x1B: NCCS
+            // TODO 0x1C: CC
+            // TODO 0x1E: NCS
+            // TODO 0x20: NCT
+            0x28 => self.sqr(opcode),
+            // TODO 0x29: DCPL
+            // TODO 0x2A: DPCT
             0x2D => self.avsz3(),
             0x2E => self.avsz4(),
             0x30 => self.rtpt(opcode),
+            0x3D => self.gpf(opcode),
+            // TODO 0x3E: GPL
+            // TODO 0x3F: NCCT
             _ => log::warn!("Unimplemented GTE command {command:02X} {opcode:08X}"),
         }
     }

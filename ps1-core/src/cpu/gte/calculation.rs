@@ -1,8 +1,10 @@
 //! GTE general-purpose calculation instructions
 
+use crate::cpu::gte;
 use crate::cpu::gte::fixedpoint::FixedPointDecimal;
 use crate::cpu::gte::registers::Register;
 use crate::cpu::gte::{GeometryTransformationEngine, MatrixMultiplyBehavior};
+use crate::num::U32Ext;
 
 impl GeometryTransformationEngine {
     // MVMVA: Multiply vector by matrix and vector addition
@@ -42,5 +44,22 @@ impl GeometryTransformationEngine {
             &translation_vector,
             MatrixMultiplyBehavior::Standard,
         );
+    }
+
+    // SQR: Square vector
+    // Squares the components of the IR vector
+    pub(super) fn sqr(&mut self, opcode: u32) {
+        log::trace!("GTE SQR {opcode:08X}");
+
+        let ir_squared = self.read_ir_vector().map(|ir| ir * ir);
+        if opcode.bit(gte::SF_BIT) {
+            let [mac1, mac2, mac3] = ir_squared.map(|ir| ir.reinterpret::<12>().shift_to::<0>());
+            self.set_mac(mac1, mac2, mac3);
+        } else {
+            self.set_mac(ir_squared[0], ir_squared[1], ir_squared[2]);
+        }
+
+        let [mac1, mac2, mac3] = self.read_mac_vector::<0>();
+        self.set_ir(mac1, mac2, mac3, false);
     }
 }

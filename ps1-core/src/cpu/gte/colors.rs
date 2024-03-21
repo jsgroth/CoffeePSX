@@ -118,6 +118,35 @@ impl GeometryTransformationEngine {
         self.set_ir(mac1, mac2, mac3, opcode.bit(gte::LM_BIT));
     }
 
+    // GPF: General-purpose interpolation
+    // Interpolates the current contents of the IR vector and pushes to the color FIFO
+    pub(super) fn gpf(&mut self, opcode: u32) {
+        self.set_mac::<0>(
+            FixedPointDecimal::ZERO,
+            FixedPointDecimal::ZERO,
+            FixedPointDecimal::ZERO,
+        );
+        self.general_purpose_interpolation(opcode);
+    }
+
+    fn general_purpose_interpolation(&mut self, opcode: u32) {
+        let ir0 = fixedpoint::ir0(self.r[Register::IR0]);
+        let [ir1, ir2, ir3] = self.read_ir_vector();
+        let [mac1, mac2, mac3] = self.read_mac_vector::<12>();
+
+        let mac1 = ir1 * ir0 + mac1;
+        let mac2 = ir2 * ir0 + mac2;
+        let mac3 = ir3 * ir0 + mac3;
+
+        if opcode.bit(gte::SF_BIT) {
+            self.set_mac(mac1.shift_to::<0>(), mac2.shift_to::<0>(), mac3.shift_to::<0>());
+        } else {
+            self.set_mac(mac1, mac2, mac3);
+        }
+
+        self.push_to_color_fifo(opcode);
+    }
+
     pub(super) fn read_background_color(&self) -> [Vector16Component; 3] {
         [
             fixedpoint::vector16_component(self.r[Register::RBK]),
