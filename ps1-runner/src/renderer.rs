@@ -216,12 +216,14 @@ impl WgpuRenderer {
             effective_display_height.wrapping_add_signed(params.display_y_offset),
         );
         for y in y_begin..y_end {
-            let vram_y = y.wrapping_add_signed(-params.display_y_offset) & 511;
+            let vram_y =
+                y.wrapping_add(params.frame_y).wrapping_add_signed(-params.display_y_offset) & 511;
             let vram_row = (2048 * vram_y) as usize;
             let frame_buffer_row = (params.frame_width * y) as usize;
 
             for x in 0..params.frame_width {
-                let vram_addr = vram_row + (2 * x) as usize;
+                let vram_x = x.wrapping_add(params.frame_x) & 1023;
+                let vram_addr = vram_row + (2 * vram_x) as usize;
                 let rgb555_color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
                 self.frame_buffer[frame_buffer_row + x as usize] =
                     convert_rgb555_color(rgb555_color);
