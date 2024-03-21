@@ -184,6 +184,8 @@ pub struct CdController {
     seek_location: Option<CdTime>,
     current_audio_sample: (i16, i16),
     cd_to_spu_volume: [[u8; 2]; 2],
+    next_cd_to_spu_volume: [[u8; 2]; 2],
+    adpcm_muted: bool,
 }
 
 impl CdController {
@@ -202,6 +204,8 @@ impl CdController {
             seek_location: None,
             current_audio_sample: (0, 0),
             cd_to_spu_volume: [[0; 2]; 2],
+            next_cd_to_spu_volume: [[0; 2]; 2],
+            adpcm_muted: true,
         }
     }
 
@@ -437,7 +441,7 @@ impl CdController {
             (1, 3) => {
                 // $1F801801.3 W: Right CD to Right SPU volume
                 log::debug!("R CD to R SPU volume: {value:02X}");
-                self.cd_to_spu_volume[1][1] = value;
+                self.next_cd_to_spu_volume[1][1] = value;
             }
             (2, 0) => {
                 // $1F801802.0 W: Parameter FIFO
@@ -450,12 +454,12 @@ impl CdController {
             (2, 2) => {
                 // $1F801802.2 W: Left CD to Left SPU volume
                 log::debug!("L CD to L SPU volume: {value:02X}");
-                self.cd_to_spu_volume[0][0] = value;
+                self.next_cd_to_spu_volume[0][0] = value;
             }
             (2, 3) => {
                 // $1F801802.3 W: Right CD to Left SPU volume
                 log::debug!("R CD to L SPU volume: {value:02X}");
-                self.cd_to_spu_volume[0][1] = value;
+                self.next_cd_to_spu_volume[0][1] = value;
             }
             (3, 0) => {
                 // $1F801803.0 W: Request register
@@ -468,11 +472,11 @@ impl CdController {
             (3, 2) => {
                 // $1F801803.2 W: Left CD to Right SPU volume
                 log::debug!("L CD to R SPU volume: {value:02X}");
-                self.cd_to_spu_volume[1][0] = value;
+                self.next_cd_to_spu_volume[1][0] = value;
             }
             (3, 3) => {
                 // $1F801803.3 W: Apply audio volume changes
-                log::warn!("Unimplemented 'apply audio volume' write: {value:02X}");
+                self.write_apply_volume_register(value);
             }
             _ => todo!("CD-ROM write {address:08X}.{} {value:02X}", self.index),
         }
@@ -555,6 +559,18 @@ impl CdController {
         log::debug!("Request register write: {value:02X}");
         log::debug!("  SMEN: {}", value.bit(5));
         log::debug!("  BFRD: {}", value.bit(7));
+    }
+
+    fn write_apply_volume_register(&mut self, value: u8) {
+        self.adpcm_muted = value.bit(0);
+
+        if value.bit(5) {
+            self.cd_to_spu_volume = self.next_cd_to_spu_volume;
+        }
+
+        log::debug!("Apply volume write: {value:02X}");
+        log::debug!("  ADPCM muted: {}", self.adpcm_muted);
+        log::debug!("  Applied CD-to-SPU volume changes: {}", value.bit(5));
     }
 
     fn read_sector_atime(&mut self, time: CdTime) -> CdRomResult<()> {
