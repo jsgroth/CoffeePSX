@@ -11,7 +11,9 @@ use ps1_core::api::{AudioOutput, Ps1Emulator, TickEffect};
 use ps1_core::input::Ps1Inputs;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{fs, thread};
@@ -95,7 +97,28 @@ fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> 
     Ok((audio_output, audio_stream))
 }
 
-fn handle_key_event(event: KeyEvent, elwt: &EventLoopWindowTarget<()>, inputs: &mut Ps1Inputs) {
+struct HandleKeyEventArgs<'a, Stream> {
+    emulator: &'a mut Ps1Emulator,
+    audio_output: &'a CpalAudioOutput,
+    audio_stream: &'a Stream,
+    elwt: &'a EventLoopWindowTarget<()>,
+    inputs: &'a mut Ps1Inputs,
+    save_state_path: &'a PathBuf,
+    paused: &'a mut bool,
+}
+
+fn handle_key_event<Stream: StreamTrait>(
+    event: KeyEvent,
+    HandleKeyEventArgs {
+        emulator,
+        audio_output,
+        audio_stream,
+        elwt,
+        inputs,
+        save_state_path,
+        paused,
+    }: HandleKeyEventArgs<'_, Stream>,
+) -> anyhow::Result<()> {
     let pressed = event.state == ElementState::Pressed;
 
     match event.physical_key {
@@ -114,11 +137,76 @@ fn handle_key_event(event: KeyEvent, elwt: &EventLoopWindowTarget<()>, inputs: &
             KeyCode::KeyR => inputs.p1.set_r2(pressed),
             KeyCode::Enter => inputs.p1.set_start(pressed),
             KeyCode::ShiftRight => inputs.p1.set_select(pressed),
-            KeyCode::Escape => elwt.exit(),
+            KeyCode::Escape if pressed => elwt.exit(),
+            KeyCode::F5 if pressed => save_state(save_state_path, emulator)?,
+            KeyCode::F6 if pressed => load_state(save_state_path, emulator),
+            KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
             _ => {}
         },
         PhysicalKey::Unidentified(_) => {}
     }
+
+    Ok(())
+}
+
+macro_rules! bincode_config {
+    () => {
+        bincode::config::standard()
+            .with_little_endian()
+            .with_fixed_int_encoding()
+            .with_limit::<1_000_000_000>()
+    };
+}
+
+fn save_state(path: &PathBuf, emulator: &Ps1Emulator) -> anyhow::Result<()> {
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+    bincode::encode_into_std_write(emulator, &mut writer, bincode_config!())?;
+
+    log::info!("Saved state to '{}'", path.display());
+
+    Ok(())
+}
+
+fn load_state(path: &PathBuf, emulator: &mut Ps1Emulator) {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(err) => {
+            log::error!("Failed to open save state path at '{}': {err}", path.display());
+            return;
+        }
+    };
+    let mut reader = BufReader::new(file);
+
+    match bincode::decode_from_std_read::<Ps1Emulator, _, _>(&mut reader, bincode_config!()) {
+        Ok(mut loaded_emulator) => {
+            loaded_emulator.set_disc(emulator.take_disc());
+            *emulator = loaded_emulator;
+
+            log::info!("Loaded state from '{}'", path.display());
+        }
+        Err(err) => {
+            log::error!("Failed to load save state from '{}': {err}", path.display());
+        }
+    }
+}
+
+fn toggle_pause<Stream: StreamTrait>(
+    paused: &mut bool,
+    audio_output: &CpalAudioOutput,
+    audio_stream: &Stream,
+) -> anyhow::Result<()> {
+    *paused = !*paused;
+
+    audio_output.audio_queue.lock().unwrap().clear();
+
+    if *paused {
+        audio_stream.pause()?;
+    } else {
+        audio_stream.play()?;
+    }
+
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -129,6 +217,12 @@ fn main() -> anyhow::Result<()> {
         args.disc_path.is_none() || args.exe_path.is_none(),
         "Disc path and EXE path cannot both be set"
     );
+
+    let save_state_path = match (&args.exe_path, &args.disc_path) {
+        (Some(path), None) | (None, Some(path)) => Path::new(path).with_extension("ss0"),
+        (None, None) => Path::new(&args.bios_path).with_extension("ss0"),
+        (Some(_), Some(_)) => unreachable!(),
+    };
 
     log::info!("Loading BIOS from '{}'", args.bios_path);
 
@@ -190,6 +284,8 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    let mut paused = false;
+
     event_loop.set_control_flow(ControlFlow::Poll);
 
     event_loop.run(move |event, elwt| match event {
@@ -199,13 +295,26 @@ fn main() -> anyhow::Result<()> {
         Event::WindowEvent {
             event: WindowEvent::KeyboardInput { event: key_event, .. }, ..
         } => {
-            handle_key_event(key_event, elwt, &mut inputs);
+            if let Err(err) = handle_key_event(
+                key_event,
+                HandleKeyEventArgs {
+                    emulator: &mut emulator,
+                    audio_output: &audio_output,
+                    audio_stream: &audio_stream,
+                    elwt,
+                    inputs: &mut inputs,
+                    save_state_path: &save_state_path,
+                    paused: &mut paused,
+                },
+            ) {
+                log::error!("Error handling key press: {err}");
+            };
         }
         Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
             renderer.handle_resize(size.width, size.height);
         }
         Event::AboutToWait => {
-            if audio_output.audio_queue.lock().unwrap().len() >= 2400 {
+            if paused || audio_output.audio_queue.lock().unwrap().len() >= 2400 {
                 return;
             }
 
@@ -214,7 +323,7 @@ fn main() -> anyhow::Result<()> {
                     Ok(TickEffect::None) => {}
                     Ok(TickEffect::FrameRendered) => break,
                     Err(err) => {
-                        log::error!("Emulator error: {err}");
+                        log::error!("Emulator error, terminating: {err}");
                         elwt.exit();
                         break;
                     }
