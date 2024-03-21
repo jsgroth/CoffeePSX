@@ -4,8 +4,9 @@ mod gp0;
 mod gp1;
 mod registers;
 
+use crate::api::RenderParams;
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
-use crate::gpu::registers::Registers;
+use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
 use bincode::{Decode, Encode};
@@ -61,5 +62,36 @@ impl Gpu {
 
     pub fn vram(&self) -> &[u8] {
         self.vram.as_ref()
+    }
+
+    pub fn render_params(&self) -> RenderParams {
+        let (x1, x2) = self.registers.x_display_range;
+        let (y1, y2) = self.registers.y_display_range;
+
+        RenderParams {
+            frame_x: self.registers.display_area_x,
+            frame_y: self.registers.display_area_y,
+            frame_width: if self.registers.force_h_368px {
+                368
+            } else {
+                self.registers.h_resolution.to_pixels().into()
+            },
+            frame_height: if self.registers.interlaced
+                && self.registers.v_resolution == VerticalResolution::Double
+            {
+                480
+            } else {
+                240
+            },
+            display_x_offset: x1 as i32 - 0x260,
+            display_y_offset: y1 as i32 - 16,
+            display_width: if x2 < x1 {
+                0
+            } else {
+                (x2 - x1) / u32::from(self.registers.dot_clock_divider())
+            },
+            display_height: if y2 < y1 { 0 } else { y2 - y1 },
+            display_enabled: self.registers.display_enabled,
+        }
     }
 }

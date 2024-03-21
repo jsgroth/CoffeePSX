@@ -17,13 +17,26 @@ use cdrom::reader::CdRom;
 use cdrom::CdRomError;
 use thiserror::Error;
 
+#[derive(Debug, Clone, Copy)]
+pub struct RenderParams {
+    pub frame_x: u32,
+    pub frame_y: u32,
+    pub frame_width: u32,
+    pub frame_height: u32,
+    pub display_x_offset: i32,
+    pub display_y_offset: i32,
+    pub display_width: u32,
+    pub display_height: u32,
+    pub display_enabled: bool,
+}
+
 pub trait Renderer {
     type Err;
 
     /// # Errors
     ///
     /// Should propagate any error encountered while rendering the frame.
-    fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err>;
+    fn render_frame(&mut self, vram: &[u8], params: RenderParams) -> Result<(), Self::Err>;
 }
 
 pub trait AudioOutput {
@@ -252,7 +265,9 @@ impl Ps1Emulator {
     ) -> Result<(), TickError<R::Err, A::Err>> {
         self.last_render_cycles = self.scheduler.cpu_cycle_counter();
 
-        renderer.render_frame(self.gpu.vram()).map_err(TickError::Render)?;
+        renderer
+            .render_frame(self.gpu.vram(), self.gpu.render_params())
+            .map_err(TickError::Render)?;
 
         audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
         self.audio_buffer.clear();

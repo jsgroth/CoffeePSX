@@ -168,7 +168,7 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     let window = WindowBuilder::new()
         .with_title(window_title)
-        .with_inner_size(LogicalSize::new(1024, 512))
+        .with_inner_size(LogicalSize::new(585, 448))
         .build(&event_loop)?;
 
     let mut renderer = pollster::block_on(WgpuRenderer::new(&window))?;

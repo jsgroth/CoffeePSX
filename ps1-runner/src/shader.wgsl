@@ -12,6 +12,11 @@ var<private> TEXTURE_COORDS: array<vec2f, 4> = array<vec2f, 4>(
     vec2f(1.0, 0.0),
 );
 
+@group(0) @binding(0)
+var texture_in: texture_2d<f32>;
+@group(0) @binding(1)
+var texture_sampler: sampler;
+
 struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) texture_coords: vec2f,
@@ -25,11 +30,6 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
     return output;
 }
-
-@group(0) @binding(0)
-var texture_in: texture_2d<f32>;
-@group(0) @binding(1)
-var texture_sampler: sampler;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4f {

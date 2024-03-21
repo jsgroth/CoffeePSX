@@ -1,6 +1,7 @@
 use anyhow::anyhow;
-use ps1_core::api::Renderer;
-use std::iter;
+use ps1_core::api::{RenderParams, Renderer};
+use std::collections::HashMap;
+use std::{cmp, iter};
 use thiserror::Error;
 use wgpu::{
     Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
@@ -12,9 +13,9 @@ use wgpu::{
     PipelineLayoutDescriptor, PolygonMode, PowerPreference, PresentMode, PrimitiveState,
     PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
     RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, SamplerDescriptor,
-    ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceError, Texture, TextureAspect,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureViewDescriptor, TextureViewDimension, VertexState,
+    ShaderModule, ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceError, Texture,
+    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+    TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use winit::window::Window;
 
@@ -35,15 +36,22 @@ impl Color {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FrameSize {
+    width: u32,
+    height: u32,
+}
+
 pub struct WgpuRenderer<'window> {
     surface: Surface<'window>,
     surface_config: SurfaceConfiguration,
     device: Device,
     queue: Queue,
-    render_bind_group: BindGroup,
+    render_bind_group_layout: BindGroupLayout,
     render_pipeline: RenderPipeline,
     frame_buffer: Vec<Color>,
-    frame_texture: Texture,
+    frame_texture_format: TextureFormat,
+    frame_textures: HashMap<FrameSize, Texture>,
 }
 
 impl<'window> WgpuRenderer<'window> {
@@ -101,36 +109,32 @@ impl<'window> WgpuRenderer<'window> {
         };
         surface.configure(&device, &surface_config);
 
-        let frame_texture = device.create_texture(&TextureDescriptor {
-            label: "frame_texture".into(),
-            size: Extent3d { width: 1024, height: 512, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: TextureDimension::D2,
-            format: if surface_format.is_srgb() {
-                TextureFormat::Rgba8UnormSrgb
-            } else {
-                TextureFormat::Rgba8Unorm
-            },
-            usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let frame_texture_format = if surface_format.is_srgb() {
+            TextureFormat::Rgba8UnormSrgb
+        } else {
+            TextureFormat::Rgba8Unorm
+        };
 
-        let (render_bind_group_layout, render_bind_group) =
-            create_render_bind_group(&device, &frame_texture);
+        let render_bind_group_layout = create_render_bind_group_layout(&device);
 
-        let render_pipeline =
-            create_render_pipeline(&device, &render_bind_group_layout, surface_format);
+        let shader_module = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        let render_pipeline = create_render_pipeline(
+            &device,
+            &shader_module,
+            &render_bind_group_layout,
+            surface_format,
+        );
 
         Ok(Self {
             surface,
             surface_config,
             device,
             queue,
-            render_bind_group,
+            render_bind_group_layout,
             render_pipeline,
             frame_buffer: vec![Color::BLACK; 1024 * 512],
-            frame_texture,
+            frame_texture_format,
+            frame_textures: HashMap::new(),
         })
     }
 
@@ -139,13 +143,64 @@ impl<'window> WgpuRenderer<'window> {
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
     }
+
+    // TODO pay attention to display width and X offset?
+    fn populate_frame_buffer(&mut self, vram: &[u8], params: RenderParams) {
+        log::debug!("Populating frame buffer using parameters {params:?}");
+
+        if !params.display_enabled || params.display_width == 0 || params.display_height == 0 {
+            self.frame_buffer[..(params.frame_width * params.frame_height) as usize]
+                .fill(Color::BLACK);
+            return;
+        }
+
+        if params.display_y_offset > 0 {
+            self.frame_buffer[..(params.frame_width * params.display_y_offset as u32) as usize]
+                .fill(Color::BLACK);
+        }
+
+        let effective_display_height = if params.frame_height == 480 {
+            params.display_height * 2
+        } else {
+            params.display_height
+        };
+
+        let y_begin = cmp::max(0, params.display_y_offset) as u32;
+        let y_end = cmp::min(
+            params.frame_height,
+            effective_display_height.wrapping_add_signed(params.display_y_offset),
+        );
+        for y in y_begin..y_end {
+            let vram_y = y.wrapping_add_signed(-params.display_y_offset) & 511;
+            let vram_row = (2048 * vram_y) as usize;
+            let frame_buffer_row = (params.frame_width * y) as usize;
+
+            for x in 0..params.frame_width {
+                let vram_addr = vram_row + (2 * x) as usize;
+                let rgb555_color = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
+                self.frame_buffer[frame_buffer_row + x as usize] =
+                    convert_rgb555_color(rgb555_color);
+            }
+        }
+
+        if y_end < params.frame_height {
+            self.frame_buffer[(params.frame_width * y_end) as usize
+                ..(params.frame_width * params.frame_height) as usize]
+                .fill(Color::BLACK);
+        }
+    }
 }
 
-fn create_render_bind_group(
-    device: &Device,
-    frame_texture: &Texture,
-) -> (BindGroupLayout, BindGroup) {
-    let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+fn convert_rgb555_color(rgb555_color: u16) -> Color {
+    let r = RGB_5_TO_8[(rgb555_color & 0x1F) as usize];
+    let g = RGB_5_TO_8[((rgb555_color >> 5) & 0x1F) as usize];
+    let b = RGB_5_TO_8[((rgb555_color >> 10) & 0x1F) as usize];
+
+    Color::rgb(r, g, b)
+}
+
+fn create_render_bind_group_layout(device: &Device) -> BindGroupLayout {
+    device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: "render_bind_group_layout".into(),
         entries: &[
             BindGroupLayoutEntry {
@@ -165,9 +220,30 @@ fn create_render_bind_group(
                 count: None,
             },
         ],
-    });
+    })
+}
 
-    let texture_view = frame_texture.create_view(&TextureViewDescriptor::default());
+fn create_frame_texture(device: &Device, format: TextureFormat, size: FrameSize) -> Texture {
+    log::info!("Creating {}x{} frame texture", size.width, size.height);
+
+    device.create_texture(&TextureDescriptor {
+        label: format!("frame_texture_{}x{}", size.width, size.height).as_str().into(),
+        size: Extent3d { width: size.width, height: size.height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format,
+        usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
+}
+
+fn create_render_bind_group(
+    device: &Device,
+    layout: &BindGroupLayout,
+    texture: &Texture,
+) -> BindGroup {
+    let texture_view = texture.create_view(&TextureViewDescriptor::default());
     let sampler = device.create_sampler(&SamplerDescriptor {
         label: "sampler".into(),
         mag_filter: FilterMode::Linear,
@@ -176,20 +252,19 @@ fn create_render_bind_group(
         ..SamplerDescriptor::default()
     });
 
-    let bind_group = device.create_bind_group(&BindGroupDescriptor {
+    device.create_bind_group(&BindGroupDescriptor {
         label: "render_bind_group".into(),
-        layout: &bind_group_layout,
+        layout,
         entries: &[
             BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&texture_view) },
             BindGroupEntry { binding: 1, resource: BindingResource::Sampler(&sampler) },
         ],
-    });
-
-    (bind_group_layout, bind_group)
+    })
 }
 
 fn create_render_pipeline(
     device: &Device,
+    shader_module: &ShaderModule,
     bind_group_layout: &BindGroupLayout,
     output_format: TextureFormat,
 ) -> RenderPipeline {
@@ -199,12 +274,10 @@ fn create_render_pipeline(
         push_constant_ranges: &[],
     });
 
-    let shader_module = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
-
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: "render_pipeline".into(),
         layout: Some(&pipeline_layout),
-        vertex: VertexState { module: &shader_module, entry_point: "vs_main", buffers: &[] },
+        vertex: VertexState { module: shader_module, entry_point: "vs_main", buffers: &[] },
         primitive: PrimitiveState {
             topology: PrimitiveTopology::TriangleStrip,
             strip_index_format: None,
@@ -217,7 +290,7 @@ fn create_render_pipeline(
         depth_stencil: None,
         multisample: MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
         fragment: Some(FragmentState {
-            module: &shader_module,
+            module: shader_module,
             entry_point: "fs_main",
             targets: &[Some(ColorTargetState {
                 format: output_format,
@@ -243,35 +316,46 @@ const RGB_5_TO_8: &[u8; 32] = &[
 impl<'window> Renderer for WgpuRenderer<'window> {
     type Err = WgpuError;
 
-    fn render_frame(&mut self, vram: &[u8]) -> Result<(), Self::Err> {
-        for (i, chunk) in vram.chunks_exact(2).enumerate() {
-            let rgb555_color = u16::from_le_bytes([chunk[0], chunk[1]]);
-            let r = RGB_5_TO_8[(rgb555_color & 0x1F) as usize];
-            let g = RGB_5_TO_8[((rgb555_color >> 5) & 0x1F) as usize];
-            let b = RGB_5_TO_8[((rgb555_color >> 10) & 0x1F) as usize];
+    fn render_frame(&mut self, vram: &[u8], params: RenderParams) -> Result<(), Self::Err> {
+        self.populate_frame_buffer(vram, params);
 
-            self.frame_buffer[i] = Color::rgb(r, g, b);
-        }
+        let cropped_frame_height = params.frame_height * 14 / 15;
+        let overscan_rows_top = params.frame_height / 30;
+
+        let frame_size = FrameSize { width: params.frame_width, height: cropped_frame_height };
+        let frame_texture = self.frame_textures.entry(frame_size).or_insert_with(|| {
+            create_frame_texture(&self.device, self.frame_texture_format, frame_size)
+        });
 
         self.queue.write_texture(
             ImageCopyTexture {
-                texture: &self.frame_texture,
+                texture: frame_texture,
                 mip_level: 0,
                 origin: Origin3d::ZERO,
                 aspect: TextureAspect::All,
             },
             bytemuck::cast_slice(&self.frame_buffer),
-            ImageDataLayout { offset: 0, bytes_per_row: Some(1024 * 4), rows_per_image: Some(512) },
-            Extent3d { width: 1024, height: 512, depth_or_array_layers: 1 },
+            ImageDataLayout {
+                offset: (frame_size.width * 4 * overscan_rows_top).into(),
+                bytes_per_row: Some(frame_size.width * 4),
+                rows_per_image: None,
+            },
+            Extent3d {
+                width: frame_size.width,
+                height: frame_size.height,
+                depth_or_array_layers: 1,
+            },
         );
-
-        let output_texture = self.surface.get_current_texture()?;
 
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor { label: "command_encoder".into() });
 
+        let output_texture = self.surface.get_current_texture()?;
         let output_view = output_texture.texture.create_view(&TextureViewDescriptor::default());
+
+        let render_bind_group =
+            create_render_bind_group(&self.device, &self.render_bind_group_layout, frame_texture);
 
         {
             let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -289,7 +373,7 @@ impl<'window> Renderer for WgpuRenderer<'window> {
                 occlusion_query_set: None,
             });
 
-            render_pass.set_bind_group(0, &self.render_bind_group, &[]);
+            render_pass.set_bind_group(0, &render_bind_group, &[]);
             render_pass.set_pipeline(&self.render_pipeline);
 
             render_pass.draw(0..4, 0..1);
