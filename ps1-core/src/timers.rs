@@ -488,11 +488,11 @@ impl Timers {
             return 0;
         }
 
+        self.gpu.catch_up(scheduler.cpu_cycle_counter());
+        self.timers[timer_idx].catch_up(scheduler, &self.gpu);
+
         match address & 0xF {
-            0x0 => {
-                self.timers[timer_idx].catch_up(scheduler, &self.gpu);
-                self.timers[timer_idx].counter.into()
-            }
+            0x0 => self.timers[timer_idx].counter.into(),
             _ => todo!("timer register read {address:08X}"),
         }
     }
@@ -503,6 +503,7 @@ impl Timers {
             return;
         }
 
+        self.gpu.catch_up(scheduler.cpu_cycle_counter());
         self.timers[timer_idx].catch_up(scheduler, &self.gpu);
 
         match address & 0xF {
