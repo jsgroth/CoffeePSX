@@ -299,9 +299,22 @@ impl DmaController {
             // DMA started
             match channel {
                 0 => {
-                    log::debug!("Running MDEC In DMA");
+                    log::debug!(
+                        "Running MDEC-In DMA, BA={} and BS={}",
+                        self.channel_configs[0].num_blocks,
+                        self.channel_configs[0].block_size
+                    );
                     run_mdec_in_dma(&mut self.channel_configs[0], mdec, memory);
-                    log::debug!("MDEC In DMA complete");
+                    log::debug!("MDEC-In DMA complete");
+                }
+                1 => {
+                    log::debug!(
+                        "Running MDEC-Out DMA, BA={} and BS={}",
+                        self.channel_configs[1].num_blocks,
+                        self.channel_configs[1].block_size
+                    );
+                    run_mdec_out_dma(&mut self.channel_configs[1], mdec, memory);
+                    log::debug!("MDEC-Out DMA complete");
                 }
                 2 => {
                     log::trace!("Running GPU DMA");
@@ -346,6 +359,23 @@ fn run_mdec_in_dma(config: &mut ChannelConfig, mdec: &mut MacroblockDecoder, mem
     for _ in 0..config.block_size * config.num_blocks {
         let word = memory.read_main_ram_u32(address);
         mdec.write_command(word);
+
+        address = match config.step {
+            Step::Forwards => address.wrapping_add(4) & 0x1FFFFF,
+            Step::Backwards => address.wrapping_sub(4) & 0x1FFFFF,
+        };
+    }
+
+    config.start_address = address;
+    config.num_blocks = 0;
+}
+
+// TODO reorder 8x8 blocks if MDEC is in 15bpp or 24bpp mode instead of assuming the MDEC code will do it
+fn run_mdec_out_dma(config: &mut ChannelConfig, mdec: &mut MacroblockDecoder, memory: &mut Memory) {
+    let mut address = config.start_address & !3;
+    for _ in 0..config.block_size * config.num_blocks {
+        let word = mdec.read_data();
+        memory.write_main_ram_u32(address, word);
 
         address = match config.step {
             Step::Forwards => address.wrapping_add(4) & 0x1FFFFF,
