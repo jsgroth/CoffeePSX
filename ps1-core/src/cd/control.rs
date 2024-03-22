@@ -174,4 +174,22 @@ impl CdController {
         int2!(self, [stat!(self)]);
         CommandState::Idle
     }
+
+    // $0D: SetFilter(file, channel) -> INT3(stat)
+    // Sets the file and channel for CD-XA ADPCM filtering
+    pub(super) fn execute_set_filter(&mut self) -> CommandState {
+        if self.parameter_fifo.len() < 2 {
+            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
+            return CommandState::Idle;
+        }
+
+        self.adpcm_file = self.parameter_fifo.pop();
+        self.adpcm_channel = self.parameter_fifo.pop();
+
+        log::debug!("SetFilter executed: file={}, channel={}", self.adpcm_file, self.adpcm_channel);
+
+        int3!(self, [stat!(self)]);
+
+        CommandState::Idle
+    }
 }

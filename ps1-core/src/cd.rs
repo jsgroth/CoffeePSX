@@ -97,6 +97,7 @@ enum Command {
     ReadToc,
     SeekL,
     SeekP,
+    SetFilter,
     SetLoc,
     SetMode,
     Stop,
@@ -185,6 +186,8 @@ pub struct CdController {
     current_audio_sample: (i16, i16),
     cd_to_spu_volume: [[u8; 2]; 2],
     next_cd_to_spu_volume: [[u8; 2]; 2],
+    adpcm_file: u8,
+    adpcm_channel: u8,
     adpcm_muted: bool,
 }
 
@@ -205,6 +208,8 @@ impl CdController {
             current_audio_sample: (0, 0),
             cd_to_spu_volume: [[0; 2]; 2],
             next_cd_to_spu_volume: [[0; 2]; 2],
+            adpcm_file: 0,
+            adpcm_channel: 0,
             adpcm_muted: true,
         }
     }
@@ -357,6 +362,7 @@ impl CdController {
             Command::ReadN | Command::ReadS => self.execute_read(),
             Command::ReadToc => self.execute_read_toc(),
             Command::SeekL | Command::SeekP => self.execute_seek(),
+            Command::SetFilter => self.execute_set_filter(),
             Command::SetLoc => self.execute_set_loc(),
             Command::SetMode => self.execute_set_mode(),
             Command::Stop => self.execute_stop(),
@@ -522,6 +528,7 @@ impl CdController {
             0x09 => (Command::Pause, std_receive_cycles),
             0x0A => (Command::Init, INIT_COMMAND_CYCLES),
             0x0C => (Command::Demute, std_receive_cycles),
+            0x0D => (Command::SetFilter, std_receive_cycles),
             0x0E => (Command::SetMode, std_receive_cycles),
             0x13 => (Command::GetTN, std_receive_cycles),
             0x14 => (Command::GetTD, std_receive_cycles),
