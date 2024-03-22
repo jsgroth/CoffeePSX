@@ -29,9 +29,10 @@ The `-t` flag enables TTY output, printed to stdout.
 Implemented:
 * The R3000-compatible CPU, minus I-cache and remotely accurate timing
 * Part of the GTE (Geometry Transformation Engine), enough to get the BIOS to render the PS logo
-* Most of the GPU, using a software rasterizer
+* The GPU
 * Part of the SPU (Sound Processing Unit), enough to get basic audio output
 * Bare minimum CD-ROM functionality to get the simplest games to boot
+* Bare minimum MDEC functionality (24bpp only, assumes output is always read via DMA1)
 * Digital controllers (P1 only)
 * Most of the hardware timers
 
@@ -39,10 +40,9 @@ Not yet implemented:
 * More accurate CPU timing; currently hardcoded to 2 cycles per instruction
 * CPU instruction cache
 * A number of GTE operations
-* GPU: 24-bit color mode and display area cropping
 * SPU: Capture buffers, noise generator, pitch modulation, interrupts, DMA, reverb FIR filter
-* Most CD-ROM functionality
-* MDEC (Macroblock Decoder)
+* Most CD-ROM functionality, including CD-XA ADPCM audio
+* MDEC 4bpp/8bpp/15bpp modes
 * Analog controllers and P2 inputs
 * Memory cards
 * Synchronization modes for dotclock and HBlank timers
