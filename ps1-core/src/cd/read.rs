@@ -56,7 +56,12 @@ impl CdController {
         {
             int1_generated = true;
             int1!(self, [stat!(self)]);
-            self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
+
+            if self.drive_mode.raw_sectors {
+                self.data_fifo.copy_from_slice(&self.sector_buffer[12..2352]);
+            } else {
+                self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
+            }
         }
 
         Ok(DriveState::Reading(ReadState {

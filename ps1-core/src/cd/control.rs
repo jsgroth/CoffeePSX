@@ -33,6 +33,7 @@ impl DriveSpeed {
 pub struct DriveMode {
     pub speed: DriveSpeed,
     pub adpcm_enabled: bool,
+    pub raw_sectors: bool,
     pub adpcm_filter_enabled: bool,
     pub audio_report_interrupts: bool,
     pub auto_pause_audio: bool,
@@ -49,14 +50,11 @@ impl From<u8> for DriveMode {
     fn from(mode: u8) -> Self {
         let speed = DriveSpeed::from_bit(mode.bit(7));
         let adpcm_enabled = mode.bit(6);
+        let raw_sectors = mode.bit(5);
         let adpcm_filter_enabled = mode.bit(3);
         let audio_report_interrupts = mode.bit(2);
         let auto_pause_audio = mode.bit(1);
         let cd_da_enabled = mode.bit(0);
-
-        if mode.bit(5) {
-            todo!("2340-byte sector mode enabled via SetMode");
-        }
 
         if mode.bit(4) {
             todo!("SetMode 'ignore bit' was set");
@@ -65,6 +63,7 @@ impl From<u8> for DriveMode {
         Self {
             speed,
             adpcm_enabled,
+            raw_sectors,
             adpcm_filter_enabled,
             audio_report_interrupts,
             auto_pause_audio,
