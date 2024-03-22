@@ -223,6 +223,7 @@ struct SystemTimer {
     interrupt_type: SchedulerEventType,
     counter: u16,
     wait_cycle: bool,
+    raw_clock_source: u8,
     clock_source: ClockSource,
     last_update_clock: u64,
     target_value: u16,
@@ -232,6 +233,8 @@ struct SystemTimer {
     irq_mode: IrqMode,
     irq: bool,
     irq_since_mode_write: bool,
+    reached_target: bool,
+    reached_max: bool,
 }
 
 impl SystemTimer {
@@ -241,6 +244,7 @@ impl SystemTimer {
             interrupt_type,
             counter: 0,
             wait_cycle: false,
+            raw_clock_source: 0,
             clock_source: ClockSource::default(),
             last_update_clock: 0,
             target_value: 0,
@@ -250,6 +254,8 @@ impl SystemTimer {
             irq_mode: IrqMode::default(),
             irq: false,
             irq_since_mode_write: false,
+            reached_target: false,
+            reached_max: false,
         }
     }
 
@@ -274,13 +280,14 @@ impl SystemTimer {
         }
 
         if self.clocks_until_irq().is_some_and(|clocks| clocks <= elapsed) {
-            self.irq = true;
             self.irq_since_mode_write = true;
         }
 
         match self.reset_mode {
             ResetMode::Overflow => {
-                self.counter = self.counter.wrapping_add(elapsed as u16);
+                let (new_counter, overflowed) = self.counter.overflowing_add(elapsed as u16);
+                self.counter = new_counter;
+                self.reached_max |= overflowed || new_counter == u16::MAX;
             }
             ResetMode::Target => {
                 // TODO optimize this
@@ -288,6 +295,7 @@ impl SystemTimer {
                     if self.counter == self.target_value {
                         self.counter = 0;
                         self.wait_cycle = true;
+                        self.reached_target = true;
                     } else if self.wait_cycle {
                         self.wait_cycle = false;
                     } else {
@@ -335,6 +343,26 @@ impl SystemTimer {
         log::debug!("Timer {} counter write: {value:04X}", self.idx);
     }
 
+    fn read_mode(&mut self) -> u32 {
+        // TODO bit 0: sync enabled
+        // TODO bits 1-2: sync mode
+        // TODO bit 7: IRQ pulse mode
+        // TODO bit 10: IRQ
+        let mode = ((self.reset_mode as u32) << 3)
+            | (u32::from(self.target_irq_enabled) << 4)
+            | (u32::from(self.overflow_irq_enabled) << 5)
+            | ((self.irq_mode as u32) << 6)
+            | (u32::from(self.raw_clock_source) << 8)
+            | (u32::from(self.reached_target) << 11)
+            | (u32::from(self.reached_max) << 12);
+
+        // Reading mode clears bits 11 and 12
+        self.reached_target = false;
+        self.reached_max = false;
+
+        mode
+    }
+
     fn write_mode(&mut self, value: u32, scheduler: &Scheduler, gpu_timer: &GpuTimer) {
         if value.bit(0) {
             log::error!(
@@ -353,8 +381,8 @@ impl SystemTimer {
         self.overflow_irq_enabled = value.bit(5);
         self.irq_mode = IrqMode::from_bit(value.bit(6));
 
-        let raw_clock_source = (value >> 8) & 3;
-        self.clock_source = match (self.idx, raw_clock_source) {
+        self.raw_clock_source = ((value >> 8) & 3) as u8;
+        self.clock_source = match (self.idx, self.raw_clock_source) {
             (0 | 1, 0 | 2) | (2, 0 | 1) => ClockSource::System,
             (0, 1 | 3) => ClockSource::Dot,
             (1, 1 | 3) => ClockSource::HBlank,
@@ -371,7 +399,7 @@ impl SystemTimer {
 
         self.counter = 0;
         self.wait_cycle = true;
-        self.irq = false;
+        self.irq = true;
         self.irq_since_mode_write = false;
 
         log::debug!("Timer {} mode write: {value:04X}", self.idx);
@@ -493,6 +521,7 @@ impl Timers {
 
         match address & 0xF {
             0x0 => self.timers[timer_idx].counter.into(),
+            0x4 => self.timers[timer_idx].read_mode(),
             _ => todo!("timer register read {address:08X}"),
         }
     }
