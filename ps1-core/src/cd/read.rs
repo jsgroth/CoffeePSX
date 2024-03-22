@@ -50,7 +50,10 @@ impl CdController {
             return self.read_data_sector(time);
         }
 
-        if !int1_generated && !self.interrupts.pending() {
+        if !int1_generated
+            && !self.interrupts.pending()
+            && !matches!(self.command_state, CommandState::ReceivingCommand { .. })
+        {
             int1_generated = true;
             int1!(self, [stat!(self)]);
             self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
