@@ -266,6 +266,10 @@ impl ReverbUnit {
         log::trace!("Reverb enabled (voices 0-15): {value:04X}");
     }
 
+    pub fn read_reverb_on_low(&self) -> u32 {
+        (0..16).map(|i| u32::from(self.voices_enabled[i]) << i).reduce(|a, b| a | b).unwrap()
+    }
+
     // $1F801D9A: Reverb enabled, high halfword (EON)
     pub fn write_reverb_on_high(&mut self, value: u32) {
         for i in 16..24 {
@@ -273,6 +277,10 @@ impl ReverbUnit {
         }
 
         log::trace!("Reverb enabled (voices 16-23): {value:04X}");
+    }
+
+    pub fn read_reverb_on_high(&self) -> u32 {
+        (0..8).map(|i| u32::from(self.voices_enabled[i + 16]) << i).reduce(|a, b| a | b).unwrap()
     }
 
     // $1F801DA2: Reverb buffer start address (mBASE)

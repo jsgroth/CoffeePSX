@@ -522,6 +522,7 @@ impl Timers {
         match address & 0xF {
             0x0 => self.timers[timer_idx].counter.into(),
             0x4 => self.timers[timer_idx].read_mode(),
+            0x8 => self.timers[timer_idx].target_value.into(),
             _ => todo!("timer register read {address:08X}"),
         }
     }

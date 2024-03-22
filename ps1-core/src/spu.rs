@@ -260,6 +260,16 @@ impl Spu {
             0x1D8A => self.control.last_key_on_write >> 16,
             0x1D8C => self.control.last_key_off_write & 0xFFFF,
             0x1D8E => self.control.last_key_off_write >> 16,
+            0x1D94 => {
+                log::warn!("Unimplemented noise on read (voices 0-15)");
+                0
+            }
+            0x1D96 => {
+                log::warn!("Unimplemented noise on read (voices 16-23)");
+                0
+            }
+            0x1D98 => self.reverb.read_reverb_on_low(),
+            0x1D9A => self.reverb.read_reverb_on_high(),
             0x1DA6 => self.data_port.read_start_address(),
             0x1DAA => self.control.read_spucnt(&self.data_port, &self.reverb),
             // TODO return an actual value for sound RAM data transfer control?
@@ -311,8 +321,12 @@ impl Spu {
             0x1D8A => self.key_on_high(value),
             0x1D8C => self.key_off_low(value),
             0x1D8E => self.key_off_high(value),
-            0x1D90 => log::warn!("Unimplemented FM/LFO mode write (low halfword): {value:04X}"),
-            0x1D92 => log::warn!("Unimplemented FM/LFO mode write (high halfword): {value:04X}"),
+            0x1D90 => log::warn!(
+                "Unimplemented pitch modulation enabled write (low halfword): {value:04X}"
+            ),
+            0x1D92 => log::warn!(
+                "Unimplemented pitch modulation enabled mode write (high halfword): {value:04X}"
+            ),
             0x1D94 => log::warn!("Unimplemented noise mode write (low halfword): {value:04X}"),
             0x1D96 => log::warn!("Unimplemented noise mode write (high halfword): {value:04X}"),
             0x1D98 => self.reverb.write_reverb_on_low(value),
