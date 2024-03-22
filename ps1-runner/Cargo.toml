@@ -9,18 +9,18 @@ edition = "2021"
 cdrom = { path = "../cdrom" }
 ps1-core = { path = "../ps1-core" }
 
-anyhow = "1"
-bincode = "2.0.0-rc.3"
-bytemuck = { version = "1", features = ["derive"] }
-clap = { version = "4", features = ["derive"] }
-cpal = "0.15"
-env_logger = "0.11"
-log = "0.4"
-pollster = "0.3"
-rand = "0.8"
-thiserror = "1"
-wgpu = "0.19"
-winit = "0.29"
+anyhow = { workspace = true }
+bincode = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+clap = { workspace = true, features = ["derive"] }
+cpal = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+pollster = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
 
 [lints]
 workspace = true

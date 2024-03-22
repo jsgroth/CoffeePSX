@@ -8,11 +8,11 @@ edition = "2021"
 [dependencies]
 cdrom = { path = "../cdrom" }
 
-bincode = { version = "2.0.0-rc.3", features = ["derive"] }
-log = "0.4"
-proc-bitfield = "0.3"
-rand = "0.8"
-thiserror = "1"
+bincode = { workspace = true, features = ["derive"] }
+log = { workspace = true }
+proc-bitfield = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
 
 [lints]
 workspace = true

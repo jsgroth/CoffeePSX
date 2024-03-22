@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bincode = { version = "2.0.0-rc.3", features = ["derive"] }
-chd = { version = "0.3", features = ["unstable_lending_iterators"] }
-crc = "3"
-log = "0.4"
-regex = "1"
-thiserror = "1"
+bincode = { workspace = true, features = ["derive"] }
+chd = { workspace = true, features = ["unstable_lending_iterators"] }
+crc = { workspace = true }
+log = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }
 
 [lints]
 workspace = true
