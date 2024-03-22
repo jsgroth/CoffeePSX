@@ -1,8 +1,19 @@
+//! CD-ROM read commands
+
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::{seek, CdController, CommandState, DriveState, SeekNextState};
+use crate::num::U8Ext;
+use bincode::{Decode, Encode};
 use cdrom::cdtime::CdTime;
 use cdrom::CdRomResult;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct ReadState {
+    pub time: CdTime,
+    pub int1_generated: bool,
+    pub cycles_till_next_sector: u32,
+}
 
 impl CdController {
     // $06: ReadN() -> INT3(stat), (INT1(stat), sector)*
@@ -27,15 +38,66 @@ impl CdController {
         CommandState::Idle
     }
 
+    pub(super) fn progress_read_state(
+        &mut self,
+        ReadState { time, mut int1_generated, cycles_till_next_sector }: ReadState,
+    ) -> CdRomResult<DriveState> {
+        if let Some((sample_l, sample_r)) = self.xa_adpcm.maybe_output_sample() {
+            self.current_audio_sample = (sample_l, sample_r);
+        }
+
+        if cycles_till_next_sector == 1 {
+            return self.read_data_sector(time);
+        }
+
+        if !int1_generated && !self.interrupts.pending() {
+            int1_generated = true;
+            int1!(self, [stat!(self)]);
+            self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
+        }
+
+        Ok(DriveState::Reading(ReadState {
+            time,
+            int1_generated,
+            cycles_till_next_sector: cycles_till_next_sector - 1,
+        }))
+    }
+
     pub(super) fn read_data_sector(&mut self, time: CdTime) -> CdRomResult<DriveState> {
         self.read_sector_atime(time)?;
 
-        log::debug!("  Data sector header: {:02X?}", &self.sector_buffer[12..16]);
+        log::debug!(
+            "  Data sector header: {:02X?} subheader: {:02X?}",
+            &self.sector_buffer[12..16],
+            &self.sector_buffer[16..20]
+        );
 
-        Ok(DriveState::Reading {
+        let file = self.sector_buffer[16];
+        let channel = self.sector_buffer[17];
+        let submode = self.sector_buffer[18];
+        let is_real_time_audio = submode.bit(2) && submode.bit(6);
+
+        let mut should_generate_int1 = true;
+        if self.drive_mode.adpcm_enabled
+            && is_real_time_audio
+            && (!self.drive_mode.adpcm_filter_enabled
+                || (self.xa_adpcm.file == file && self.xa_adpcm.channel == channel))
+        {
+            // CD-XA ADPCM sector; send to ADPCM decoder instead of the data FIFO
+            should_generate_int1 = false;
+
+            log::debug!("Decoding CD-XA ADPCM sector at {time}");
+            self.xa_adpcm.decode_sector(self.sector_buffer.as_ref());
+        } else if self.drive_mode.adpcm_filter_enabled && is_real_time_audio {
+            // The controller does not send sectors to the data FIFO if ADPCM filtering is enabled
+            // and this is a real-time audio sector
+            should_generate_int1 = false;
+        }
+
+        Ok(DriveState::Reading(ReadState {
             time: time + CdTime::new(0, 0, 1),
-            int1_generated: false,
-            cycles_till_next: self.drive_mode.speed.cycles_between_sectors(),
-        })
+            int1_generated: !should_generate_int1,
+            cycles_till_next_sector: self.drive_mode.speed.cycles_between_sectors(),
+        }))
     }
 }

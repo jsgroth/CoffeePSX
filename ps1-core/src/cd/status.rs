@@ -1,3 +1,5 @@
+//! CD-ROM status commands
+
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;

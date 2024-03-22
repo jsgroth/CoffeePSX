@@ -1,3 +1,5 @@
+//! CD-ROM control commands
+
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
@@ -30,6 +32,8 @@ impl DriveSpeed {
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct DriveMode {
     pub speed: DriveSpeed,
+    pub adpcm_enabled: bool,
+    pub adpcm_filter_enabled: bool,
     pub audio_report_interrupts: bool,
     pub auto_pause_audio: bool,
     pub cd_da_enabled: bool,
@@ -44,13 +48,11 @@ impl DriveMode {
 impl From<u8> for DriveMode {
     fn from(mode: u8) -> Self {
         let speed = DriveSpeed::from_bit(mode.bit(7));
+        let adpcm_enabled = mode.bit(6);
+        let adpcm_filter_enabled = mode.bit(3);
         let audio_report_interrupts = mode.bit(2);
         let auto_pause_audio = mode.bit(1);
         let cd_da_enabled = mode.bit(0);
-
-        if mode.bit(6) {
-            log::warn!("CD-XA ADPCM enabled via SetMode; not implemented");
-        }
 
         if mode.bit(5) {
             todo!("2340-byte sector mode enabled via SetMode");
@@ -60,11 +62,14 @@ impl From<u8> for DriveMode {
             todo!("SetMode 'ignore bit' was set");
         }
 
-        if mode.bit(3) {
-            log::warn!("CD-XA filtering enabled via SetMode; not implemented");
+        Self {
+            speed,
+            adpcm_enabled,
+            adpcm_filter_enabled,
+            audio_report_interrupts,
+            auto_pause_audio,
+            cd_da_enabled,
         }
-
-        Self { speed, audio_report_interrupts, auto_pause_audio, cd_da_enabled }
     }
 }
 
@@ -183,10 +188,14 @@ impl CdController {
             return CommandState::Idle;
         }
 
-        self.adpcm_file = self.parameter_fifo.pop();
-        self.adpcm_channel = self.parameter_fifo.pop();
+        self.xa_adpcm.file = self.parameter_fifo.pop();
+        self.xa_adpcm.channel = self.parameter_fifo.pop();
 
-        log::debug!("SetFilter executed: file={}, channel={}", self.adpcm_file, self.adpcm_channel);
+        log::debug!(
+            "SetFilter executed: file={}, channel={}",
+            self.xa_adpcm.file,
+            self.xa_adpcm.channel
+        );
 
         int3!(self, [stat!(self)]);
 

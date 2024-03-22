@@ -1,3 +1,5 @@
+//! CD-ROM audio commands
+
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
@@ -91,17 +93,19 @@ impl CdController {
         &mut self,
         PlayState { time, mut sample_idx, sectors_till_report }: PlayState,
     ) -> CdRomResult<DriveState> {
-        let sample_addr = (sample_idx * 4) as usize;
+        if self.drive_mode.cd_da_enabled {
+            let sample_addr = (sample_idx * 4) as usize;
 
-        let sample_l = i16::from_le_bytes([
-            self.sector_buffer[sample_addr],
-            self.sector_buffer[sample_addr + 1],
-        ]);
-        let sample_r = i16::from_le_bytes([
-            self.sector_buffer[sample_addr + 2],
-            self.sector_buffer[sample_addr + 3],
-        ]);
-        self.current_audio_sample = (sample_l, sample_r);
+            let sample_l = i16::from_le_bytes([
+                self.sector_buffer[sample_addr],
+                self.sector_buffer[sample_addr + 1],
+            ]);
+            let sample_r = i16::from_le_bytes([
+                self.sector_buffer[sample_addr + 2],
+                self.sector_buffer[sample_addr + 3],
+            ]);
+            self.current_audio_sample = (sample_l, sample_r);
+        }
 
         sample_idx += 1;
         if sample_idx == CD_DA_SAMPLES_PER_SECTOR {

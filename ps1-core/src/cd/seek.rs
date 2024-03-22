@@ -1,7 +1,10 @@
+//! CD-ROM seek commands
+
 use crate::cd;
 use crate::cd::audio::PlayState;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
+use crate::cd::read::ReadState;
 use crate::cd::{status, CdController, CommandState, DriveState, SeekNextState, SpinUpNextState};
 use cdrom::cdtime::CdTime;
 use std::cmp;
@@ -77,7 +80,7 @@ pub(super) fn determine_drive_state(
         },
         DriveState::Seeking { destination: time, .. }
         | DriveState::PreparingToRead { time, .. }
-        | DriveState::Reading { time, .. }
+        | DriveState::Reading(ReadState { time, .. })
         | DriveState::PreparingToPlay { time, .. }
         | DriveState::Playing(PlayState { time, .. })
         | DriveState::Paused(time) => {

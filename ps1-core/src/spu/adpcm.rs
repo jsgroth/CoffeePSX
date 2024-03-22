@@ -59,15 +59,19 @@ impl SpuAdpcmBuffer {
     }
 }
 
-const FILTER_0_TABLE: [i32; 5] = [0, 60, 115, 98, 122];
-const FILTER_1_TABLE: [i32; 5] = [0, 0, -52, -55, -60];
+pub const FILTER_0_TABLE: [i32; 5] = [0, 60, 115, 98, 122];
+pub const FILTER_1_TABLE: [i32; 5] = [0, 0, -52, -55, -60];
+
+pub fn compute_effective_shift(shift: u8) -> u8 {
+    // Effective shift is (12 - shift)
+    // Shift values of 13-15 function the same as 9, so effective shift is (12 - 9) = 3
+    if shift > 12 { 3 } else { 12 - shift }
+}
 
 pub fn decode_spu_block(block: &[u8], buffer: &mut SpuAdpcmBuffer) {
     buffer.header = AdpcmHeader::from_spu_header(block[0], block[1]);
 
-    // Effective shift is (12 - shift)
-    // Shift values of 13-15 function the same as 9, so effective shift is (12 - 9) = 3
-    let effective_shift = if buffer.header.shift > 12 { 3 } else { 12 - buffer.header.shift };
+    let effective_shift = compute_effective_shift(buffer.header.shift);
     let filter_0 = FILTER_0_TABLE[buffer.header.filter as usize];
     let filter_1 = FILTER_1_TABLE[buffer.header.filter as usize];
 

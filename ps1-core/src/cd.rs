@@ -7,10 +7,13 @@ mod macros;
 mod read;
 mod seek;
 mod status;
+mod xaadpcm;
 
 use crate::cd::audio::PlayState;
 use crate::cd::control::DriveMode;
 use crate::cd::fifo::{DataFifo, ParameterFifo};
+use crate::cd::read::ReadState;
+use crate::cd::xaadpcm::XaAdpcmState;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};
@@ -137,7 +140,7 @@ enum DriveState {
     SpinningUp { cycles_remaining: u32, next: SpinUpNextState },
     Seeking { destination: CdTime, cycles_remaining: u32, next: SeekNextState },
     PreparingToRead { time: CdTime, cycles_remaining: u32 },
-    Reading { time: CdTime, int1_generated: bool, cycles_till_next: u32 },
+    Reading(ReadState),
     PreparingToPlay { time: CdTime, cycles_remaining: u32 },
     Playing(PlayState),
     Paused(CdTime),
@@ -155,7 +158,7 @@ impl DriveState {
             Self::Stopped | Self::SpinningUp { .. } => CdTime::ZERO,
             Self::Paused(time)
             | Self::PreparingToRead { time, .. }
-            | Self::Reading { time, .. }
+            | Self::Reading(ReadState { time, .. })
             | Self::PreparingToPlay { time, .. }
             | Self::Playing(PlayState { time, .. })
             | Self::Seeking { destination: time, .. } => time,
@@ -187,9 +190,7 @@ pub struct CdController {
     current_audio_sample: (i16, i16),
     cd_to_spu_volume: [[u8; 2]; 2],
     next_cd_to_spu_volume: [[u8; 2]; 2],
-    adpcm_file: u8,
-    adpcm_channel: u8,
-    adpcm_muted: bool,
+    xa_adpcm: XaAdpcmState,
 }
 
 impl CdController {
@@ -209,9 +210,7 @@ impl CdController {
             current_audio_sample: (0, 0),
             cd_to_spu_volume: [[0; 2]; 2],
             next_cd_to_spu_volume: [[0; 2]; 2],
-            adpcm_file: 0,
-            adpcm_channel: 0,
-            adpcm_muted: true,
+            xa_adpcm: XaAdpcmState::new(),
         }
     }
 
@@ -289,21 +288,13 @@ impl CdController {
                 DriveState::Seeking { destination, cycles_remaining: cycles_remaining - 1, next }
             }
             DriveState::PreparingToRead { time, cycles_remaining: 1 } => {
+                self.xa_adpcm.clear_buffers();
                 self.read_data_sector(time)?
             }
             DriveState::PreparingToRead { time, cycles_remaining } => {
                 DriveState::PreparingToRead { time, cycles_remaining: cycles_remaining - 1 }
             }
-            DriveState::Reading { time, cycles_till_next: 1, .. } => self.read_data_sector(time)?,
-            DriveState::Reading { time, mut int1_generated, cycles_till_next } => {
-                if !int1_generated && !self.interrupts.pending() {
-                    int1!(self, [stat!(self)]);
-                    self.data_fifo.copy_from_slice(&self.sector_buffer[24..24 + 2048]);
-                    int1_generated = true;
-                }
-
-                DriveState::Reading { time, int1_generated, cycles_till_next: cycles_till_next - 1 }
-            }
+            DriveState::Reading(state) => self.progress_read_state(state)?,
             DriveState::PreparingToPlay { time, cycles_remaining: 1 } => {
                 self.read_audio_sector(PlayState::new(time))?
             }
@@ -572,14 +563,14 @@ impl CdController {
     }
 
     fn write_apply_volume_register(&mut self, value: u8) {
-        self.adpcm_muted = value.bit(0);
+        self.xa_adpcm.muted = value.bit(0);
 
         if value.bit(5) {
             self.cd_to_spu_volume = self.next_cd_to_spu_volume;
         }
 
         log::debug!("Apply volume write: {value:02X}");
-        log::debug!("  ADPCM muted: {}", self.adpcm_muted);
+        log::debug!("  ADPCM muted: {}", self.xa_adpcm.muted);
         log::debug!("  Applied CD-to-SPU volume changes: {}", value.bit(5));
     }
 

@@ -1,6 +1,6 @@
 //! PS1 SPU (Sound Processing Unit)
 
-mod adpcm;
+pub mod adpcm;
 mod envelope;
 mod reverb;
 mod voice;
