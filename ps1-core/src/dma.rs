@@ -3,6 +3,7 @@
 use crate::cd::CdController;
 use crate::gpu::Gpu;
 use crate::interrupts::{InterruptRegisters, InterruptType};
+use crate::mdec::MacroblockDecoder;
 use crate::memory::Memory;
 use crate::num::U32Ext;
 use crate::spu::Spu;
@@ -262,6 +263,7 @@ impl DmaController {
         spu: &mut Spu,
         memory: &mut Memory,
         cd_controller: &mut CdController,
+        mdec: &mut MacroblockDecoder,
         interrupt_registers: &mut InterruptRegisters,
     ) {
         let channel = (address >> 4) & 7;
@@ -296,6 +298,11 @@ impl DmaController {
         if value.bit(24) {
             // DMA started
             match channel {
+                0 => {
+                    log::debug!("Running MDEC In DMA");
+                    run_mdec_in_dma(&mut self.channel_configs[0], mdec, memory);
+                    log::debug!("MDEC In DMA complete");
+                }
                 2 => {
                     log::trace!("Running GPU DMA");
                     run_gpu_dma(&mut self.channel_configs[2], gpu, memory);
@@ -334,6 +341,22 @@ impl DmaController {
     }
 }
 
+fn run_mdec_in_dma(config: &mut ChannelConfig, mdec: &mut MacroblockDecoder, memory: &Memory) {
+    let mut address = config.start_address & !3;
+    for _ in 0..config.block_size * config.num_blocks {
+        let word = memory.read_main_ram_u32(address);
+        mdec.write_command(word);
+
+        address = match config.step {
+            Step::Forwards => address.wrapping_add(4) & 0x1FFFFF,
+            Step::Backwards => address.wrapping_sub(4) & 0x1FFFFF,
+        };
+    }
+
+    config.start_address = address;
+    config.num_blocks = 0;
+}
+
 fn run_gpu_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Memory) {
     match config.sync_mode {
         SyncMode::One => run_gpu_block_dma(config, gpu, memory),
@@ -357,6 +380,7 @@ fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Mem
             }
 
             config.start_address = address;
+            config.num_blocks = 0;
         }
         DmaDirection::ToRam => {
             let mut address = config.start_address & !3;
@@ -369,6 +393,9 @@ fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Mem
                     Step::Backwards => address.wrapping_sub(4) & 0x1FFFFF,
                 };
             }
+
+            config.start_address = address;
+            config.num_blocks = 0;
         }
     }
 }
@@ -434,6 +461,7 @@ fn run_spu_dma(config: &mut ChannelConfig, memory: &mut Memory, spu: &mut Spu) {
             }
 
             config.start_address = address;
+            config.num_blocks = 0;
         }
         DmaDirection::ToRam => todo!("SPU DMA from SPU RAM to main RAM"),
     }

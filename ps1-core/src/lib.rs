@@ -6,6 +6,7 @@ mod dma;
 mod gpu;
 pub mod input;
 mod interrupts;
+mod mdec;
 mod memory;
 mod num;
 mod scheduler;

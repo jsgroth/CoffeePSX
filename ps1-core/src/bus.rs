@@ -5,6 +5,7 @@ use crate::cpu::OpSize;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
 use crate::interrupts::InterruptRegisters;
+use crate::mdec::MacroblockDecoder;
 use crate::memory::{Memory, MemoryControl};
 use crate::scheduler::Scheduler;
 use crate::sio::SerialPort;
@@ -15,6 +16,7 @@ pub struct Bus<'a> {
     pub gpu: &'a mut Gpu,
     pub spu: &'a mut Spu,
     pub cd_controller: &'a mut CdController,
+    pub mdec: &'a mut MacroblockDecoder,
     pub memory: &'a mut Memory,
     pub memory_control: &'a mut MemoryControl,
     pub dma_controller: &'a mut DmaController,
@@ -150,6 +152,7 @@ impl<'a> Bus<'a> {
             0x1800..=0x1803 => read_cd_controller(self.cd_controller, address, size),
             0x1810 => self.gpu.read_port(),
             0x1814 => self.gpu.read_status_register(self.timers, self.scheduler),
+            0x1824 => self.mdec.read_status(),
             0x1C00..=0x1FFF => self.spu.read_register(address, size),
             _ => todo!("I/O register read {address:08X} {size:?}"),
         }
@@ -177,6 +180,7 @@ impl<'a> Bus<'a> {
                     self.spu,
                     self.memory,
                     self.cd_controller,
+                    self.mdec,
                     self.interrupt_registers,
                 ),
                 3 => todo!("Invalid DMA register write: {address:08X} {value:08X} {size:?}"),
@@ -188,6 +192,8 @@ impl<'a> Bus<'a> {
             0x1800..=0x1803 => self.cd_controller.write_port(address, value as u8),
             0x1810 => self.gpu.write_gp0_command(value),
             0x1814 => self.gpu.write_gp1_command(value, self.timers, self.scheduler),
+            0x1820 => self.mdec.write_command(value),
+            0x1824 => self.mdec.write_control(value),
             0x1C00..=0x1FFF => self.spu.write_register(address, value, size),
             _ => todo!("I/O register write {address:08X} {value:08X} {size:?}"),
         }
