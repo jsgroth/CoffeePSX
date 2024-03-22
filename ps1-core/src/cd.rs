@@ -241,8 +241,9 @@ impl CdController {
                     "Drive finished spinning up; generating INT2 and pausing at start of disc"
                 );
                 // TODO wait to generate INT2?
+                self.drive_state = DriveState::Paused(CdTime::ZERO);
                 int2!(self, [stat!(self)]);
-                DriveState::Paused(CdTime::ZERO)
+                self.drive_state
             }
             DriveState::SpinningUp {
                 cycles_remaining: 1,
@@ -267,8 +268,9 @@ impl CdController {
             } => {
                 log::debug!("Drive finished seeking to {destination}; generating INT2 and pausing");
                 // TODO wait to generate INT2?
+                self.drive_state = DriveState::Paused(destination);
                 int2!(self, [stat!(self)]);
-                DriveState::Paused(destination)
+                self.drive_state
             }
             DriveState::Seeking { destination, cycles_remaining: 1, next: SeekNextState::Read } => {
                 log::debug!("Drive finished seeking to {destination}; preparing to read");
