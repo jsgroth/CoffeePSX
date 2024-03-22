@@ -2,6 +2,7 @@ use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::{CdController, Command, CommandState, DriveState};
+use cdrom::cdtime::CdTime;
 use cdrom::cue::TrackMode;
 use std::ops::BitOr;
 
@@ -156,6 +157,38 @@ impl CdController {
         let minutes = cd::binary_to_bcd(start_time.minutes);
         let seconds = cd::binary_to_bcd(start_time.seconds);
         int3!(self, [stat!(self), minutes, seconds]);
+
+        CommandState::Idle
+    }
+
+    // $11: GetLocP() -> INT3(track, index, mm, ss, sect, amm, ass, asect)
+    // Returns position data from Subchannel Q
+    pub(super) fn execute_get_loc_p(&mut self) -> CommandState {
+        let Some(disc) = &self.disc else {
+            todo!("GetLocP executed with no disc in the drive");
+        };
+
+        // TODO better handle if this is executed while seeking
+        let absolute_time = self.drive_state.current_time();
+        let track = disc.cue().find_track_by_time(absolute_time);
+
+        let (track_number, relative_time) = track.map_or((0xAA, CdTime::ZERO), |track| {
+            (track.number, absolute_time.saturating_sub(track.start_time))
+        });
+
+        int3!(
+            self,
+            [
+                cd::binary_to_bcd(track_number),
+                0x01,
+                cd::binary_to_bcd(relative_time.minutes),
+                cd::binary_to_bcd(relative_time.seconds),
+                cd::binary_to_bcd(relative_time.frames),
+                cd::binary_to_bcd(absolute_time.minutes),
+                cd::binary_to_bcd(absolute_time.seconds),
+                cd::binary_to_bcd(absolute_time.frames),
+            ]
+        );
 
         CommandState::Idle
     }

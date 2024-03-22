@@ -86,6 +86,7 @@ impl CdInterruptRegisters {
 enum Command {
     Demute,
     GetId,
+    GetLocP,
     GetStat,
     GetTD,
     GetTN,
@@ -353,6 +354,7 @@ impl CdController {
         let new_state = match command {
             Command::Demute => self.execute_demute(),
             Command::GetId => self.execute_get_id(),
+            Command::GetLocP => self.execute_get_loc_p(),
             Command::GetStat => self.execute_get_stat(),
             Command::GetTD => self.execute_get_td(),
             Command::GetTN => self.execute_get_tn(),
@@ -530,6 +532,7 @@ impl CdController {
             0x0C => (Command::Demute, std_receive_cycles),
             0x0D => (Command::SetFilter, std_receive_cycles),
             0x0E => (Command::SetMode, std_receive_cycles),
+            0x11 => (Command::GetLocP, std_receive_cycles),
             0x13 => (Command::GetTN, std_receive_cycles),
             0x14 => (Command::GetTD, std_receive_cycles),
             0x15 => (Command::SeekL, std_receive_cycles),
