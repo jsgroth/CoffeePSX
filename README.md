@@ -1,6 +1,6 @@
 # ps1-emu
 
-Work-in-progress attempt at a PlayStation emulator. Barely anything is implemented right now, very few games boot. Display is simply a dump of VRAM, interpreted as a 1024x512 grid of RGB555 pixels.
+Work-in-progress attempt at a PlayStation emulator. Few games boot right now.
 
 For now at least I am doing this as a standalone emulator instead of adding it to my multi-system emulator so that I can more easily experiment with different ways of handling rendering and parallelism.
 
@@ -24,6 +24,29 @@ CUE/BIN and CHD formats are supported. For CUE/BIN, `disc_path` should be the pa
 
 The `-t` flag enables TTY output, printed to stdout.
 
+## Key Bindings
+
+Controller buttons:
+* D-Pad: Arrow keys
+* X: X key
+* O: S key
+* Square: Z key
+* Triangle: A key
+* L1: W key
+* L2: Q key
+* R1: E key
+* R2: R key
+* Start: Enter key
+* Select: Right Shift key
+
+Hotkeys:
+* Save state: F5 key
+* Load state: F6 key
+* Pause: P key
+* Toggle Bilinear Interpolation: ; key (Semicolon)
+* Toggle VRAM view: ' key (Quote)
+* Exit: Esc key
+
 ## Status
 
 Implemented:
@@ -41,8 +64,8 @@ Not yet implemented:
 * CPU instruction cache
 * A number of GTE operations
 * SPU: Capture buffers, noise generator, pitch modulation, interrupts, DMA, reverb FIR filter
-* Most CD-ROM functionality, including CD-XA ADPCM audio
+* A decent amount of CD-ROM functionality, including non-standard CD-XA ADPCM modes
 * MDEC 4bpp/8bpp/15bpp modes
 * Analog controllers and P2 inputs
 * Memory cards
-* Synchronization modes for dotclock and HBlank timers
+* Interrupts and synchronization modes for dotclock and HBlank timers
