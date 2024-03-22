@@ -7,15 +7,13 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-sdl2 = { version = "0.36", features = ["raw-window-handle"] }
-wgpu = "0.18"
 
 [profile.dev-fast]
 # dev profile with debug symbols disabled, which results in significantly faster compile times
 inherits = "dev"
 debug = false
-# set opt-level=1 because most of the emulators are unusably slow without optimizations
-opt-level = 1
+# set opt-level=2 because most of the emulators are unusably slow without optimizations
+opt-level = 2
 
 [profile.release-lto]
 inherits = "release"
