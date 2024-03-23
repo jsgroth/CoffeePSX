@@ -133,6 +133,13 @@ pub fn dqb(value: u32) -> DepthCueingOffset {
     FixedPointDecimal((value as i32).into())
 }
 
+// BK components are 1/19/12
+pub type BackgroundColor = FixedPointDecimal<12>;
+
+pub fn background_color(value: u32) -> BackgroundColor {
+    FixedPointDecimal((value as i32).into())
+}
+
 // FC components are 1/27/4
 pub type FarColor = FixedPointDecimal<4>;
 

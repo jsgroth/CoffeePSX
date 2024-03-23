@@ -34,6 +34,39 @@ enum MatrixMultiplyBehavior {
     Standard,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mac {
+    One,
+    Two,
+    Three,
+}
+
+impl Mac {
+    fn positive_overflow_flag(self) -> u32 {
+        match self {
+            Self::One => Flag::MAC1_OVERFLOW_POSITIVE,
+            Self::Two => Flag::MAC2_OVERFLOW_POSITIVE,
+            Self::Three => Flag::MAC3_OVERFLOW_POSITIVE,
+        }
+    }
+
+    fn negative_overflow_flag(self) -> u32 {
+        match self {
+            Self::One => Flag::MAC1_OVERFLOW_NEGATIVE,
+            Self::Two => Flag::MAC2_OVERFLOW_NEGATIVE,
+            Self::Three => Flag::MAC3_OVERFLOW_NEGATIVE,
+        }
+    }
+
+    fn corresponding_ir_saturation_flag(self) -> u32 {
+        match self {
+            Self::One => Flag::IR1_SATURATED,
+            Self::Two => Flag::IR2_SATURATED,
+            Self::Three => Flag::IR3_SATURATED,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct GeometryTransformationEngine {
     r: [u32; 64],
@@ -182,45 +215,17 @@ impl GeometryTransformationEngine {
         translation: &[TranslationComponent; 3],
         behavior: MatrixMultiplyBehavior,
     ) {
-        let mac1 = translation[0].shift_to::<12>()
-            + matrix[0][0] * vector[0]
-            + matrix[0][1] * vector[1]
-            + matrix[0][2] * vector[2];
-        let mac2 = translation[1].shift_to::<12>()
-            + matrix[1][0] * vector[0]
-            + matrix[1][1] * vector[1]
-            + matrix[1][2] * vector[2];
-        let mac3 = translation[2].shift_to::<12>()
-            + matrix[2][0] * vector[0]
-            + matrix[2][1] * vector[1]
-            + matrix[2][2] * vector[2];
-
-        let mac1 = self.check_mac123_overflow(
-            mac1,
-            Flag::MAC1_OVERFLOW_POSITIVE,
-            Flag::MAC1_OVERFLOW_NEGATIVE,
-        );
-        let mac2 = self.check_mac123_overflow(
-            mac2,
-            Flag::MAC2_OVERFLOW_POSITIVE,
-            Flag::MAC2_OVERFLOW_NEGATIVE,
-        );
-        let mac3 = self.check_mac123_overflow(
-            mac3,
-            Flag::MAC3_OVERFLOW_POSITIVE,
-            Flag::MAC3_OVERFLOW_NEGATIVE,
-        );
-
-        let sf = opcode.bit(SF_BIT);
-        if sf {
-            self.mac[1] = i64::from(mac1) >> 12;
-            self.mac[2] = i64::from(mac2) >> 12;
-            self.mac[3] = i64::from(mac3) >> 12;
-        } else {
-            self.mac[1] = mac1.into();
-            self.mac[2] = mac2.into();
-            self.mac[3] = mac3.into();
+        for (i, mac) in [(0, Mac::One), (1, Mac::Two), (2, Mac::Three)] {
+            self.mac[i + 1] = 0;
+            self.accumulate_into_mac(
+                translation[i].shift_to::<12>() + (matrix[i][0] * vector[0]),
+                mac,
+            );
+            self.accumulate_into_mac(matrix[i][1] * vector[1], mac);
+            self.accumulate_into_mac(matrix[i][2] * vector[2], mac);
         }
+
+        self.apply_mac_shift(opcode);
 
         let lm = opcode.bit(LM_BIT);
 
@@ -228,7 +233,7 @@ impl GeometryTransformationEngine {
         self.set_ir_component(Register::IR2, self.mac[2] as u32, Flag::IR2_SATURATED, lm);
 
         match behavior {
-            MatrixMultiplyBehavior::Rtp if !sf => {
+            MatrixMultiplyBehavior::Rtp if !opcode.bit(SF_BIT) => {
                 // Apparent hardware bug: When sf=0, IR3 saturation flag is set based on
                 // (MAC3 >> 12) instead of MAC3
                 let value = self.mac[3] as i32;
@@ -242,6 +247,31 @@ impl GeometryTransformationEngine {
             _ => {
                 self.set_ir_component(Register::IR3, self.mac[3] as u32, Flag::IR3_SATURATED, lm);
             }
+        }
+    }
+
+    fn accumulate_into_mac<const FRACTION_BITS: u8>(
+        &mut self,
+        value: FixedPointDecimal<FRACTION_BITS>,
+        mac: Mac,
+    ) {
+        let existing_value = match mac {
+            Mac::One => FixedPointDecimal::new(self.mac[1]),
+            Mac::Two => FixedPointDecimal::new(self.mac[2]),
+            Mac::Three => FixedPointDecimal::new(self.mac[3]),
+        };
+
+        println!("Accumulator: {existing_value:X?} + {value:X?}");
+
+        let new_value = value + existing_value;
+        let new_value = self.check_mac123_overflow(new_value, mac);
+
+        println!("Result: {new_value:X?}");
+
+        match mac {
+            Mac::One => self.mac[1] = new_value.into(),
+            Mac::Two => self.mac[2] = new_value.into(),
+            Mac::Three => self.mac[3] = new_value.into(),
         }
     }
 
@@ -261,18 +291,29 @@ impl GeometryTransformationEngine {
     fn check_mac123_overflow<const FRACTION_BITS: u8>(
         &mut self,
         value: FixedPointDecimal<FRACTION_BITS>,
-        positive_bit: u32,
-        negative_bit: u32,
+        mac: Mac,
     ) -> FixedPointDecimal<FRACTION_BITS> {
         let raw_value = i64::from(value);
         if (I44_MIN..=I44_MAX).contains(&raw_value) {
             return value;
         }
 
-        self.r[Register::FLAG] |= if raw_value < 0 { negative_bit } else { positive_bit };
+        self.r[Register::FLAG] |=
+            if raw_value < 0 { mac.negative_overflow_flag() } else { mac.positive_overflow_flag() };
         self.r[Register::FLAG] |= Flag::ERROR;
 
         FixedPointDecimal::new((raw_value << 20) >> 20)
+    }
+
+    // MAC >>= (sf * 12)
+    #[allow(clippy::redundant_closure_for_method_calls)]
+    fn apply_mac_shift(&mut self, opcode: u32) {
+        if !opcode.bit(SF_BIT) {
+            return;
+        }
+
+        let [mac1, mac2, mac3] = self.read_mac_vector::<12>().map(|mac| mac.shift_to::<0>());
+        self.set_mac(mac1, mac2, mac3);
     }
 
     fn set_ir_component(&mut self, register: usize, value: u32, saturation_bit: u32, lm: bool) {
@@ -309,25 +350,13 @@ impl GeometryTransformationEngine {
         mac2: FixedPointDecimal<FRACTION_BITS>,
         mac3: FixedPointDecimal<FRACTION_BITS>,
     ) {
-        let mac1 = self.check_mac123_overflow(
-            mac1,
-            Flag::MAC1_OVERFLOW_POSITIVE,
-            Flag::MAC1_OVERFLOW_NEGATIVE,
-        );
+        let mac1 = self.check_mac123_overflow(mac1, Mac::One);
         self.mac[1] = mac1.into();
 
-        let mac2 = self.check_mac123_overflow(
-            mac2,
-            Flag::MAC2_OVERFLOW_POSITIVE,
-            Flag::MAC2_OVERFLOW_NEGATIVE,
-        );
+        let mac2 = self.check_mac123_overflow(mac2, Mac::Two);
         self.mac[2] = mac2.into();
 
-        let mac3 = self.check_mac123_overflow(
-            mac3,
-            Flag::MAC3_OVERFLOW_POSITIVE,
-            Flag::MAC3_OVERFLOW_NEGATIVE,
-        );
+        let mac3 = self.check_mac123_overflow(mac3, Mac::Three);
         self.mac[3] = mac3.into();
     }
 

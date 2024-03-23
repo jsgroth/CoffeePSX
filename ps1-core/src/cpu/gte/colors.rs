@@ -1,9 +1,9 @@
 //! GTE color calculation instructions
 
 use crate::cpu::gte;
-use crate::cpu::gte::fixedpoint::{FarColor, FixedPointDecimal, Vector16Component};
+use crate::cpu::gte::fixedpoint::{BackgroundColor, FarColor, FixedPointDecimal};
 use crate::cpu::gte::registers::{Flag, Register};
-use crate::cpu::gte::{fixedpoint, GeometryTransformationEngine, MatrixMultiplyBehavior};
+use crate::cpu::gte::{fixedpoint, GeometryTransformationEngine, Mac, MatrixMultiplyBehavior};
 use crate::num::U32Ext;
 
 const ZERO_VECTOR: [FixedPointDecimal<0>; 3] =
@@ -79,7 +79,7 @@ impl GeometryTransformationEngine {
     // IR = MAC
     fn apply_light_color_matrix(&mut self, opcode: u32) {
         let ir_vector = self.read_ir_vector();
-        let background_color = self.read_background_color();
+        let background_color = self.read_background_color().map(FixedPointDecimal::reinterpret);
         let light_color_matrix = self.read_matrix(Register::LCM_START);
         self.matrix_multiply_add(
             opcode,
@@ -112,21 +112,9 @@ impl GeometryTransformationEngine {
         let ir3 = far_color[2] - mac[2];
 
         // Overflows in the (FC - MAC) calculation will set MAC overflow flags in the FLAG register
-        let _ = self.check_mac123_overflow(
-            ir1,
-            Flag::MAC1_OVERFLOW_POSITIVE,
-            Flag::MAC1_OVERFLOW_NEGATIVE,
-        );
-        let _ = self.check_mac123_overflow(
-            ir2,
-            Flag::MAC2_OVERFLOW_POSITIVE,
-            Flag::MAC2_OVERFLOW_NEGATIVE,
-        );
-        let _ = self.check_mac123_overflow(
-            ir3,
-            Flag::MAC3_OVERFLOW_POSITIVE,
-            Flag::MAC3_OVERFLOW_NEGATIVE,
-        );
+        let ir1 = self.check_mac123_overflow(ir1, Mac::One);
+        let ir2 = self.check_mac123_overflow(ir2, Mac::Two);
+        let ir3 = self.check_mac123_overflow(ir3, Mac::Three);
 
         if opcode.bit(gte::SF_BIT) {
             self.set_ir(ir1.shift_to::<4>(), ir2.shift_to::<4>(), ir3.shift_to::<4>(), false);
@@ -141,17 +129,6 @@ impl GeometryTransformationEngine {
         let mac1 = ir1 * ir0 + mac1;
         let mac2 = ir2 * ir0 + mac2;
         let mac3 = ir3 * ir0 + mac3;
-        self.set_mac(mac1, mac2, mac3);
-    }
-
-    // MAC >>= (sf * 12)
-    #[allow(clippy::redundant_closure_for_method_calls)]
-    fn apply_mac_shift(&mut self, opcode: u32) {
-        if !opcode.bit(gte::SF_BIT) {
-            return;
-        }
-
-        let [mac1, mac2, mac3] = self.read_mac_vector::<12>().map(|mac| mac.shift_to::<0>());
         self.set_mac(mac1, mac2, mac3);
     }
 
@@ -228,15 +205,15 @@ impl GeometryTransformationEngine {
         self.push_to_color_fifo(opcode);
     }
 
-    pub(super) fn read_background_color(&self) -> [Vector16Component; 3] {
+    pub(super) fn read_background_color(&self) -> [BackgroundColor; 3] {
         [
-            fixedpoint::vector16_component(self.r[Register::RBK]),
-            fixedpoint::vector16_component(self.r[Register::GBK]),
-            fixedpoint::vector16_component(self.r[Register::BBK]),
+            fixedpoint::background_color(self.r[Register::RBK]),
+            fixedpoint::background_color(self.r[Register::GBK]),
+            fixedpoint::background_color(self.r[Register::BBK]),
         ]
     }
 
-    fn read_far_color(&self) -> [FarColor; 3] {
+    pub(super) fn read_far_color(&self) -> [FarColor; 3] {
         [
             fixedpoint::far_color(self.r[Register::RFC]),
             fixedpoint::far_color(self.r[Register::GFC]),
