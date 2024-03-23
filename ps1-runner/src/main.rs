@@ -11,12 +11,12 @@ use ps1_core::api::{AudioOutput, Ps1Emulator, TickEffect};
 use ps1_core::input::Ps1Inputs;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
+use std::fs;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use std::{fs, thread};
+use std::time::{Duration, Instant};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
@@ -33,6 +33,8 @@ struct Args {
     disc_path: Option<String>,
     #[arg(short = 't', long, default_value_t)]
     tty_enabled: bool,
+    #[arg(long = "no-audio-sync", default_value_t = true, action = clap::ArgAction::SetFalse)]
+    audio_sync: bool,
 }
 
 struct CpalAudioOutput {
@@ -43,21 +45,9 @@ impl AudioOutput for CpalAudioOutput {
     type Err = anyhow::Error;
 
     fn queue_samples(&mut self, samples: &[(f64, f64)]) -> Result<(), Self::Err> {
-        let wait_for_audio = {
-            let mut audio_queue = self.audio_queue.lock().unwrap();
-            for &sample in samples {
-                audio_queue.push_back(sample);
-            }
-            audio_queue.len() >= 2400
-        };
-
-        if wait_for_audio {
-            loop {
-                if self.audio_queue.lock().unwrap().len() < 2400 {
-                    break;
-                }
-                thread::sleep(Duration::from_micros(250));
-            }
+        let mut audio_queue = self.audio_queue.lock().unwrap();
+        for &sample in samples {
+            audio_queue.push_back(sample);
         }
 
         Ok(())
@@ -324,7 +314,11 @@ fn main() -> anyhow::Result<()> {
             renderer.handle_resize(size.width, size.height);
         }
         Event::AboutToWait => {
-            if paused || audio_output.audio_queue.lock().unwrap().len() >= 2400 {
+            if paused || (args.audio_sync && audio_output.audio_queue.lock().unwrap().len() >= 2400)
+            {
+                elwt.set_control_flow(ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(1),
+                ));
                 return;
             }
 
@@ -339,6 +333,8 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
+
+            elwt.set_control_flow(ControlFlow::Poll);
         }
         _ => {}
     })?;
