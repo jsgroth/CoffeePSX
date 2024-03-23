@@ -41,7 +41,25 @@ impl GeometryTransformationEngine {
     pub(super) fn nccs(&mut self, opcode: u32) {
         log::trace!("GTE NCCS {opcode:08X}");
 
-        self.apply_light_matrix(opcode, Register::VXY0, Register::VZ0);
+        self.normal_color_vector(opcode, Register::VXY0, Register::VZ0);
+    }
+
+    // NCCT: Normal color, single vector
+    // Same as NCCS but runs sequentially on V0, V1, and V2
+    pub(super) fn ncct(&mut self, opcode: u32) {
+        log::trace!("GTE NCCT {opcode:08X}");
+
+        for (vxy, vz) in [
+            (Register::VXY0, Register::VZ0),
+            (Register::VXY1, Register::VZ1),
+            (Register::VXY2, Register::VZ2),
+        ] {
+            self.normal_color_vector(opcode, vxy, vz);
+        }
+    }
+
+    fn normal_color_vector(&mut self, opcode: u32, vxy_register: usize, vz_register: usize) {
+        self.apply_light_matrix(opcode, vxy_register, vz_register);
         self.apply_light_color_matrix(opcode);
         self.apply_color_vector();
         self.apply_mac_shift(opcode);
