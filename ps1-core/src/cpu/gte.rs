@@ -151,7 +151,7 @@ impl GeometryTransformationEngine {
             0x01 => self.rtps(opcode),
             0x06 => self.nclip(),
             0x0C => self.op(opcode),
-            // TODO 0x10: DPCS
+            0x10 => self.dpcs(opcode),
             // TODO 0x11: INTPL
             0x12 => self.mvmva(opcode),
             0x13 => self.ncds(opcode),

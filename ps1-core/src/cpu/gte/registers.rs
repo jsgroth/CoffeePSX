@@ -166,6 +166,9 @@ impl Flag {
     pub const IR1_SATURATED: u32 = 1 << 24;
     pub const IR2_SATURATED: u32 = 1 << 23;
     pub const IR3_SATURATED: u32 = 1 << 22;
+    pub const COLOR_R_SATURATED: u32 = 1 << 21;
+    pub const COLOR_G_SATURATED: u32 = 1 << 20;
+    pub const COLOR_B_SATURATED: u32 = 1 << 19;
     pub const SZ3_OTZ_SATURATED: u32 = 1 << 18;
     pub const DIVIDE_OVERFLOW: u32 = 1 << 17;
     pub const MAC0_OVERFLOW_POSITIVE: u32 = 1 << 16;
