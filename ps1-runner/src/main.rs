@@ -97,6 +97,7 @@ struct HandleKeyEventArgs<'a, Stream> {
     inputs: &'a mut Ps1Inputs,
     save_state_path: &'a PathBuf,
     paused: &'a mut bool,
+    step_to_next_frame: &'a mut bool,
 }
 
 fn handle_key_event<Stream: StreamTrait>(
@@ -110,6 +111,7 @@ fn handle_key_event<Stream: StreamTrait>(
         inputs,
         save_state_path,
         paused,
+        step_to_next_frame,
     }: HandleKeyEventArgs<'_, Stream>,
     event: KeyEvent,
 ) -> anyhow::Result<()> {
@@ -136,6 +138,7 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::F6 if pressed => load_state(save_state_path, emulator),
             KeyCode::Slash if pressed => renderer.toggle_prescaling(),
             KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
+            KeyCode::KeyN if pressed => *step_to_next_frame = true,
             KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
             KeyCode::Quote if pressed => renderer.toggle_dumping_vram(window),
             _ => {}
@@ -283,6 +286,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut paused = false;
+    let mut step_to_next_frame = false;
 
     event_loop.set_control_flow(ControlFlow::Poll);
 
@@ -304,6 +308,7 @@ fn main() -> anyhow::Result<()> {
                     inputs: &mut inputs,
                     save_state_path: &save_state_path,
                     paused: &mut paused,
+                    step_to_next_frame: &mut step_to_next_frame,
                 },
                 key_event,
             ) {
@@ -314,7 +319,9 @@ fn main() -> anyhow::Result<()> {
             renderer.handle_resize(size.width, size.height);
         }
         Event::AboutToWait => {
-            if paused || (args.audio_sync && audio_output.audio_queue.lock().unwrap().len() >= 2400)
+            if !step_to_next_frame
+                && (paused
+                    || (args.audio_sync && audio_output.audio_queue.lock().unwrap().len() >= 2400))
             {
                 elwt.set_control_flow(ControlFlow::WaitUntil(
                     Instant::now() + Duration::from_millis(1),
@@ -325,7 +332,10 @@ fn main() -> anyhow::Result<()> {
             loop {
                 match emulator.tick(inputs, &mut renderer, &mut audio_output) {
                     Ok(TickEffect::None) => {}
-                    Ok(TickEffect::FrameRendered) => break,
+                    Ok(TickEffect::FrameRendered) => {
+                        step_to_next_frame = false;
+                        break;
+                    }
                     Err(err) => {
                         log::error!("Emulator error, terminating: {err}");
                         elwt.exit();
