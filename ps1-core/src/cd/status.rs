@@ -174,15 +174,20 @@ impl CdController {
         let absolute_time = self.drive_state.current_time();
         let track = disc.cue().find_track_by_time(absolute_time);
 
-        let (track_number, relative_time) = track.map_or((0xAA, CdTime::ZERO), |track| {
-            (track.number, absolute_time.saturating_sub(track.start_time))
-        });
+        let (track_number, index, relative_time) =
+            track.map_or((0xAA, 0x00, CdTime::ZERO), |track| {
+                let track_number = cd::binary_to_bcd(track.number);
+                let index = u8::from(absolute_time >= track.effective_start_time());
+                let relative_time = absolute_time.saturating_sub(track.effective_start_time());
+
+                (track_number, index, relative_time)
+            });
 
         int3!(
             self,
             [
-                cd::binary_to_bcd(track_number),
-                0x01,
+                track_number,
+                index,
                 cd::binary_to_bcd(relative_time.minutes),
                 cd::binary_to_bcd(relative_time.seconds),
                 cd::binary_to_bcd(relative_time.frames),
