@@ -246,6 +246,8 @@ impl MacroblockDecoder {
     }
 
     fn decode_macroblocks(&mut self) {
+        self.data_out.clear();
+
         match self.decode_config.depth {
             DepthBits::TwentyFour | DepthBits::Fifteen => self.decode_colored_macroblocks(),
             DepthBits::Four | DepthBits::Eight => todo!("decode monochrome macroblocks"),
