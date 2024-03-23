@@ -112,8 +112,6 @@ impl Voice {
     pub fn key_on(&mut self, audio_ram: &AudioRam) {
         self.adsr.key_on();
 
-        // Keying on copies start address to repeat address
-        self.repeat_address = self.start_address;
         self.current_address = self.start_address;
 
         // Immediately decode first ADPCM block and reset ADPCM state
