@@ -1,5 +1,6 @@
 //! GTE coordinate calculation instructions
 
+use crate::cpu::gte;
 use std::cmp;
 
 use crate::cpu::gte::fixedpoint::{DivisionResult, FixedPointDecimal, ScreenCoordinate};
@@ -117,9 +118,10 @@ impl GeometryTransformationEngine {
     }
 
     fn perform_perspective_transformation(&mut self, opcode: u32) {
-        let sf = opcode.bit(19);
-        let sz3 = (self.r[Register::MAC3] as i32) >> (12 * (1 - u8::from(sf)));
-        let clamped_sz3 = sz3.clamp(U16_MIN, U16_MAX);
+        let sf = opcode.bit(gte::SF_BIT);
+        let sz3 = self.mac[3] >> (12 * (1 - u8::from(sf)));
+
+        let clamped_sz3 = sz3.clamp(U16_MIN.into(), U16_MAX.into());
         if sz3 != clamped_sz3 {
             self.r[Register::FLAG] |= Flag::SZ3_OTZ_SATURATED | Flag::ERROR;
         }

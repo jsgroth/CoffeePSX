@@ -37,11 +37,13 @@ enum MatrixMultiplyBehavior {
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct GeometryTransformationEngine {
     r: [u32; 64],
+    // MAC1-3 need to be stored at 44-bit resolution to correctly handle commands when sf=0
+    mac: [i64; 4],
 }
 
 impl GeometryTransformationEngine {
     pub fn new() -> Self {
-        Self { r: array::from_fn(|_| 0) }
+        Self { r: array::from_fn(|_| 0), mac: [0; 4] }
     }
 
     pub fn load_word(&mut self, register: u32, value: u32) {
@@ -55,9 +57,17 @@ impl GeometryTransformationEngine {
             1 | 3 | 5 | 8 | 9 | 10 | 11 => sign_extend_i16(self.r[register as usize]),
             // SXYP, mirrors SXY2 on reads
             15 => self.r[Register::SXY2],
+            // OTZ, SZ0, SZ1, SZ2, SZ3 are unsigned 16-bit
+            7 | 16..=19 => self.r[register as usize] & 0xFFFF,
+            // MAC1-3
+            25..=27 => self.mac[(register - 24) as usize] as u32,
             // IRGB and ORGB, return converted colors from IR1/IR2/IR3
             28 | 29 => {
-                todo!("IRGB/ORGB read")
+                let r = ((self.r[Register::IR1] as i16) >> 7).clamp(0, 0x1F) as u32;
+                let g = ((self.r[Register::IR2] as i16) >> 7).clamp(0, 0x1F) as u32;
+                let b = ((self.r[Register::IR3] as i16) >> 7).clamp(0, 0x1F) as u32;
+
+                r | (g << 5) | (b << 10)
             }
             // LZCR, reading returns the number of leading bits in LZCS
             31 => {
@@ -76,17 +86,21 @@ impl GeometryTransformationEngine {
         log::trace!("GTE register write: R{register} = {value:08X} ({})", Register::name(register));
 
         match register {
-            // OTZ, ORGB, LZCR are read-only
-            7 | 29 | 31 => {}
+            // ORGB, LZCR are read-only
+            29 | 31 => {}
             // SXYP, writing shifts the screen X/Y FIFO in addition to writing SXY2/SXYP
             15 => {
                 self.r[Register::SXY0] = self.r[Register::SXY1];
                 self.r[Register::SXY1] = self.r[Register::SXY2];
                 self.r[Register::SXY2] = value;
             }
+            // MAC1-3
+            25..=27 => self.mac[(register - 24) as usize] = (value as i32).into(),
             // IRGB, writing triggers a color conversion operation into IR1/IR2/IR3
             28 => {
-                todo!("IRGB write {value:08X}")
+                self.r[Register::IR1] = (value & 0x1F) << 7;
+                self.r[Register::IR2] = ((value >> 5) & 0x1F) << 7;
+                self.r[Register::IR3] = ((value >> 10) & 0x1F) << 7;
             }
             _ => self.r[register as usize] = value,
         }
@@ -199,26 +213,25 @@ impl GeometryTransformationEngine {
 
         let sf = opcode.bit(SF_BIT);
         if sf {
-            self.r[Register::MAC1] = (i64::from(mac1) >> 12) as u32;
-            self.r[Register::MAC2] = (i64::from(mac2) >> 12) as u32;
-            self.r[Register::MAC3] = (i64::from(mac3) >> 12) as u32;
+            self.mac[1] = i64::from(mac1) >> 12;
+            self.mac[2] = i64::from(mac2) >> 12;
+            self.mac[3] = i64::from(mac3) >> 12;
         } else {
-            self.r[Register::MAC1] = i64::from(mac1) as u32;
-            self.r[Register::MAC2] = i64::from(mac2) as u32;
-            self.r[Register::MAC3] = i64::from(mac3) as u32;
+            self.mac[1] = mac1.into();
+            self.mac[2] = mac2.into();
+            self.mac[3] = mac3.into();
         }
 
-        // RTPS/RTPT always behave as if lm=0
-        let lm = behavior == MatrixMultiplyBehavior::Standard && opcode.bit(LM_BIT);
+        let lm = opcode.bit(LM_BIT);
 
-        self.set_ir_component(Register::IR1, self.r[Register::MAC1], Flag::IR1_SATURATED, lm);
-        self.set_ir_component(Register::IR2, self.r[Register::MAC2], Flag::IR2_SATURATED, lm);
+        self.set_ir_component(Register::IR1, self.mac[1] as u32, Flag::IR1_SATURATED, lm);
+        self.set_ir_component(Register::IR2, self.mac[2] as u32, Flag::IR2_SATURATED, lm);
 
         match behavior {
             MatrixMultiplyBehavior::Rtp if !sf => {
                 // Apparent hardware bug: When sf=0, IR3 saturation flag is set based on
                 // (MAC3 >> 12) instead of MAC3
-                let value = self.r[Register::MAC3] as i32;
+                let value = self.mac[3] as i32;
                 if !(I16_MIN..=I16_MAX).contains(&(value >> 12)) {
                     self.r[Register::FLAG] |= Flag::IR3_SATURATED;
                 }
@@ -227,12 +240,7 @@ impl GeometryTransformationEngine {
                 self.r[Register::IR3] = value.clamp(min, I16_MAX) as u32;
             }
             _ => {
-                self.set_ir_component(
-                    Register::IR3,
-                    self.r[Register::MAC3],
-                    Flag::IR3_SATURATED,
-                    lm,
-                );
+                self.set_ir_component(Register::IR3, self.mac[3] as u32, Flag::IR3_SATURATED, lm);
             }
         }
     }
@@ -306,21 +314,21 @@ impl GeometryTransformationEngine {
             Flag::MAC1_OVERFLOW_POSITIVE,
             Flag::MAC1_OVERFLOW_NEGATIVE,
         );
-        self.r[Register::MAC1] = i64::from(mac1) as u32;
+        self.mac[1] = mac1.into();
 
         let mac2 = self.check_mac123_overflow(
             mac2,
             Flag::MAC2_OVERFLOW_POSITIVE,
             Flag::MAC2_OVERFLOW_NEGATIVE,
         );
-        self.r[Register::MAC2] = i64::from(mac2) as u32;
+        self.mac[2] = mac2.into();
 
         let mac3 = self.check_mac123_overflow(
             mac3,
             Flag::MAC3_OVERFLOW_POSITIVE,
             Flag::MAC3_OVERFLOW_NEGATIVE,
         );
-        self.r[Register::MAC3] = i64::from(mac3) as u32;
+        self.mac[3] = mac3.into();
     }
 
     fn read_matrix(&self, base_register: usize) -> [[MatrixComponent; 3]; 3] {
@@ -374,9 +382,9 @@ impl GeometryTransformationEngine {
 
     fn read_mac_vector<const FRACTION_BITS: u8>(&self) -> [FixedPointDecimal<FRACTION_BITS>; 3] {
         [
-            FixedPointDecimal::new((self.r[Register::MAC1] as i32).into()),
-            FixedPointDecimal::new((self.r[Register::MAC2] as i32).into()),
-            FixedPointDecimal::new((self.r[Register::MAC3] as i32).into()),
+            FixedPointDecimal::new(self.mac[1]),
+            FixedPointDecimal::new(self.mac[2]),
+            FixedPointDecimal::new(self.mac[3]),
         ]
     }
 

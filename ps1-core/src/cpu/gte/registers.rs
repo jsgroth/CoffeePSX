@@ -36,9 +36,6 @@ impl Register {
     // (R23 is unused)
     // MAC0-3: Multiply-accumulate results
     pub const MAC0: usize = 24;
-    pub const MAC1: usize = 25;
-    pub const MAC2: usize = 26;
-    pub const MAC3: usize = 27;
     // IRGB: Color conversion input
     pub const IRGB: usize = 28;
     // ORGB: Color conversion output
