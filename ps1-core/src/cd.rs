@@ -415,6 +415,10 @@ impl CdController {
                 // $1F801801 R: Response FIFO
                 self.read_response_fifo()
             }
+            (2, _) => {
+                // $1F801802 R: Data FIFO
+                self.read_data_fifo()
+            }
             (3, 0 | 2) => {
                 // $1F801803.0/2 R: Interrupts enabled register
                 self.interrupts.read_enabled()
@@ -423,7 +427,7 @@ impl CdController {
                 // $1F801803.1/3 R: Interrupt flags register
                 self.interrupts.read_flags()
             }
-            _ => todo!("CD-ROM read {address:08X}.{}", self.index),
+            _ => panic!("Invalid CD-ROM read: address {address:08X}, index {}", self.index),
         }
     }
 
