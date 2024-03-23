@@ -287,9 +287,9 @@ impl GeometryTransformationEngine {
         let [ir1, ir2, ir3] = self.read_ir_vector();
         let [mac1, mac2, mac3] = self.read_mac_vector::<12>();
 
-        let mac1 = ir1 * ir0 + mac1;
-        let mac2 = ir2 * ir0 + mac2;
-        let mac3 = ir3 * ir0 + mac3;
+        let mac1 = self.check_mac123_overflow(ir1 * ir0 + mac1, Mac::One);
+        let mac2 = self.check_mac123_overflow(ir2 * ir0 + mac2, Mac::Two);
+        let mac3 = self.check_mac123_overflow(ir3 * ir0 + mac3, Mac::Three);
 
         if opcode.bit(gte::SF_BIT) {
             self.set_mac(mac1.shift_to::<0>(), mac2.shift_to::<0>(), mac3.shift_to::<0>());

@@ -177,7 +177,9 @@ impl GeometryTransformationEngine {
     pub fn execute_opcode(&mut self, opcode: u32) {
         log::trace!("GTE opcode: {opcode:08X}");
 
+        // Clear flags and clip MAC registers to 32 bits
         self.r[Register::FLAG] = 0;
+        self.mac = self.mac.map(|mac| (mac as i32).into());
 
         let command = opcode & 0x3F;
         match command {
@@ -261,12 +263,8 @@ impl GeometryTransformationEngine {
             Mac::Three => FixedPointDecimal::new(self.mac[3]),
         };
 
-        println!("Accumulator: {existing_value:X?} + {value:X?}");
-
         let new_value = value + existing_value;
         let new_value = self.check_mac123_overflow(new_value, mac);
-
-        println!("Result: {new_value:X?}");
 
         match mac {
             Mac::One => self.mac[1] = new_value.into(),
