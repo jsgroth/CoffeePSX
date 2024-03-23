@@ -149,8 +149,8 @@ impl GpuTimer {
             return;
         }
 
-        self.vblank_start_gpu_cycle = u64::from(y2) * NTSC_LINES_PER_FRAME;
-        self.vblank_end_gpu_cycle = u64::from(y1) * NTSC_LINES_PER_FRAME;
+        self.vblank_start_gpu_cycle = u64::from(y2) * NTSC_DOTS_PER_LINE;
+        self.vblank_end_gpu_cycle = u64::from(y1) * NTSC_DOTS_PER_LINE;
 
         self.schedule_next_vblank(scheduler);
     }
