@@ -62,6 +62,7 @@ pub struct WgpuRenderer {
     frame_texture_format: TextureFormat,
     frame_textures: HashMap<FrameSize, FrameScaling>,
     sampler: Sampler,
+    prescaling: bool,
     filter_mode: FilterMode,
     dumping_vram: bool,
 }
@@ -158,6 +159,7 @@ impl WgpuRenderer {
             frame_texture_format,
             frame_textures: HashMap::new(),
             sampler,
+            prescaling: true,
             filter_mode,
             dumping_vram: false,
         })
@@ -167,6 +169,13 @@ impl WgpuRenderer {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    pub fn toggle_prescaling(&mut self) {
+        self.prescaling = !self.prescaling;
+        self.frame_textures.clear();
+
+        log::info!("Prescaling enabled: {}", self.prescaling);
     }
 
     pub fn toggle_filter_mode(&mut self) {
@@ -302,6 +311,7 @@ fn create_frame_scaling(
     scale_module: &ShaderModule,
     format: TextureFormat,
     size: FrameSize,
+    prescaling: bool,
 ) -> FrameScaling {
     log::info!("Creating {}x{} frame texture", size.width, size.height);
 
@@ -316,7 +326,7 @@ fn create_frame_scaling(
         view_formats: &[],
     });
 
-    if size.width >= 512 && size.height >= 448 {
+    if !prescaling || (size.width >= 512 && size.height >= 448) {
         return FrameScaling::None { raw };
     }
 
@@ -550,6 +560,7 @@ impl Renderer for WgpuRenderer {
                 &self.scale_module,
                 self.frame_texture_format,
                 frame_size,
+                self.prescaling,
             )
         });
 

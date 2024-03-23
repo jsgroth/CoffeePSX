@@ -43,6 +43,7 @@ Hotkeys:
 * Save state: F5 key
 * Load state: F6 key
 * Pause: P key
+* Toggle 2x Prescaling: / key (Forward Slash)
 * Toggle Bilinear Interpolation: ; key (Semicolon)
 * Toggle VRAM view: ' key (Quote)
 * Exit: Esc key

@@ -110,7 +110,6 @@ struct HandleKeyEventArgs<'a, Stream> {
 }
 
 fn handle_key_event<Stream: StreamTrait>(
-    event: KeyEvent,
     HandleKeyEventArgs {
         emulator,
         window,
@@ -122,6 +121,7 @@ fn handle_key_event<Stream: StreamTrait>(
         save_state_path,
         paused,
     }: HandleKeyEventArgs<'_, Stream>,
+    event: KeyEvent,
 ) -> anyhow::Result<()> {
     let pressed = event.state == ElementState::Pressed;
 
@@ -144,6 +144,7 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::Escape if pressed => elwt.exit(),
             KeyCode::F5 if pressed => save_state(save_state_path, emulator)?,
             KeyCode::F6 if pressed => load_state(save_state_path, emulator),
+            KeyCode::Slash if pressed => renderer.toggle_prescaling(),
             KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
             KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
             KeyCode::Quote if pressed => renderer.toggle_dumping_vram(window),
@@ -303,7 +304,6 @@ fn main() -> anyhow::Result<()> {
             event: WindowEvent::KeyboardInput { event: key_event, .. }, ..
         } => {
             if let Err(err) = handle_key_event(
-                key_event,
                 HandleKeyEventArgs {
                     emulator: &mut emulator,
                     window: &window,
@@ -315,6 +315,7 @@ fn main() -> anyhow::Result<()> {
                     save_state_path: &save_state_path,
                     paused: &mut paused,
                 },
+                key_event,
             ) {
                 log::error!("Error handling key press: {err}");
             };
