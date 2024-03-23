@@ -49,6 +49,18 @@ impl GeometryTransformationEngine {
         self.push_to_color_fifo(opcode);
     }
 
+    // INTPL: Interpolation of a vector and a far color
+    #[allow(clippy::redundant_closure_for_method_calls)]
+    pub(super) fn intpl(&mut self, opcode: u32) {
+        // MAC = IR << 12
+        let [mac1, mac2, mac3] = self.read_ir_vector().map(|ir| ir.shift_to::<12>());
+        self.set_mac(mac1, mac2, mac3);
+
+        self.apply_depth_cue(opcode);
+        self.apply_mac_shift(opcode);
+        self.push_to_color_fifo(opcode);
+    }
+
     // MAC = (LLM * V) >> (sf * 12)
     // IR = MAC
     fn apply_light_matrix(&mut self, opcode: u32, vxy: usize, vz: usize) {

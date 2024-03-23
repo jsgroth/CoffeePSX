@@ -152,7 +152,7 @@ impl GeometryTransformationEngine {
             0x06 => self.nclip(),
             0x0C => self.op(opcode),
             0x10 => self.dpcs(opcode),
-            // TODO 0x11: INTPL
+            0x11 => self.intpl(opcode),
             0x12 => self.mvmva(opcode),
             0x13 => self.ncds(opcode),
             // TODO 0x14: CDP
