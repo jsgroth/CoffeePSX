@@ -129,6 +129,19 @@ impl GeometryTransformationEngine {
         self.general_purpose_interpolation(opcode);
     }
 
+    // GPL General-purpose interpolation with base
+    // Interpolates the current contents of the IR vector, accumulates into the MAC vector, and
+    // pushes to the color FIFO
+    #[allow(clippy::redundant_closure_for_method_calls)]
+    pub(super) fn gpl(&mut self, opcode: u32) {
+        if opcode.bit(gte::SF_BIT) {
+            let [mac1, mac2, mac3] = self.read_mac_vector::<0>().map(|mac| mac.shift_to::<12>());
+            self.set_mac(mac1, mac2, mac3);
+        }
+
+        self.general_purpose_interpolation(opcode);
+    }
+
     fn general_purpose_interpolation(&mut self, opcode: u32) {
         let ir0 = fixedpoint::ir0(self.r[Register::IR0]);
         let [ir1, ir2, ir3] = self.read_ir_vector();

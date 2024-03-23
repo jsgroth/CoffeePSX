@@ -154,7 +154,7 @@ impl GeometryTransformationEngine {
             0x2E => self.avsz4(),
             0x30 => self.rtpt(opcode),
             0x3D => self.gpf(opcode),
-            // TODO 0x3E: GPL
+            0x3E => self.gpl(opcode),
             // TODO 0x3F: NCCT
             _ => log::warn!("Unimplemented GTE command {command:02X} {opcode:08X}"),
         }
