@@ -19,6 +19,12 @@ const SCREEN_XY_MAX: i64 = (1 << 10) - 1;
 const IR0_MIN: i64 = 0;
 const IR0_MAX: i64 = 0x1000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WithDepthCalculation {
+    Yes,
+    No,
+}
+
 impl GeometryTransformationEngine {
     // RTPS: Perspective transformation, single
     // Applies perspective transformation to V0
@@ -32,7 +38,7 @@ impl GeometryTransformationEngine {
         let v0 = self.read_vector16_packed(Register::VXY0, Register::VZ0);
 
         self.matrix_multiply_add(opcode, &v0, &rotation, &translation, MatrixMultiplyBehavior::Rtp);
-        self.perform_perspective_transformation(opcode);
+        self.perform_perspective_transformation(opcode, WithDepthCalculation::Yes);
     }
 
     // RTPT: Perspective transformation, triple
@@ -45,15 +51,15 @@ impl GeometryTransformationEngine {
 
         let v0 = self.read_vector16_packed(Register::VXY0, Register::VZ0);
         self.matrix_multiply_add(opcode, &v0, &rotation, &translation, MatrixMultiplyBehavior::Rtp);
-        self.perform_perspective_transformation(opcode);
+        self.perform_perspective_transformation(opcode, WithDepthCalculation::No);
 
         let v1 = self.read_vector16_packed(Register::VXY1, Register::VZ1);
         self.matrix_multiply_add(opcode, &v1, &rotation, &translation, MatrixMultiplyBehavior::Rtp);
-        self.perform_perspective_transformation(opcode);
+        self.perform_perspective_transformation(opcode, WithDepthCalculation::No);
 
         let v2 = self.read_vector16_packed(Register::VXY2, Register::VZ2);
         self.matrix_multiply_add(opcode, &v2, &rotation, &translation, MatrixMultiplyBehavior::Rtp);
-        self.perform_perspective_transformation(opcode);
+        self.perform_perspective_transformation(opcode, WithDepthCalculation::Yes);
     }
 
     // NCLIP: Normal clipping
@@ -129,7 +135,11 @@ impl GeometryTransformationEngine {
         self.r[Register::OTZ] = clamped_otz as u32;
     }
 
-    fn perform_perspective_transformation(&mut self, opcode: u32) {
+    fn perform_perspective_transformation(
+        &mut self,
+        opcode: u32,
+        with_depth: WithDepthCalculation,
+    ) {
         let sf = opcode.bit(gte::SF_BIT);
         let sz3 = self.mac[3] >> (12 * (1 - u8::from(sf)));
 
@@ -155,6 +165,11 @@ impl GeometryTransformationEngine {
         let sy = mac0.shift_to::<0>();
 
         self.push_screen_xy(sx, sy);
+        self.r[Register::MAC0] = i64::from(mac0) as u32;
+
+        if with_depth != WithDepthCalculation::Yes {
+            return;
+        }
 
         let dqa = fixedpoint::dqa(self.r[Register::DQA]);
         let dqb = fixedpoint::dqb(self.r[Register::DQB]);
