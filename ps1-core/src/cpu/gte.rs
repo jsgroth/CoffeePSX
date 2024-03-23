@@ -143,7 +143,7 @@ impl GeometryTransformationEngine {
             0x13 => self.ncds(opcode),
             // TODO 0x14: CDP
             // TODO 0x16: NCDT
-            // TODO 0x1B: NCCS
+            0x1B => self.nccs(opcode),
             // TODO 0x1C: CC
             // TODO 0x1E: NCS
             // TODO 0x20: NCT

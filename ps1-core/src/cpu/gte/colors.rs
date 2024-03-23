@@ -10,6 +10,18 @@ const ZERO_VECTOR: [FixedPointDecimal<0>; 3] =
     [FixedPointDecimal::ZERO, FixedPointDecimal::ZERO, FixedPointDecimal::ZERO];
 
 impl GeometryTransformationEngine {
+    // NCCS: Normal color, single vector
+    // Performs color calculation on the vector V0 with no depth cueing
+    pub(super) fn nccs(&mut self, opcode: u32) {
+        log::trace!("GTE NCCS {opcode:08X}");
+
+        self.apply_light_matrix(opcode, Register::VXY0, Register::VZ0);
+        self.apply_light_color_matrix(opcode);
+        self.apply_color_vector();
+        self.apply_mac_shift(opcode);
+        self.push_to_color_fifo(opcode);
+    }
+
     // NCDS: Normal color depth cue, single vector
     // Performs color calculation on the vector V0 with depth cueing and writes the results to the
     // color FIFO
