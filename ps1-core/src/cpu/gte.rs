@@ -188,15 +188,15 @@ impl GeometryTransformationEngine {
             0x11 => self.intpl(opcode),
             0x12 => self.mvmva(opcode),
             0x13 => self.ncds(opcode),
-            // TODO 0x14: CDP
-            // TODO 0x16: NCDT
+            0x14 => self.cdp(opcode),
+            0x16 => self.ncdt(opcode),
             0x1B => self.nccs(opcode),
-            // TODO 0x1C: CC
-            // TODO 0x1E: NCS
-            // TODO 0x20: NCT
+            0x1C => self.cc(opcode),
+            0x1E => self.ncs(opcode),
+            0x20 => self.nct(opcode),
             0x28 => self.sqr(opcode),
-            // TODO 0x29: DCPL
-            // TODO 0x2A: DPCT
+            0x29 => self.dcpl(opcode),
+            0x2A => self.dpct(opcode),
             0x2D => self.avsz3(),
             0x2E => self.avsz4(),
             0x30 => self.rtpt(opcode),

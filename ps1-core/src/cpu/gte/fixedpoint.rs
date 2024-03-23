@@ -21,6 +21,10 @@ impl<const FRACTION_BITS: u8> FixedPointDecimal<FRACTION_BITS> {
     pub fn reinterpret<const NEW_FRACTION_BITS: u8>(self) -> FixedPointDecimal<NEW_FRACTION_BITS> {
         FixedPointDecimal(self.0)
     }
+
+    pub fn clip_to_i32(self) -> Self {
+        Self((self.0 << 32) >> 32)
+    }
 }
 
 impl<const FRACTION_BITS: u8> From<FixedPointDecimal<FRACTION_BITS>> for i64 {

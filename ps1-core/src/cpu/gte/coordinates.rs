@@ -109,6 +109,18 @@ impl GeometryTransformationEngine {
     }
 
     fn set_otz(&mut self) {
+        if self.r[Register::FLAG] & Flag::MAC0_OVERFLOW_POSITIVE != 0 {
+            self.r[Register::OTZ] = 0xFFFF;
+            self.r[Register::FLAG] |= Flag::SZ3_OTZ_SATURATED | Flag::ERROR;
+            return;
+        }
+
+        if self.r[Register::FLAG] & Flag::MAC0_OVERFLOW_NEGATIVE != 0 {
+            self.r[Register::OTZ] = 0;
+            self.r[Register::FLAG] |= Flag::SZ3_OTZ_SATURATED | Flag::ERROR;
+            return;
+        }
+
         let otz = (self.r[Register::MAC0] as i32) >> 12;
         let clamped_otz = otz.clamp(U16_MIN, U16_MAX);
         if otz != clamped_otz {
