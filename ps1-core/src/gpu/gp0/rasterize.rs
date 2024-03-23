@@ -2,7 +2,7 @@
 
 use crate::gpu::gp0::{
     Color, DrawSettings, PolygonCommandParameters, RectangleCommandParameters,
-    SemiTransparencyMode, TextureColorDepthBits, TexturePage, Vertex,
+    SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow, Vertex,
 };
 use crate::gpu::Vram;
 use std::cmp;
@@ -277,6 +277,7 @@ pub fn triangle(
     }: DrawPolygonParameters,
     draw_settings: &DrawSettings,
     global_texpage: &TexturePage,
+    texture_window: TextureWindow,
     vram: &mut Vram,
 ) {
     // Determine if the vertices are in clockwise order; if not, swap the first 2
@@ -289,6 +290,7 @@ pub fn triangle(
             texture_mode,
             draw_settings,
             global_texpage,
+            texture_window,
             vram,
         );
         return;
@@ -335,6 +337,7 @@ pub fn triangle(
                     semi_transparent,
                     global_semi_transparency_mode: global_texpage.semi_transparency_mode,
                     texture_params: &texture_params,
+                    texture_window,
                     texture_mode,
                     dithering: draw_settings.dithering_enabled,
                     force_mask_bit: draw_settings.force_mask_bit,
@@ -354,6 +357,7 @@ fn triangle_swapped_vertices(
     texture_mode: TextureMode,
     draw_settings: &DrawSettings,
     global_texpage: &TexturePage,
+    texture_window: TextureWindow,
     vram: &mut Vram,
 ) {
     let vertices = [v[1], v[0], v[2]];
@@ -380,6 +384,7 @@ fn triangle_swapped_vertices(
         },
         draw_settings,
         global_texpage,
+        texture_window,
         vram,
     );
 }
@@ -390,6 +395,7 @@ struct RasterizePixelArgs<'a> {
     semi_transparent: bool,
     global_semi_transparency_mode: SemiTransparencyMode,
     texture_params: &'a PolygonTextureParameters,
+    texture_window: TextureWindow,
     texture_mode: TextureMode,
     dithering: bool,
     force_mask_bit: bool,
@@ -407,6 +413,7 @@ fn rasterize_pixel(
         semi_transparent,
         global_semi_transparency_mode,
         texture_params,
+        texture_window,
         texture_mode,
         dithering,
         force_mask_bit,
@@ -463,6 +470,7 @@ fn rasterize_pixel(
             let texture_pixel = sample_texture(
                 vram,
                 &texture_params.texpage,
+                &texture_window,
                 texture_params.clut_x.into(),
                 texture_params.clut_y.into(),
                 tex_u.into(),
@@ -599,12 +607,16 @@ fn compute_affine_coordinates(
 fn sample_texture(
     vram: &Vram,
     texpage: &TexturePage,
+    texture_window: &TextureWindow,
     clut_x: u32,
     clut_y: u32,
     u: u32,
     v: u32,
 ) -> u16 {
-    // TODO texture window mask/offset
+    let u = (u & !(texture_window.x_mask << 3))
+        | ((texture_window.x_offset & texture_window.x_mask) << 3);
+    let v = (v & !(texture_window.y_mask << 3))
+        | ((texture_window.y_offset & texture_window.y_mask) << 3);
 
     let y = texpage.y_base + v;
 
@@ -668,6 +680,7 @@ pub fn rectangle(
     }: DrawRectangleParameters,
     draw_settings: &DrawSettings,
     global_texpage: TexturePage,
+    texture_window: TextureWindow,
     vram: &mut Vram,
 ) {
     let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
@@ -710,6 +723,7 @@ pub fn rectangle(
                 ..texture_params
             },
             global_texpage,
+            texture_window,
             texture_mode,
             vram,
         ),
@@ -772,6 +786,7 @@ fn rectangle_textured(
     }: RectangleArgs,
     texture_params: RectangleTextureParameters,
     global_texpage: TexturePage,
+    texture_window: TextureWindow,
     texture_mode: TextureMode,
     vram: &mut Vram,
 ) {
@@ -787,6 +802,7 @@ fn rectangle_textured(
             let texture_pixel = sample_texture(
                 vram,
                 &global_texpage,
+                &texture_window,
                 texture_params.clut_x.into(),
                 texture_params.clut_y.into(),
                 u.into(),

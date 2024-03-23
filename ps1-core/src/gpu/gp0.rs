@@ -324,7 +324,7 @@ impl TexturePage {
     }
 }
 
-#[derive(Debug, Clone, Default, Encode, Decode)]
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
 pub struct TextureWindow {
     // All values in 8-pixel steps
     pub x_mask: u32,
@@ -341,6 +341,10 @@ impl TextureWindow {
             x_offset: (command >> 10) & 0x1F,
             y_offset: (command >> 15) & 0x1F,
         }
+    }
+
+    pub fn to_word(self) -> u32 {
+        self.x_mask | (self.y_mask << 5) | (self.x_offset << 10) | (self.y_offset << 15)
     }
 }
 
@@ -669,6 +673,7 @@ impl Gpu {
             first_params,
             &self.gp0.draw_settings,
             &self.gp0.global_texture_page,
+            self.gp0.texture_window,
             &mut self.vram,
         );
         if let Some(second_params) = second_params {
@@ -677,6 +682,7 @@ impl Gpu {
                 second_params,
                 &self.gp0.draw_settings,
                 &self.gp0.global_texture_page,
+                self.gp0.texture_window,
                 &mut self.vram,
             );
         }
@@ -691,6 +697,7 @@ impl Gpu {
             parameters,
             &self.gp0.draw_settings,
             self.gp0.global_texture_page,
+            self.gp0.texture_window,
             &mut self.vram,
         );
     }

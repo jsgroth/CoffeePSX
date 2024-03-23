@@ -154,6 +154,8 @@ impl Gpu {
     // GP1($10)
     fn get_gpu_info(&mut self, value: u32) {
         self.gpu_read_buffer = match value & 0xF {
+            // Texture window
+            0x2 => self.gp0.texture_window.to_word(),
             // Drawing area top left
             0x3 => {
                 let (x, y) = self.gp0.draw_settings.draw_area_top_left;
