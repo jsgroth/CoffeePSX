@@ -268,13 +268,39 @@ impl MacroblockDecoder {
                 yuv_to_rgb(base_col, base_row, self.decode_config.signed, &mut self.buffers);
             }
 
-            // TODO don't assume DMA out and 24bpp
-            for row in 0..16 {
-                for col in 0..16 {
-                    let Color { r, g, b } = self.buffers.color_out_buffer[16 * row + col];
-                    self.data_out.push_back(r as u8);
-                    self.data_out.push_back(g as u8);
-                    self.data_out.push_back(b as u8);
+            // TODO don't assume DMA out
+            match self.decode_config.depth {
+                DepthBits::TwentyFour => {
+                    for row in 0..16 {
+                        for col in 0..16 {
+                            let Color { r, g, b } = self.buffers.color_out_buffer[16 * row + col];
+                            self.data_out.push_back(r as u8);
+                            self.data_out.push_back(g as u8);
+                            self.data_out.push_back(b as u8);
+                        }
+                    }
+                }
+                DepthBits::Fifteen => {
+                    for row in 0..16 {
+                        for col in 0..16 {
+                            let Color { r, g, b } = self.buffers.color_out_buffer[16 * row + col];
+
+                            let r = (r as u8) >> 3;
+                            let g = (g as u8) >> 3;
+                            let b = (b as u8) >> 3;
+                            let rgb555_color = u16::from(r)
+                                | (u16::from(g) << 5)
+                                | (u16::from(b) << 10)
+                                | (u16::from(self.decode_config.bit_15) << 15);
+
+                            let [lsb, msb] = rgb555_color.to_le_bytes();
+                            self.data_out.push_back(lsb);
+                            self.data_out.push_back(msb);
+                        }
+                    }
+                }
+                DepthBits::Four | DepthBits::Eight => {
+                    panic!("decode_colored_macroblocks() called in 4bpp/8bpp mode")
                 }
             }
 
