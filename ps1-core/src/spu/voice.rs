@@ -85,6 +85,14 @@ impl Voice {
         self.start_address = (value & 0xFFFF) << 3;
     }
 
+    pub fn read_adsr_low(&self) -> u32 {
+        self.adsr.settings.read_low()
+    }
+
+    pub fn read_adsr_high(&self) -> u32 {
+        self.adsr.settings.read_high()
+    }
+
     pub fn write_adsr_low(&mut self, value: u32) {
         self.adsr.settings.write_low(value);
     }

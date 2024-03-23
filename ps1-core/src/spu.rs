@@ -260,6 +260,14 @@ impl Spu {
             0x1D8A => self.control.last_key_on_write >> 16,
             0x1D8C => self.control.last_key_off_write & 0xFFFF,
             0x1D8E => self.control.last_key_off_write >> 16,
+            0x1D90 => {
+                log::warn!("Unimplemented pitch modulation enabled read (low halfword)");
+                0
+            }
+            0x1D92 => {
+                log::warn!("Unimplemented pitch modulation enabled read (high halfword)");
+                0
+            }
             0x1D94 => {
                 log::warn!("Unimplemented noise on read (voices 0-15)");
                 0
@@ -366,6 +374,14 @@ impl Spu {
         }
 
         match address & 0xF {
+            0x8 => {
+                // $1F801C08 + N*$10: ADSR settings, low halfword
+                self.voices[voice].read_adsr_low()
+            }
+            0xA => {
+                // $1F801C0A + N*$10: ADSR settings, high halfword
+                self.voices[voice].read_adsr_high()
+            }
             0xC => {
                 // $1F801C0C + N*$10: Current ADSR level
                 self.voices[voice].read_adsr_level()
@@ -411,6 +427,11 @@ impl Spu {
                 self.voices[voice].write_adsr_low(value);
                 log::trace!("Voice {voice} ADSR settings (low): {:?}", self.voices[voice].adsr);
             }
+            0xA => {
+                // $1F801C0A + N*$10: ADSR settings, high halfword
+                self.voices[voice].write_adsr_high(value);
+                log::trace!("Voice {voice} ADSR settings (high): {:?}", self.voices[voice].adsr);
+            }
             0xC => {
                 // $1F801C0C + N*$10: Current ADSR level
                 log::warn!("Unimplemented ADSR level write (voice {voice}): {value:04X}");
@@ -419,11 +440,6 @@ impl Spu {
                 // $1F801C0E + N*$10: ADPCM repeat address
                 self.voices[voice].write_repeat_address(value);
                 log::trace!("Voice {voice} repeat address: {:05X}", (value & 0xFFFF) << 3);
-            }
-            0xA => {
-                // $1F801C0A + N*$10: ADSR settings, high halfword
-                self.voices[voice].write_adsr_high(value);
-                log::trace!("Voice {voice} ADSR settings (high): {:?}", self.voices[voice].adsr);
             }
             _ => todo!("voice {voice} register write: {address:08X} {value:04X}"),
         }

@@ -5,8 +5,8 @@ use std::cmp;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum EnvelopeMode {
     #[default]
-    Linear,
-    Exponential,
+    Linear = 0,
+    Exponential = 1,
 }
 
 impl EnvelopeMode {
@@ -18,8 +18,8 @@ impl EnvelopeMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum EnvelopeDirection {
     #[default]
-    Increasing,
-    Decreasing,
+    Increasing = 0,
+    Decreasing = 1,
 }
 
 impl EnvelopeDirection {
@@ -239,6 +239,14 @@ impl AdsrSettings {
         self.sustain_level = parse_sustain_level(value & 0xF);
     }
 
+    pub fn read_low(&self) -> u32 {
+        reverse_sustain_level(self.sustain_level)
+            | (u32::from(self.decay_shift) << 4)
+            | (u32::from(self.attack_step) << 8)
+            | (u32::from(self.attack_shift) << 10)
+            | ((self.attack_mode as u32) << 15)
+    }
+
     // $1F801C0A + N*$10: ADSR settings, high halfword
     pub fn write_high(&mut self, value: u32) {
         self.sustain_mode = EnvelopeMode::from_bit(value.bit(15));
@@ -248,10 +256,23 @@ impl AdsrSettings {
         self.release_mode = EnvelopeMode::from_bit(value.bit(5));
         self.release_shift = (value & 0x1F) as u8;
     }
+
+    pub fn read_high(&self) -> u32 {
+        u32::from(self.release_shift)
+            | ((self.release_mode as u32) << 5)
+            | (u32::from(self.sustain_step) << 6)
+            | (u32::from(self.sustain_shift) << 8)
+            | ((self.sustain_direction as u32) << 14)
+            | ((self.sustain_mode as u32) << 15)
+    }
 }
 
 fn parse_sustain_level(value: u32) -> u16 {
     (((value & 0xF) + 1) << 11) as u16
+}
+
+fn reverse_sustain_level(value: u16) -> u32 {
+    (u32::from(value) >> 11) - 1
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
