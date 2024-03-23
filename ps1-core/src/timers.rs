@@ -78,15 +78,16 @@ impl GpuTimer {
 
         elapsed_gpu_cycles -= dots_in_first_line - first_line_gpu_cycles;
         line += 1;
+        self.frame_gpu_cycles += dots_in_first_line - first_line_gpu_cycles;
+        self.dot_clock += dots_in_first_line / self.dot_clock_divider
+            - first_line_gpu_cycles / self.dot_clock_divider;
+        self.hblank_clock += 1;
+
         if line == NTSC_LINES_PER_FRAME {
             line = 0;
             self.frame_gpu_cycles = 0;
             self.odd_frame = !self.odd_frame;
         }
-        self.frame_gpu_cycles += dots_in_first_line - first_line_gpu_cycles;
-        self.dot_clock += dots_in_first_line / self.dot_clock_divider
-            - first_line_gpu_cycles / self.dot_clock_divider;
-        self.hblank_clock += 1;
 
         loop {
             let mut dots_in_line: u64 = NTSC_DOTS_PER_LINE;
@@ -102,14 +103,15 @@ impl GpuTimer {
 
             elapsed_gpu_cycles -= dots_in_line;
             line += 1;
+            self.frame_gpu_cycles += dots_in_line;
+            self.dot_clock += dots_in_line / self.dot_clock_divider;
+            self.hblank_clock += 1;
+
             if line == NTSC_LINES_PER_FRAME {
                 line = 0;
                 self.frame_gpu_cycles = 0;
                 self.odd_frame = !self.odd_frame;
             }
-            self.frame_gpu_cycles += dots_in_line;
-            self.dot_clock += dots_in_line / self.dot_clock_divider;
-            self.hblank_clock += 1;
         }
     }
 
@@ -550,5 +552,47 @@ impl Timers {
         }
 
         self.timers[timer_idx].maybe_schedule_irq(scheduler);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_timer_basic() {
+        let mut timer = GpuTimer::new();
+        timer.vblank_start_gpu_cycle = 256 * NTSC_DOTS_PER_LINE;
+        timer.vblank_end_gpu_cycle = NTSC_DOTS_PER_LINE;
+
+        assert_eq!(timer.scanline(), 0);
+        assert!(timer.in_vblank());
+
+        timer.catch_up(3413 * CPU_CLOCK_SPEED / NTSC_GPU_CLOCK_SPEED + 1);
+        assert_eq!(timer.frame_gpu_cycles, 3413);
+        assert_eq!(timer.scanline(), 1);
+        assert!(!timer.in_vblank());
+    }
+
+    #[test]
+    fn gpu_timer_per_frame() {
+        let mut timer = GpuTimer::new();
+
+        timer.catch_up(CPU_CLOCK_SPEED);
+
+        assert_eq!(timer.frame_gpu_cycles, NTSC_GPU_CLOCK_SPEED % PROGRESSIVE_CYCLES_PER_FRAME);
+    }
+
+    #[test]
+    fn gpu_timer_partial_line() {
+        let mut timer = GpuTimer::new();
+        timer.catch_up(101 * CPU_CLOCK_SPEED / NTSC_GPU_CLOCK_SPEED + 1);
+        assert_eq!(timer.frame_gpu_cycles, 101);
+
+        timer.catch_up(201 * CPU_CLOCK_SPEED / NTSC_GPU_CLOCK_SPEED + 1);
+        assert_eq!(timer.frame_gpu_cycles, 201);
+
+        timer.catch_up(3421 * CPU_CLOCK_SPEED / NTSC_GPU_CLOCK_SPEED + 1);
+        assert_eq!(timer.frame_gpu_cycles, 3421);
     }
 }
