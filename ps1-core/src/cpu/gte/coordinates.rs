@@ -27,7 +27,7 @@ impl GeometryTransformationEngine {
         log::trace!("GTE RTPS: {opcode:08X}");
 
         let translation = self.read_translation_vector();
-        let rotation = self.read_matrix(Register::RT_START);
+        let rotation = self.read_matrix(Register::RT1112);
         let v0 = self.read_vector16_packed(Register::VXY0, Register::VZ0);
 
         self.matrix_multiply_add(opcode, &v0, &rotation, &translation, MatrixMultiplyBehavior::Rtp);
@@ -40,7 +40,7 @@ impl GeometryTransformationEngine {
         log::trace!("GTE RTPT: {opcode:08X}");
 
         let translation = self.read_translation_vector();
-        let rotation = self.read_matrix(Register::RT_START);
+        let rotation = self.read_matrix(Register::RT1112);
 
         let v0 = self.read_vector16_packed(Register::VXY0, Register::VZ0);
         self.matrix_multiply_add(opcode, &v0, &rotation, &translation, MatrixMultiplyBehavior::Rtp);

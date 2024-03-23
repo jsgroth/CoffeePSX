@@ -3,7 +3,7 @@
 use crate::cpu::gte;
 use crate::cpu::gte::fixedpoint::FixedPointDecimal;
 use crate::cpu::gte::registers::Register;
-use crate::cpu::gte::{GeometryTransformationEngine, MatrixMultiplyBehavior};
+use crate::cpu::gte::{fixedpoint, GeometryTransformationEngine, MatrixMultiplyBehavior};
 use crate::num::U32Ext;
 
 impl GeometryTransformationEngine {
@@ -14,7 +14,7 @@ impl GeometryTransformationEngine {
         log::trace!("GTE MVMVA {opcode:08X}");
 
         let matrix = match (opcode >> 17) & 3 {
-            0 => self.read_matrix(Register::RT_START),
+            0 => self.read_matrix(Register::RT1112),
             1 => self.read_matrix(Register::LLM_START),
             2 => self.read_matrix(Register::LCM_START),
             3 => todo!("MVMVA executed with bugged matrix 3"),
@@ -61,5 +61,30 @@ impl GeometryTransformationEngine {
 
         let [mac1, mac2, mac3] = self.read_mac_vector::<0>();
         self.set_ir(mac1, mac2, mac3, false);
+    }
+
+    // OP: Cross product
+    // Computes the cross product of the IR vector and [RT11, RT22, RT33], and stores the result in IR
+    pub(super) fn op(&mut self, opcode: u32) {
+        log::trace!("GTE OP {opcode:08X}");
+
+        let [ir1, ir2, ir3] = self.read_ir_vector();
+        let d1 = fixedpoint::vector16_component(self.r[Register::RT1112]);
+        let d2 = fixedpoint::vector16_component(self.r[Register::RT2223]);
+        let d3 = fixedpoint::vector16_component(self.r[Register::RT33]);
+
+        let mac1 = ir3 * d2 - ir2 * d3;
+        let mac2 = ir1 * d3 - ir3 * d1;
+        let mac3 = ir2 * d1 - ir1 * d2;
+        if opcode.bit(gte::SF_BIT) {
+            let [mac1, mac2, mac3] =
+                [mac1, mac2, mac3].map(|mac| mac.reinterpret::<12>().shift_to::<0>());
+            self.set_mac(mac1, mac2, mac3);
+        } else {
+            self.set_mac(mac1, mac2, mac3);
+        }
+
+        let [mac1, mac2, mac3] = self.read_mac_vector::<0>();
+        self.set_ir(mac1, mac2, mac3, opcode.bit(gte::LM_BIT));
     }
 }

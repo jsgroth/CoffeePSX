@@ -136,7 +136,7 @@ impl GeometryTransformationEngine {
         match command {
             0x01 => self.rtps(opcode),
             0x06 => self.nclip(),
-            // TODO 0x0C: OP
+            0x0C => self.op(opcode),
             // TODO 0x10: DPCS
             // TODO 0x11: INTPL
             0x12 => self.mvmva(opcode),

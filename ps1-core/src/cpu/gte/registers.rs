@@ -48,7 +48,11 @@ impl Register {
     // LZCR: Count leading bits result
     pub const LZCR: usize = 31;
     // RT: Rotation matrix (R32-36)
-    pub const RT_START: usize = 32;
+    pub const RT1112: usize = 32;
+    pub const RT1321: usize = 33;
+    pub const RT2223: usize = 34;
+    pub const RT3132: usize = 35;
+    pub const RT33: usize = 36;
     // TR: Translation vector
     pub const TRX: usize = 37;
     pub const TRY: usize = 38;
