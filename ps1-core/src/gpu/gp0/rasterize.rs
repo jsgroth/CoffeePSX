@@ -99,6 +99,10 @@ pub fn line(
         return;
     }
 
+    if !vertices_valid(vertices[0], vertices[1]) {
+        return;
+    }
+
     // Apply drawing offset
     let vertices = vertices.map(|vertex| Vertex {
         x: vertex.x + draw_settings.draw_offset.0,
@@ -185,6 +189,12 @@ pub fn line(
         draw_settings,
         vram,
     );
+}
+
+fn vertices_valid(v0: Vertex, v1: Vertex) -> bool {
+    // The GPU will not render any lines or polygons where the distance between any two vertices is
+    // larger than 1023 horizontally or 511 vertically
+    (v0.x - v1.x).abs() < 1024 && (v0.y - v1.y).abs() < 512
 }
 
 fn draw_line_pixel(
@@ -280,6 +290,10 @@ pub fn triangle(
     texture_window: TextureWindow,
     vram: &mut Vram,
 ) {
+    if !vertices_valid(v[0], v[1]) || !vertices_valid(v[1], v[2]) || !vertices_valid(v[0], v[2]) {
+        return;
+    }
+
     // Determine if the vertices are in clockwise order; if not, swap the first 2
     if cross_product_z(v[0].to_float(), v[1].to_float(), v[2].to_float()) < 0.0 {
         triangle_swapped_vertices(
