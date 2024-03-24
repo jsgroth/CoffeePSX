@@ -11,6 +11,7 @@ use crate::cpu::cp0::ExceptionCode;
 use crate::cpu::gte::GeometryTransformationEngine;
 use bincode::{Decode, Encode};
 use cp0::SystemControlCoprocessor;
+use std::mem;
 
 const RESET_VECTOR: u32 = 0xBFC0_0000;
 const EXCEPTION_VECTOR: u32 = 0x8000_0080;
@@ -23,8 +24,8 @@ struct Registers {
     hi: u32,
     lo: u32,
     delayed_branch: Option<u32>,
-    delayed_load: Option<(u32, u32)>,
-    delayed_load_next: Option<(u32, u32)>,
+    delayed_load: (u32, u32),
+    delayed_load_next: (u32, u32),
 }
 
 impl Registers {
@@ -35,52 +36,53 @@ impl Registers {
             hi: 0,
             lo: 0,
             delayed_branch: None,
-            delayed_load: None,
-            delayed_load_next: None,
+            delayed_load: (0, 0),
+            delayed_load_next: (0, 0),
         }
     }
 
     fn read_gpr_lwl_lwr(&self, register: u32) -> u32 {
         // LWL and LWR are not affected by load delays; they can read in-flight values from load
         // instructions
-        match self.delayed_load {
-            Some((delayed_register, value)) if register == delayed_register => value,
-            _ => self.gpr[register as usize],
-        }
+        let (delayed_register, delayed_value) = self.delayed_load;
+        if delayed_register == register { delayed_value } else { self.gpr[register as usize] }
     }
 
     fn write_gpr(&mut self, register: u32, value: u32) {
-        if register != 0 {
-            self.gpr[register as usize] = value;
-
-            // A non-load register write should discard any in-progress delayed load to that
-            // register. Not doing this causes the BIOS to boot incorrectly
-            if self.delayed_load_register_is(register) {
-                self.delayed_load = None;
-            }
+        if register == 0 {
+            return;
         }
-    }
 
-    fn delayed_load_register_is(&self, register: u32) -> bool {
-        self.delayed_load.is_some_and(|(delayed_register, _)| register == delayed_register)
+        self.gpr[register as usize] = value;
+
+        // A non-load register write should discard any in-progress delayed load to that
+        // register. Not doing this causes the BIOS to boot incorrectly
+        if self.delayed_load.0 == register {
+            self.delayed_load = (0, 0);
+        }
     }
 
     fn write_gpr_delayed(&mut self, register: u32, value: u32) {
-        if register != 0 {
-            // Undocumented: If two consecutive load instructions write to the same register, the
-            // first delayed load is canceled
-            if self.delayed_load_register_is(register) {
-                self.delayed_load = None;
-            }
-            self.delayed_load_next = Some((register, value));
+        if register == 0 {
+            return;
         }
+
+        // Undocumented: If two consecutive load instructions write to the same register, the
+        // first delayed load is canceled
+        if self.delayed_load.0 == register {
+            self.delayed_load = (0, 0);
+        }
+        self.delayed_load_next = (register, value);
     }
 
     fn process_delayed_loads(&mut self) {
-        if let Some((register, value)) = self.delayed_load {
-            self.gpr[register as usize] = value;
-        }
-        self.delayed_load = self.delayed_load_next.take();
+        // No need for an if check here; if register is 0 then value will be 0
+        let (register, value) = self.delayed_load;
+        self.gpr[register as usize] = value;
+
+        debug_assert!(!(register == 0 && value != 0));
+
+        self.delayed_load = mem::take(&mut self.delayed_load_next);
     }
 }
 
