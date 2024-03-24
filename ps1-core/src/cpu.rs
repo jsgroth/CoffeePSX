@@ -173,10 +173,10 @@ impl R3000 {
     pub fn execute_instruction(&mut self, bus: &mut Bus<'_>) {
         let pc = self.registers.pc;
 
-        self.cp0.cause.set_hardware_interrupt_flag(bus.hardware_interrupt_pending());
-        if self.cp0.interrupt_pending() {
+        if pc & 3 != 0 {
+            // Address error on opcode fetch
             self.handle_exception(
-                Exception::Interrupt,
+                Exception::AddressErrorLoad(pc),
                 pc,
                 self.registers.delayed_branch.is_some(),
             );
@@ -184,10 +184,18 @@ impl R3000 {
             return;
         }
 
-        if pc & 3 != 0 {
-            // Address error on opcode fetch
+        self.cp0.cause.set_hardware_interrupt_flag(bus.hardware_interrupt_pending());
+        if self.cp0.interrupt_pending() {
+            // If the PC currently points to a GTE opcode, it needs to be executed before handling
+            // the exception because the exception handler will typically skip over it when returning.
+            // Some games depend on this for correct geometry, e.g. Crash Bandicoot and Final Fantasy 7
+            let opcode = self.bus_read_u32(bus, pc);
+            if is_gte_command_opcode(opcode) {
+                let _ = self.execute_opcode(opcode, pc, bus);
+            }
+
             self.handle_exception(
-                Exception::AddressErrorLoad(pc),
+                Exception::Interrupt,
                 pc,
                 self.registers.delayed_branch.is_some(),
             );
@@ -242,6 +250,11 @@ impl R3000 {
         };
         self.registers.delayed_branch = None;
     }
+}
+
+fn is_gte_command_opcode(opcode: u32) -> bool {
+    // All COP2 opcodes
+    opcode & 0xFE000000 == 0x4A000000
 }
 
 fn validate_address(address: u32) {
