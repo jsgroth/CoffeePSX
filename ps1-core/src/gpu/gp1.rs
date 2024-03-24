@@ -75,7 +75,7 @@ impl Gpu {
         // 0=on, 1=off
         self.registers.display_enabled = !value.bit(0);
 
-        log::trace!("GP1($03): Display enabled - {}", self.registers.display_enabled);
+        log::debug!("GP1($03): Display enabled - {}", self.registers.display_enabled);
     }
 
     // GP1($04)
@@ -90,8 +90,8 @@ impl Gpu {
         self.registers.display_area_x = value & 0x3FF;
         self.registers.display_area_y = (value >> 10) & 0x1FF;
 
-        log::trace!("GP1($05): Display area start");
-        log::trace!("  X={}, Y={}", self.registers.display_area_x, self.registers.display_area_y);
+        log::debug!("GP1($05): Display area start");
+        log::debug!("  X={}, Y={}", self.registers.display_area_x, self.registers.display_area_y);
     }
 
     // GP1($06)
@@ -100,8 +100,8 @@ impl Gpu {
         let x2 = (value >> 12) & 0xFFF;
         self.registers.x_display_range = (x1, x2);
 
-        log::trace!("GP1($06): Horizontal display range");
-        log::trace!(
+        log::debug!("GP1($06): Horizontal display range");
+        log::debug!(
             "  (X1, X2)=({:X}, {:X})",
             self.registers.x_display_range.0,
             self.registers.x_display_range.1
@@ -121,8 +121,8 @@ impl Gpu {
 
         timers.update_v_display_area(y1 as u16, y2 as u16, scheduler);
 
-        log::trace!("GP1($07): Vertical display range");
-        log::trace!(
+        log::debug!("GP1($07): Vertical display range");
+        log::debug!(
             "  (Y1, Y2)=({:X}, {:X})",
             self.registers.y_display_range.0,
             self.registers.y_display_range.1
@@ -142,13 +142,13 @@ impl Gpu {
         let dot_clock_divider = self.registers.dot_clock_divider();
         timers.update_display_mode(dot_clock_divider, self.registers.interlaced, scheduler);
 
-        log::trace!("GP1($08): Display mode");
-        log::trace!("  Horizontal resolution: {}", self.registers.h_resolution);
-        log::trace!("  Vertical resolution: {:?}", self.registers.v_resolution);
-        log::trace!("  Video mode: {}", self.registers.video_mode);
-        log::trace!("  Display area color depth: {}", self.registers.display_area_color_depth);
-        log::trace!("  Interlacing on: {}", self.registers.interlaced);
-        log::trace!("  Force horizontal resolution to 368px: {}", self.registers.force_h_368px);
+        log::debug!("GP1($08): Display mode");
+        log::debug!("  Horizontal resolution: {}", self.registers.h_resolution);
+        log::debug!("  Vertical resolution: {:?}", self.registers.v_resolution);
+        log::debug!("  Video mode: {}", self.registers.video_mode);
+        log::debug!("  Display area color depth: {}", self.registers.display_area_color_depth);
+        log::debug!("  Interlacing on: {}", self.registers.interlaced);
+        log::debug!("  Force horizontal resolution to 368px: {}", self.registers.force_h_368px);
     }
 
     // GP1($10)
