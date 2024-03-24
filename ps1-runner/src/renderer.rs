@@ -65,6 +65,7 @@ pub struct WgpuRenderer {
     prescaling: bool,
     filter_mode: FilterMode,
     dumping_vram: bool,
+    cropping_v_overscan: bool,
 }
 
 impl WgpuRenderer {
@@ -162,6 +163,7 @@ impl WgpuRenderer {
             prescaling: true,
             filter_mode,
             dumping_vram: false,
+            cropping_v_overscan: true,
         })
     }
 
@@ -198,6 +200,12 @@ impl WgpuRenderer {
         }
 
         log::info!("Dumping VRAM: {}", self.dumping_vram);
+    }
+
+    pub fn toggle_cropping_v_overscan(&mut self) {
+        self.cropping_v_overscan = !self.cropping_v_overscan;
+
+        log::info!("Cropping vertical overscan: {}", self.cropping_v_overscan);
     }
 
     // TODO pay attention to display width and X offset?
@@ -545,13 +553,15 @@ impl Renderer for WgpuRenderer {
 
         let (overscan_rows_top, frame_size) = if self.dumping_vram {
             (0, FrameSize { width: 1024, height: 512 })
-        } else {
+        } else if self.cropping_v_overscan {
             let cropped_frame_height = params.frame_height * 14 / 15;
             let overscan_rows_top = params.frame_height / 30;
 
             let frame_size = FrameSize { width: params.frame_width, height: cropped_frame_height };
 
             (overscan_rows_top, frame_size)
+        } else {
+            (0, FrameSize { width: params.frame_width, height: params.frame_height })
         };
 
         let frame_scaling = self.frame_textures.entry(frame_size).or_insert_with(|| {

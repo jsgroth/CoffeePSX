@@ -141,6 +141,7 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::KeyN if pressed => *step_to_next_frame = true,
             KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
             KeyCode::Quote if pressed => renderer.toggle_dumping_vram(window),
+            KeyCode::Period if pressed => renderer.toggle_cropping_v_overscan(),
             _ => {}
         },
         PhysicalKey::Unidentified(_) => {}

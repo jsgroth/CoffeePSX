@@ -81,4 +81,5 @@ Hotkeys:
 * Toggle 2x Prescaling: / key (Forward Slash)
 * Toggle Bilinear Interpolation: ; key (Semicolon)
 * Toggle VRAM view: ' key (Quote)
+* Toggle Vertical Overscan Cropping: . key (Period)
 * Exit: Esc key
