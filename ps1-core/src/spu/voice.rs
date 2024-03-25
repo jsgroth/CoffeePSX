@@ -12,8 +12,8 @@ pub struct Voice {
     pub volume_l: SweepEnvelope,
     pub volume_r: SweepEnvelope,
     pub sample_rate: u16,
-    pub start_address: u32,
-    pub repeat_address: u32,
+    start_address: u32,
+    repeat_address: u32,
     current_address: u32,
     pub adsr: AdsrEnvelope,
     adpcm_buffer: SpuAdpcmBuffer,
@@ -68,16 +68,8 @@ impl Voice {
         (sample_l, sample_r)
     }
 
-    pub fn write_volume_l(&mut self, value: u32) {
-        self.volume_l.write(value);
-    }
-
-    pub fn write_volume_r(&mut self, value: u32) {
-        self.volume_r.write(value);
-    }
-
-    pub fn write_sample_rate(&mut self, value: u32) {
-        self.sample_rate = value as u16;
+    pub fn read_start_address(&self) -> u32 {
+        self.start_address >> 3
     }
 
     pub fn write_start_address(&mut self, value: u32) {
@@ -85,24 +77,12 @@ impl Voice {
         self.start_address = (value & 0xFFFF) << 3;
     }
 
-    pub fn read_adsr_low(&self) -> u32 {
-        self.adsr.settings.read_low()
-    }
-
-    pub fn read_adsr_high(&self) -> u32 {
-        self.adsr.settings.read_high()
-    }
-
-    pub fn write_adsr_low(&mut self, value: u32) {
-        self.adsr.settings.write_low(value);
-    }
-
-    pub fn write_adsr_high(&mut self, value: u32) {
-        self.adsr.settings.write_high(value);
-    }
-
     pub fn read_adsr_level(&self) -> u32 {
-        self.adsr.level as u32
+        (self.adsr.level as u16).into()
+    }
+
+    pub fn read_repeat_address(&self) -> u32 {
+        self.repeat_address >> 3
     }
 
     pub fn write_repeat_address(&mut self, value: u32) {

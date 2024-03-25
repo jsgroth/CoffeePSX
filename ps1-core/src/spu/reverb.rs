@@ -251,10 +251,18 @@ impl ReverbUnit {
         log::trace!("Reverb output volume L: {}", self.output_volume.l);
     }
 
+    pub fn read_output_volume_l(&self) -> u32 {
+        (self.output_volume.l as u16).into()
+    }
+
     // $1F801D86: Reverb output volume R (vROUT)
     pub fn write_output_volume_r(&mut self, value: u32) {
         self.output_volume.r = parse_volume(value);
         log::trace!("Reverb output volume R: {}", self.output_volume.r);
+    }
+
+    pub fn read_output_volume_r(&self) -> u32 {
+        (self.output_volume.r as u16).into()
     }
 
     // $1F801D98: Reverb enabled, low halfword (EON)
@@ -289,6 +297,10 @@ impl ReverbUnit {
         self.buffer_start_addr = parse_address(value);
         self.buffer_current_addr = self.buffer_start_addr;
         log::trace!("Reverb buffer start address: {:05X}", self.buffer_start_addr);
+    }
+
+    pub fn read_buffer_start_address(&self) -> u32 {
+        reverse_address(self.buffer_start_addr)
     }
 
     // $1F801DC0-$1F801DFF: The majority of the reverb registers
@@ -526,6 +538,10 @@ impl ReverbUnit {
 fn parse_address(value: u32) -> u32 {
     // All address registers are in 8-byte units
     (value & 0xFFFF) << 3
+}
+
+fn reverse_address(address: u32) -> u32 {
+    address >> 3
 }
 
 fn parse_volume(value: u32) -> i32 {

@@ -72,8 +72,8 @@ impl EnvelopeSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum SweepPhase {
-    Positive,
-    Negative,
+    Positive = 0,
+    Negative = 1,
 }
 
 impl SweepPhase {
@@ -135,6 +135,20 @@ impl SweepEnvelope {
 
         self.wait_cycles_remaining = 1;
         self.next_step = 0;
+    }
+
+    pub fn read(&self) -> u32 {
+        match self.setting {
+            SweepSetting::Fixed => u32::from(self.volume as u16) >> 1,
+            SweepSetting::Sweep(envelope, phase) => {
+                (1 << 15)
+                    | ((envelope.mode as u32) << 14)
+                    | ((envelope.direction as u32) << 13)
+                    | ((phase as u32) << 12)
+                    | (u32::from(envelope.shift) << 2)
+                    | u32::from(envelope.step)
+            }
+        }
     }
 
     pub fn clock(&mut self) {

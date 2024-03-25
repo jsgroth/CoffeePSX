@@ -255,6 +255,10 @@ impl Spu {
 
         let value = match address & 0xFFFE {
             0x1C00..=0x1D7F => self.read_voice_register(address),
+            0x1D80 => self.volume.main_l.read(),
+            0x1D82 => self.volume.main_r.read(),
+            0x1D84 => self.reverb.read_output_volume_l(),
+            0x1D86 => self.reverb.read_output_volume_r(),
             // KON/KOFF are normally write-only, but reads return the last written value
             0x1D88 => self.control.last_key_on_write & 0xFFFF,
             0x1D8A => self.control.last_key_on_write >> 16,
@@ -278,11 +282,26 @@ impl Spu {
             }
             0x1D98 => self.reverb.read_reverb_on_low(),
             0x1D9A => self.reverb.read_reverb_on_high(),
+            0x1D9C => todo!("ENDX voices 0-15 read"),
+            0x1D9E => todo!("ENDX voices 16-23 read"),
+            0x1DA2 => self.reverb.read_buffer_start_address(),
+            0x1DA4 => todo!("SPU IRQ address read"),
             0x1DA6 => self.data_port.read_start_address(),
+            0x1DA8 => todo!("SPU data port read"),
             0x1DAA => self.control.read_spucnt(&self.data_port, &self.reverb),
             // TODO return an actual value for sound RAM data transfer control?
             0x1DAC => 0x0004,
             0x1DAE => self.read_status_register(),
+            0x1DB0 => (self.volume.cd_l as u16).into(),
+            0x1DB2 => (self.volume.cd_r as u16).into(),
+            0x1DB4 => {
+                log::warn!("External audio volume L read");
+                0
+            }
+            0x1DB6 => {
+                log::warn!("External audio volume R read");
+                0
+            }
             0x1DB8 => (self.volume.main_l.volume as u16).into(),
             0x1DBA => (self.volume.main_r.volume as u16).into(),
             _ => todo!("SPU read register {address:08X}"),
@@ -346,6 +365,7 @@ impl Spu {
                 log::warn!("ENDX write (voices 16-23): {value:04X}");
             }
             0x1DA2 => self.reverb.write_buffer_start_address(value),
+            0x1DA4 => todo!("SPU IRQ address write"),
             0x1DA6 => self.data_port.write_transfer_address(value),
             0x1DA8 => self.write_data_port(value as u16),
             0x1DAA => self.control.write_spucnt(value, &mut self.data_port, &mut self.reverb),
@@ -374,19 +394,42 @@ impl Spu {
         }
 
         match address & 0xF {
+            0x0 => {
+                // $1F801C00 + N*$10: Voice volume L
+                self.voices[voice].volume_l.read()
+            }
+            0x2 => {
+                // $1F801C02 + N*$10: Voice volume R
+                self.voices[voice].volume_r.read()
+            }
+            0x4 => {
+                // $1F801C04 + N*$10: Voice sample rate
+                self.voices[voice].sample_rate.into()
+            }
+            0x6 => {
+                // $1F801C06 + N*$10: ADPCM start address
+                self.voices[voice].read_start_address()
+            }
             0x8 => {
                 // $1F801C08 + N*$10: ADSR settings, low halfword
-                self.voices[voice].read_adsr_low()
+                self.voices[voice].adsr.settings.read_low()
             }
             0xA => {
                 // $1F801C0A + N*$10: ADSR settings, high halfword
-                self.voices[voice].read_adsr_high()
+                self.voices[voice].adsr.settings.read_high()
             }
             0xC => {
                 // $1F801C0C + N*$10: Current ADSR level
                 self.voices[voice].read_adsr_level()
             }
-            _ => todo!("SPU voice {voice} register read: {address:08X}"),
+            0xE => {
+                // $1F801C0E + N*$10: ADPCM repeat address
+                self.voices[voice].read_repeat_address()
+            }
+            _ => {
+                log::warn!("SPU voice {voice} register read: {address:08X}");
+                0
+            }
         }
     }
 
@@ -401,35 +444,32 @@ impl Spu {
         match address & 0xF {
             0x0 => {
                 // $1F801C00 + N*$10: Voice volume L
-                self.voices[voice].write_volume_l(value);
+                self.voices[voice].volume_l.write(value);
                 log::trace!("Voice {voice} volume L: {:?}", self.voices[voice].volume_l);
             }
             0x2 => {
                 // $1F801C02 + N*$10: Voice volume R
-                self.voices[voice].write_volume_r(value);
+                self.voices[voice].volume_r.write(value);
                 log::trace!("Voice {voice} volume R: {:?}", self.voices[voice].volume_r);
             }
             0x4 => {
                 // $1F801C04 + N*$10: Voice sample rate
-                self.voices[voice].write_sample_rate(value);
+                self.voices[voice].sample_rate = value as u16;
                 log::trace!("Voice {voice} sample rate: {:04X}", self.voices[voice].sample_rate);
             }
             0x6 => {
                 // $1F801C06 + N*$10: ADPCM start address
                 self.voices[voice].write_start_address(value);
-                log::trace!(
-                    "Voice {voice} start address: {:05X}",
-                    self.voices[voice].start_address
-                );
+                log::trace!("Voice {voice} start address: {:05X}", (value & 0xFFFF) << 3);
             }
             0x8 => {
                 // $1F801C08 + N*$10: ADSR settings, low halfword
-                self.voices[voice].write_adsr_low(value);
+                self.voices[voice].adsr.settings.write_low(value);
                 log::trace!("Voice {voice} ADSR settings (low): {:?}", self.voices[voice].adsr);
             }
             0xA => {
                 // $1F801C0A + N*$10: ADSR settings, high halfword
-                self.voices[voice].write_adsr_high(value);
+                self.voices[voice].adsr.settings.write_high(value);
                 log::trace!("Voice {voice} ADSR settings (high): {:?}", self.voices[voice].adsr);
             }
             0xC => {
