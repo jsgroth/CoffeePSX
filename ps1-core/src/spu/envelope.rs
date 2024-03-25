@@ -37,8 +37,8 @@ pub struct EnvelopeSettings {
 }
 
 impl EnvelopeSettings {
-    pub fn wait_cycles(self, current_volume_magnitude: u16) -> u32 {
-        let cycles = 1 << self.shift.saturating_sub(11);
+    pub fn should_update(self, current_volume_magnitude: u16, cycle_counter: u64) -> bool {
+        let mut effective_shift = self.shift.saturating_sub(11);
 
         // Exponential increase is faked by increasing volume at a 4x slower rate when volume is
         // greater than $6000 out of $7FFF
@@ -46,10 +46,10 @@ impl EnvelopeSettings {
             && self.direction == EnvelopeDirection::Increasing
             && current_volume_magnitude > 0x6000
         {
-            4 * cycles
-        } else {
-            cycles
+            effective_shift += 2;
         }
+
+        cycle_counter & ((1 << effective_shift) - 1) == 0
     }
 
     pub fn next_step(self, current_volume_magnitude: u16) -> i16 {
@@ -116,13 +116,12 @@ impl SweepSetting {
 pub struct SweepEnvelope {
     pub volume: i16,
     pub setting: SweepSetting,
-    pub wait_cycles_remaining: u32,
-    pub next_step: i16,
+    cycle_counter: u64,
 }
 
 impl SweepEnvelope {
     pub fn new() -> Self {
-        Self { volume: 0, setting: SweepSetting::default(), wait_cycles_remaining: 1, next_step: 0 }
+        Self { volume: 0, setting: SweepSetting::default(), cycle_counter: 0 }
     }
 
     pub fn write(&mut self, value: u32) {
@@ -132,9 +131,6 @@ impl SweepEnvelope {
         if !value.bit(15) {
             self.volume = (value << 1) as i16;
         }
-
-        self.wait_cycles_remaining = 1;
-        self.next_step = 0;
     }
 
     pub fn read(&self) -> u32 {
@@ -152,24 +148,24 @@ impl SweepEnvelope {
     }
 
     pub fn clock(&mut self) {
+        self.cycle_counter += 1;
+
         let SweepSetting::Sweep(envelope_settings, sweep_phase) = self.setting else {
             return;
         };
 
-        self.wait_cycles_remaining -= 1;
-        if self.wait_cycles_remaining == 0 {
+        let current_volume_magnitude = self.volume.saturating_abs() as u16;
+        if envelope_settings.should_update(current_volume_magnitude, self.cycle_counter) {
+            let step = envelope_settings.next_step(current_volume_magnitude);
+
             self.volume = match sweep_phase {
                 SweepPhase::Positive => {
-                    (i32::from(self.volume) + i32::from(self.next_step)).clamp(0, 0x7FFF) as i16
+                    (i32::from(self.volume) + i32::from(step)).clamp(0, 0x7FFF) as i16
                 }
                 SweepPhase::Negative => {
-                    (i32::from(self.volume) - i32::from(self.next_step)).clamp(-0x7FFF, 0) as i16
+                    (i32::from(self.volume) - i32::from(step)).clamp(-0x7FFF, 0) as i16
                 }
             };
-
-            let current_volume_magnitude = self.volume.saturating_abs() as u16;
-            self.wait_cycles_remaining = envelope_settings.wait_cycles(current_volume_magnitude);
-            self.next_step = envelope_settings.next_step(current_volume_magnitude);
         }
     }
 }
@@ -303,8 +299,7 @@ pub struct AdsrEnvelope {
     pub level: i16,
     pub settings: AdsrSettings,
     pub state: AdsrState,
-    pub wait_cycles_remaining: u32,
-    pub next_step: i16,
+    cycle_counter: u64,
 }
 
 impl AdsrEnvelope {
@@ -313,31 +308,26 @@ impl AdsrEnvelope {
             level: 0,
             settings: AdsrSettings::new(),
             state: AdsrState::default(),
-            wait_cycles_remaining: 1,
-            next_step: 0,
+            cycle_counter: 0,
         }
     }
 
     pub fn clock(&mut self) {
-        self.wait_cycles_remaining -= 1;
-        if self.wait_cycles_remaining != 0 {
-            return;
-        }
-
-        let min_level = match self.state {
-            AdsrState::Decay => cmp::min(i16::MAX as u16, self.settings.sustain_level) as i16,
-            AdsrState::Attack | AdsrState::Sustain | AdsrState::Release => 0,
-        };
-
-        self.level = (i32::from(self.level) + i32::from(self.next_step))
-            .clamp(min_level.into(), i16::MAX.into()) as i16;
+        self.cycle_counter += 1;
 
         if self.state == AdsrState::Attack && self.level == i16::MAX {
             self.state = AdsrState::Decay;
         }
 
+        let effective_sustain_level = cmp::min(i16::MAX as u16, self.settings.sustain_level) as i16;
+        let mut min_level = match self.state {
+            AdsrState::Decay => effective_sustain_level,
+            AdsrState::Attack | AdsrState::Sustain | AdsrState::Release => 0,
+        };
+
         if self.state == AdsrState::Decay && self.level == min_level {
             self.state = AdsrState::Sustain;
+            min_level = 0;
         }
 
         let envelope_settings = match self.state {
@@ -366,22 +356,20 @@ impl AdsrEnvelope {
                 mode: self.settings.release_mode,
             },
         };
-        self.wait_cycles_remaining = envelope_settings.wait_cycles(self.level as u16);
-        self.next_step = envelope_settings.next_step(self.level as u16);
+
+        if envelope_settings.should_update(self.level as u16, self.cycle_counter) {
+            let step = envelope_settings.next_step(self.level as u16);
+            self.level = (i32::from(self.level) + i32::from(step))
+                .clamp(min_level.into(), i16::MAX.into()) as i16;
+        }
     }
 
     pub fn key_on(&mut self) {
         self.state = AdsrState::Attack;
         self.level = 0;
-
-        self.wait_cycles_remaining = 1;
-        self.next_step = 0;
     }
 
     pub fn key_off(&mut self) {
         self.state = AdsrState::Release;
-
-        self.wait_cycles_remaining = 1;
-        self.next_step = 0;
     }
 }
