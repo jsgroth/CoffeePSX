@@ -353,4 +353,8 @@ impl SerialPort {
 
         log::debug!("SIO0 Baudrate timer reload value: {value:04X}");
     }
+
+    pub fn read_baudrate_reload(&self) -> u32 {
+        self.baudrate_timer.raw_reload_value
+    }
 }

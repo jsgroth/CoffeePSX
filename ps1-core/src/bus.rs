@@ -139,6 +139,7 @@ impl<'a> Bus<'a> {
             0x1040 => self.sio0.read_rx_data(),
             0x1044 => self.sio0.read_status(),
             0x104A => self.sio0.read_control(),
+            0x104E => self.sio0.read_baudrate_reload(),
             0x1060 => self.memory_control.read_ram_size(),
             0x1070 => self.interrupt_registers.read_interrupt_status(),
             0x1074 => self.interrupt_registers.read_interrupt_mask(),
