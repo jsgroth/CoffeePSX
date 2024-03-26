@@ -4,11 +4,14 @@
 
 mod cp0;
 mod gte;
+mod icache;
 mod instructions;
 
 use crate::bus::Bus;
 use crate::cpu::cp0::ExceptionCode;
 use crate::cpu::gte::GeometryTransformationEngine;
+use crate::cpu::icache::InstructionCache;
+use crate::num::U32Ext;
 use bincode::{Decode, Encode};
 use cp0::SystemControlCoprocessor;
 use std::mem;
@@ -121,21 +124,28 @@ pub enum OpSize {
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct R3000 {
     registers: Registers,
+    i_cache: Box<InstructionCache>,
     cp0: SystemControlCoprocessor,
     gte: GeometryTransformationEngine,
 }
+
+const BIU_CACHE_CONTROL_ADDR: u32 = 0xFFFE0130;
 
 macro_rules! impl_bus_write {
     ($name:ident, $write_fn:ident) => {
         fn $name(&mut self, bus: &mut Bus<'_>, address: u32, value: u32) {
             if self.cp0.status.isolate_cache {
-                // If cache is isolated, send writes directly to scratchpad RAM
-                // The BIOS isolates cache on startup to zero out scratchpad
-                bus.$write_fn(0x1F800000 | (address & 0x3FF), value);
+                // If cache is isolated, send writes directly to instruction cache
+                // The BIOS isolates cache as part of the flushCache() kernel function
+                if self.cp0.cache_control.tag_test_mode {
+                    self.i_cache.invalidate_tag(address);
+                } else {
+                    self.i_cache.write_opcode(address, value);
+                }
                 return;
             }
 
-            if address == 0xFFFE0130 {
+            if address == BIU_CACHE_CONTROL_ADDR {
                 self.cp0.cache_control.write(value);
                 return;
             }
@@ -150,6 +160,7 @@ impl R3000 {
     pub fn new() -> Self {
         Self {
             registers: Registers::new(),
+            i_cache: Box::new(InstructionCache::new()),
             cp0: SystemControlCoprocessor::new(),
             gte: GeometryTransformationEngine::new(),
         }
@@ -186,12 +197,14 @@ impl R3000 {
             return;
         }
 
+        // Opcode is always read, even if an exception will be handled
+        let opcode = self.fetch_opcode(bus, pc);
+
         self.cp0.cause.set_hardware_interrupt_flag(bus.hardware_interrupt_pending());
         if self.cp0.interrupt_pending() {
             // If the PC currently points to a GTE opcode, it needs to be executed before handling
             // the exception because the exception handler will typically skip over it when returning.
             // Some games depend on this for correct geometry, e.g. Crash Bandicoot and Final Fantasy 7
-            let opcode = self.bus_read_u32(bus, pc);
             if is_gte_command_opcode(opcode) {
                 let _ = self.execute_opcode(opcode, pc, bus);
             }
@@ -205,7 +218,6 @@ impl R3000 {
             return;
         }
 
-        let opcode = self.bus_read_u32(bus, pc);
         let (in_delay_slot, next_pc) = match self.registers.delayed_branch.take() {
             Some(address) => (true, address),
             None => (false, pc.wrapping_add(4)),
@@ -217,6 +229,35 @@ impl R3000 {
         }
 
         self.registers.process_delayed_loads();
+    }
+
+    fn fetch_opcode(&mut self, bus: &mut Bus<'_>, address: u32) -> u32 {
+        validate_address(address);
+
+        // kuseg ($00000000-$1FFFFFFF) and kseg0 ($80000000-$9FFFFFFF) are cacheable
+        // kseg1 ($A0000000-$BFFFFFFF) is not cacheable
+        if address.bit(29) {
+            return bus.read_u32(address & 0x1FFFFFFF);
+        }
+
+        // I-cache is based on physical address, which for PS1 means just drop the highest 3 bits
+        let address = address & 0x1FFFFFFF;
+
+        if let Some(opcode) = self.i_cache.check_cache(address) {
+            return opcode;
+        }
+
+        // If opcode not found in I-cache, fetch the full current cache line
+        self.i_cache.update_tag(address);
+
+        let mut cache_addr = address & !0xF;
+        for _ in 0..4 {
+            let opcode = bus.read_u32(cache_addr);
+            self.i_cache.write_opcode(cache_addr, opcode);
+            cache_addr += 4;
+        }
+
+        self.i_cache.get_opcode_no_tag_check(address)
     }
 
     // TODO handle kuseg vs. kseg0 vs. kseg1

@@ -2,28 +2,31 @@ use crate::cpu::Exception;
 use crate::num::U32Ext;
 use bincode::{Decode, Encode};
 
-const I_CACHE_LEN: usize = 4 * 1024;
-
-type ICache = [u8; I_CACHE_LEN];
-
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct CacheControl {
     pub i_cache_enabled: bool,
     pub d_cache_enabled: bool,
     pub scratchpad_enabled: bool,
+    pub tag_test_mode: bool,
 }
 
 impl CacheControl {
     fn new() -> Self {
-        Self { i_cache_enabled: true, d_cache_enabled: true, scratchpad_enabled: true }
+        Self {
+            i_cache_enabled: true,
+            d_cache_enabled: true,
+            scratchpad_enabled: true,
+            tag_test_mode: false,
+        }
     }
 
     pub fn write(&mut self, value: u32) {
         self.i_cache_enabled = value.bit(11);
         self.d_cache_enabled = value.bit(7);
         self.scratchpad_enabled = value.bit(3);
+        self.tag_test_mode = value.bit(2);
 
-        log::trace!("Cache control write: {self:?}");
+        log::debug!("Cache control write: {self:?}");
     }
 }
 
@@ -188,7 +191,6 @@ pub struct SystemControlCoprocessor {
     pub cause: CauseRegister,
     pub epc: u32,
     pub bad_v_addr: u32,
-    pub i_cache: Box<ICache>,
 }
 
 impl SystemControlCoprocessor {
@@ -199,7 +201,6 @@ impl SystemControlCoprocessor {
             cause: CauseRegister::new(),
             epc: 0,
             bad_v_addr: 0,
-            i_cache: vec![0; I_CACHE_LEN].into_boxed_slice().try_into().unwrap(),
         }
     }
 
