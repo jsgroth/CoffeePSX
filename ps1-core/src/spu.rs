@@ -126,7 +126,7 @@ impl ControlRegisters {
             | (u32::from(self.irq_enabled) << 6)
             | ((data_port.mode as u32) << 4)
             | (u32::from(self.external_audio_reverb_enabled) << 3)
-            | (u32::from(self.cd_audio_reverb_enabled) << 2)
+            | (u32::from(reverb.cd_enabled) << 2)
             | (u32::from(self.external_audio_enabled) << 1)
             | u32::from(self.cd_audio_enabled)
     }
@@ -141,7 +141,7 @@ impl ControlRegisters {
         self.irq_enabled = value.bit(6);
         data_port.mode = DataPortMode::from_bits(value >> 4);
         self.external_audio_reverb_enabled = value.bit(3);
-        self.cd_audio_reverb_enabled = value.bit(2);
+        reverb.cd_enabled = value.bit(2);
         self.external_audio_enabled = value.bit(1);
         self.cd_audio_enabled = value.bit(0);
 
@@ -154,7 +154,7 @@ impl ControlRegisters {
         log::trace!("  IRQ enabled: {}", self.irq_enabled);
         log::trace!("  Data port mode: {:?}", data_port.mode);
         log::trace!("  External audio reverb enabled: {}", self.external_audio_reverb_enabled);
-        log::trace!("  CD audio reverb enabled: {}", self.cd_audio_reverb_enabled);
+        log::trace!("  CD audio reverb enabled: {}", reverb.cd_enabled);
         log::trace!("  External audio enabled: {}", self.external_audio_enabled);
         log::trace!("  CD audio enabled: {}", self.cd_audio_enabled);
     }
@@ -206,7 +206,17 @@ impl Spu {
             voice.clock(&self.audio_ram);
         }
 
-        self.reverb.clock(&self.voices, &mut self.audio_ram);
+        // Grab current CD audio samples
+        let (cd_l, cd_r) = if self.control.cd_audio_enabled {
+            apply_volume_matrix(
+                cd_controller.current_audio_sample(),
+                cd_controller.spu_volume_matrix(),
+            )
+        } else {
+            (0, 0)
+        };
+
+        self.reverb.clock(&self.voices, (cd_l, cd_r), &mut self.audio_ram);
 
         // Mix voice samples together
         let mut sample_l = 0;
@@ -227,11 +237,6 @@ impl Spu {
         let sample_r =
             (i32::from(sample_r) + i32::from(self.reverb.current_output.1)).clamp_to_i16();
 
-        // Mix in CD audio samples
-        let (cd_l, cd_r) = apply_volume_matrix(
-            cd_controller.current_audio_sample(),
-            cd_controller.spu_volume_matrix(),
-        );
         let cd_l = multiply_volume(cd_l, self.volume.cd_l);
         let cd_r = multiply_volume(cd_r, self.volume.cd_r);
         let sample_l = (i32::from(sample_l) + i32::from(cd_l)).clamp_to_i16();

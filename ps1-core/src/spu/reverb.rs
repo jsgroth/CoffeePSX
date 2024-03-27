@@ -85,6 +85,7 @@ impl AudioRamExt for AudioRam {
 #[derive(Debug, Clone, Default, Encode, Decode)]
 pub struct ReverbUnit {
     pub writes_enabled: bool,
+    pub cd_enabled: bool,
     voices_enabled: [bool; spu::NUM_VOICES],
     buffer_start_addr: u32,
     buffer_current_addr: u32,
@@ -110,8 +111,13 @@ pub struct ReverbUnit {
 
 impl ReverbUnit {
     // TODO 39-tap FIR filter for in/out resampling
-    pub fn clock(&mut self, voices: &[Voice; spu::NUM_VOICES], audio_ram: &mut AudioRam) {
-        let input_sample = self.compute_input_sample(voices);
+    pub fn clock(
+        &mut self,
+        voices: &[Voice; spu::NUM_VOICES],
+        cd_sample: (i16, i16),
+        audio_ram: &mut AudioRam,
+    ) {
+        let input_sample = self.compute_input_sample(voices, cd_sample);
 
         self.perform_same_side_reflection(input_sample, audio_ram);
         self.perform_different_side_reflection(input_sample, audio_ram);
@@ -135,7 +141,11 @@ impl ReverbUnit {
         self.clock = self.clock.invert();
     }
 
-    fn compute_input_sample(&self, voices: &[Voice; spu::NUM_VOICES]) -> i32 {
+    fn compute_input_sample(
+        &self,
+        voices: &[Voice; spu::NUM_VOICES],
+        cd_sample: (i16, i16),
+    ) -> i32 {
         let input_volume = self.input_volume.get(self.clock);
         let mut input_sample = 0_i32;
         for (voice, reverb_enabled) in voices.iter().zip(self.voices_enabled) {
@@ -145,6 +155,14 @@ impl ReverbUnit {
 
             let voice_sample = voice.current_sample.get(self.clock);
             input_sample += multiply_volume_i32(voice_sample.into(), input_volume);
+        }
+
+        if self.cd_enabled {
+            let cd_input = match self.clock {
+                ReverbClock::Left => cd_sample.0,
+                ReverbClock::Right => cd_sample.1,
+            };
+            input_sample += multiply_volume_i32(cd_input.into(), input_volume);
         }
 
         input_sample
