@@ -7,19 +7,86 @@ mod voice;
 
 use crate::cd::CdController;
 use crate::cpu::OpSize;
+use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
 use crate::spu::envelope::VolumeControl;
 use crate::spu::reverb::ReverbUnit;
 use crate::spu::voice::Voice;
 use bincode::{Decode, Encode};
 use std::array;
+use std::cell::Cell;
+use std::ops::{Index, IndexMut, Range};
 
-const AUDIO_RAM_LEN: usize = 512 * 1024;
-const AUDIO_RAM_MASK: u32 = (AUDIO_RAM_LEN - 1) as u32;
+const SOUND_RAM_LEN: usize = 512 * 1024;
+const SOUND_RAM_MASK: u32 = (SOUND_RAM_LEN - 1) as u32;
 
 const NUM_VOICES: usize = 24;
 
-type AudioRam = [u8; AUDIO_RAM_LEN];
+#[derive(Debug, Clone, Encode, Decode)]
+struct SoundRam {
+    ram: Box<[u8; SOUND_RAM_LEN]>,
+    irq_enabled: bool,
+    irq_address: usize,
+    irq: Cell<bool>,
+}
+
+impl SoundRam {
+    fn new() -> Self {
+        Self {
+            ram: vec![0; SOUND_RAM_LEN].into_boxed_slice().try_into().unwrap(),
+            irq_enabled: false,
+            irq_address: 0,
+            irq: Cell::new(false),
+        }
+    }
+
+    fn read_irq_address(&self) -> u32 {
+        (self.irq_address >> 3) as u32
+    }
+
+    fn write_irq_address(&mut self, value: u32) {
+        self.irq_address = (value << 3) as usize;
+
+        log::debug!("SPU IRQ address: {:05X}", self.irq_address);
+    }
+}
+
+impl Index<usize> for SoundRam {
+    type Output = u8;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        if self.irq_enabled && index == self.irq_address {
+            log::debug!("SPU IRQ set");
+            self.irq.set(true);
+        }
+
+        &self.ram[index]
+    }
+}
+
+impl Index<Range<usize>> for SoundRam {
+    type Output = [u8];
+
+    fn index(&self, index: Range<usize>) -> &Self::Output {
+        if self.irq_enabled && index.contains(&self.irq_address) {
+            log::debug!("SPU IRQ set");
+            self.irq.set(true);
+        }
+
+        &self.ram[index]
+    }
+}
+
+impl IndexMut<usize> for SoundRam {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        if self.irq_enabled && index == self.irq_address {
+            log::debug!("SPU IRQ set");
+            self.irq.set(true);
+        }
+
+        &mut self.ram[index]
+    }
+}
 
 trait I32Ext {
     fn clamp_to_i16(self) -> i16;
@@ -79,7 +146,7 @@ impl DataPort {
         self.start_address = (value & 0xFFFF) << 3;
         self.current_address = self.start_address;
 
-        log::trace!("Sound RAM data transfer address: {:05X}", self.start_address);
+        log::debug!("Sound RAM data transfer address: {:05X}", self.start_address);
     }
 }
 
@@ -91,7 +158,6 @@ struct ControlRegisters {
     cd_audio_enabled: bool,
     external_audio_reverb_enabled: bool,
     cd_audio_reverb_enabled: bool,
-    irq_enabled: bool,
     noise_shift: u8,
     noise_step: u8,
     // Recorded in case software reads the KON or KOFF registers
@@ -108,7 +174,6 @@ impl ControlRegisters {
             cd_audio_enabled: false,
             external_audio_reverb_enabled: false,
             cd_audio_reverb_enabled: false,
-            irq_enabled: false,
             noise_shift: 0,
             noise_step: 0,
             last_key_on_write: 0,
@@ -117,13 +182,13 @@ impl ControlRegisters {
     }
 
     // $1F801DAA: SPU control register (SPUCNT)
-    fn read_spucnt(&self, data_port: &DataPort, reverb: &ReverbUnit) -> u32 {
+    fn read_spucnt(&self, sound_ram: &SoundRam, data_port: &DataPort, reverb: &ReverbUnit) -> u32 {
         (u32::from(self.spu_enabled) << 15)
             | (u32::from(self.amplifier_enabled) << 14)
             | (u32::from(self.noise_shift) << 10)
             | (u32::from(self.noise_step) << 8)
             | (u32::from(reverb.writes_enabled) << 7)
-            | (u32::from(self.irq_enabled) << 6)
+            | (u32::from(sound_ram.irq_enabled) << 6)
             | ((data_port.mode as u32) << 4)
             | (u32::from(self.external_audio_reverb_enabled) << 3)
             | (u32::from(reverb.cd_enabled) << 2)
@@ -132,31 +197,41 @@ impl ControlRegisters {
     }
 
     // $1F801DAA: SPU control register (SPUCNT)
-    fn write_spucnt(&mut self, value: u32, data_port: &mut DataPort, reverb: &mut ReverbUnit) {
+    fn write_spucnt(
+        &mut self,
+        value: u32,
+        sound_ram: &mut SoundRam,
+        data_port: &mut DataPort,
+        reverb: &mut ReverbUnit,
+    ) {
         self.spu_enabled = value.bit(15);
         self.amplifier_enabled = value.bit(14);
         self.noise_shift = ((value >> 10) & 0xF) as u8;
         self.noise_step = ((value >> 8) & 3) as u8;
         reverb.writes_enabled = value.bit(7);
-        self.irq_enabled = value.bit(6);
+        sound_ram.irq_enabled = value.bit(6);
         data_port.mode = DataPortMode::from_bits(value >> 4);
         self.external_audio_reverb_enabled = value.bit(3);
         reverb.cd_enabled = value.bit(2);
         self.external_audio_enabled = value.bit(1);
         self.cd_audio_enabled = value.bit(0);
 
-        log::trace!("SPUCNT write");
-        log::trace!("  SPU enabled: {}", self.spu_enabled);
-        log::trace!("  Amplifier enabled: {}", self.amplifier_enabled);
-        log::trace!("  Noise shift: {}", self.noise_shift);
-        log::trace!("  Noise step: {}", self.noise_step + 4);
-        log::trace!("  Reverb writes enabled: {}", reverb.writes_enabled);
-        log::trace!("  IRQ enabled: {}", self.irq_enabled);
-        log::trace!("  Data port mode: {:?}", data_port.mode);
-        log::trace!("  External audio reverb enabled: {}", self.external_audio_reverb_enabled);
-        log::trace!("  CD audio reverb enabled: {}", reverb.cd_enabled);
-        log::trace!("  External audio enabled: {}", self.external_audio_enabled);
-        log::trace!("  CD audio enabled: {}", self.cd_audio_enabled);
+        if !sound_ram.irq_enabled {
+            sound_ram.irq.set(false);
+        }
+
+        log::debug!("SPUCNT write");
+        log::debug!("  SPU enabled: {}", self.spu_enabled);
+        log::debug!("  Amplifier enabled: {}", self.amplifier_enabled);
+        log::debug!("  Noise shift: {}", self.noise_shift);
+        log::debug!("  Noise step: {}", self.noise_step + 4);
+        log::debug!("  Reverb writes enabled: {}", reverb.writes_enabled);
+        log::debug!("  IRQ enabled: {}", sound_ram.irq_enabled);
+        log::debug!("  Data port mode: {:?}", data_port.mode);
+        log::debug!("  External audio reverb enabled: {}", self.external_audio_reverb_enabled);
+        log::debug!("  CD audio reverb enabled: {}", reverb.cd_enabled);
+        log::debug!("  External audio enabled: {}", self.external_audio_enabled);
+        log::debug!("  CD audio enabled: {}", self.cd_audio_enabled);
     }
 
     fn record_kon_low_write(&mut self, value: u32) {
@@ -178,32 +253,38 @@ impl ControlRegisters {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Spu {
-    audio_ram: Box<AudioRam>,
+    sound_ram: SoundRam,
     voices: [Voice; NUM_VOICES],
     control: ControlRegisters,
     volume: VolumeControl,
     data_port: DataPort,
     reverb: ReverbUnit,
+    last_irq_bit: bool,
 }
 
 impl Spu {
     pub fn new() -> Self {
         Self {
-            audio_ram: vec![0; AUDIO_RAM_LEN].into_boxed_slice().try_into().unwrap(),
+            sound_ram: SoundRam::new(),
             voices: array::from_fn(|_| Voice::new()),
             control: ControlRegisters::new(),
             volume: VolumeControl::new(),
             data_port: DataPort::new(),
             reverb: ReverbUnit::default(),
+            last_irq_bit: false,
         }
     }
 
-    pub fn clock(&mut self, cd_controller: &CdController) -> (f64, f64) {
+    pub fn clock(
+        &mut self,
+        cd_controller: &CdController,
+        interrupt_registers: &mut InterruptRegisters,
+    ) -> (f64, f64) {
         self.volume.main_l.clock();
         self.volume.main_r.clock();
 
         for voice in &mut self.voices {
-            voice.clock(&self.audio_ram);
+            voice.clock(&self.sound_ram);
         }
 
         // Grab current CD audio samples
@@ -216,7 +297,7 @@ impl Spu {
             (0, 0)
         };
 
-        self.reverb.clock(&self.voices, (cd_l, cd_r), &mut self.audio_ram);
+        self.reverb.clock(&self.voices, (cd_l, cd_r), &mut self.sound_ram);
 
         // Mix voice samples together
         let mut sample_l = 0;
@@ -245,6 +326,12 @@ impl Spu {
         // Convert from i16 to f64
         let sample_l = f64::from(sample_l) / -f64::from(i16::MIN);
         let sample_r = f64::from(sample_r) / -f64::from(i16::MIN);
+
+        let sound_ram_irq = self.sound_ram.irq.get();
+        if !self.last_irq_bit && sound_ram_irq {
+            interrupt_registers.set_interrupt_flag(InterruptType::Spu);
+        }
+        self.last_irq_bit = sound_ram_irq;
 
         (sample_l, sample_r)
     }
@@ -290,10 +377,10 @@ impl Spu {
             0x1D9C => todo!("ENDX voices 0-15 read"),
             0x1D9E => todo!("ENDX voices 16-23 read"),
             0x1DA2 => self.reverb.read_buffer_start_address(),
-            0x1DA4 => todo!("SPU IRQ address read"),
+            0x1DA4 => self.sound_ram.read_irq_address(),
             0x1DA6 => self.data_port.read_start_address(),
             0x1DA8 => todo!("SPU data port read"),
-            0x1DAA => self.control.read_spucnt(&self.data_port, &self.reverb),
+            0x1DAA => self.control.read_spucnt(&self.sound_ram, &self.data_port, &self.reverb),
             // TODO return an actual value for sound RAM data transfer control?
             0x1DAC => 0x0004,
             0x1DAE => self.read_status_register(),
@@ -309,6 +396,15 @@ impl Spu {
             }
             0x1DB8 => (self.volume.main_l.volume as u16).into(),
             0x1DBA => (self.volume.main_r.volume as u16).into(),
+            0x1E00..=0x1E5F => {
+                // Current voice volume
+                let voice = (address & 0xFF) >> 2;
+                if !address.bit(1) {
+                    (self.voices[voice as usize].volume_l.volume as u16).into()
+                } else {
+                    (self.voices[voice as usize].volume_r.volume as u16).into()
+                }
+            }
             _ => todo!("SPU read register {address:08X}"),
         };
 
@@ -337,11 +433,18 @@ impl Spu {
             }
             OpSize::HalfWord => {}
             OpSize::Word => {
+                // Split 32-bit writes into a pair of 16-bit writes
+                // 32-bit writes are apparently somewhat unstable on actual hardware; not emulating that
                 self.write_register(address, value & 0xFFFF, OpSize::HalfWord);
                 self.write_register(address | 2, value >> 16, OpSize::HalfWord);
                 return;
             }
         }
+
+        // Only write lowest 16 bits
+        // 8-bit writes to even addresses also seem to write the lowest 16 bits from the source
+        // register, as opposed to only writing the lowest 8 bits
+        let value = value & 0xFFFF;
 
         match address & 0xFFFF {
             0x1C00..=0x1D7F => self.write_voice_register(address, value),
@@ -370,10 +473,15 @@ impl Spu {
                 log::warn!("ENDX write (voices 16-23): {value:04X}");
             }
             0x1DA2 => self.reverb.write_buffer_start_address(value),
-            0x1DA4 => todo!("SPU IRQ address write"),
+            0x1DA4 => self.sound_ram.write_irq_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
             0x1DA8 => self.write_data_port(value as u16),
-            0x1DAA => self.control.write_spucnt(value, &mut self.data_port, &mut self.reverb),
+            0x1DAA => self.control.write_spucnt(
+                value,
+                &mut self.sound_ram,
+                &mut self.data_port,
+                &mut self.reverb,
+            ),
             0x1DAC => {
                 // Sound RAM data transfer control register; writing any value other than $0004
                 // would be highly unexpected
@@ -494,11 +602,11 @@ impl Spu {
     fn read_status_register(&self) -> u32 {
         // TODO: bit 11 (writing to first/second half of capture buffers)
         // TODO: bit 10 (data transfer busy) is hardcoded
-        // TODO: bit 6 (IRQ)
         // TODO: timing? switching to DMA read mode should not immediately set bits 7 and 9
         let value = (u32::from(self.data_port.mode == DataPortMode::DmaRead) << 9)
             | (u32::from(self.data_port.mode == DataPortMode::DmaWrite) << 8)
             | (u32::from(self.data_port.mode.is_dma()) << 7)
+            | (u32::from(self.sound_ram.irq.get()) << 6)
             | ((self.data_port.mode as u32) << 5)
             | (u32::from(self.control.external_audio_reverb_enabled) << 3)
             | (u32::from(self.control.cd_audio_reverb_enabled) << 2)
@@ -515,22 +623,22 @@ impl Spu {
         // TODO emulate the 32-halfword FIFO?
         // TODO check current state? (requires FIFO emulation, the BIOS writes while mode is off)
         let [lsb, msb] = value.to_le_bytes();
-        self.audio_ram[self.data_port.current_address as usize] = lsb;
-        self.audio_ram[(self.data_port.current_address + 1) as usize] = msb;
+        self.sound_ram[self.data_port.current_address as usize] = lsb;
+        self.sound_ram[(self.data_port.current_address + 1) as usize] = msb;
 
         log::trace!("Wrote to {:05X} in audio RAM", self.data_port.current_address);
 
-        self.data_port.current_address = (self.data_port.current_address + 2) & AUDIO_RAM_MASK;
+        self.data_port.current_address = (self.data_port.current_address + 2) & SOUND_RAM_MASK;
     }
 
     // $1F801D88: Key on (voices 0-15)
     fn key_on_low(&mut self, value: u32) {
-        log::trace!("Key on low write: {value:04X}");
+        log::debug!("Key on low write: {value:04X}");
 
         for voice in 0..16 {
             if value.bit(voice) {
                 log::trace!("Keying on voice {voice}");
-                self.voices[voice as usize].key_on(&self.audio_ram);
+                self.voices[voice as usize].key_on(&self.sound_ram);
             }
         }
 
@@ -539,12 +647,12 @@ impl Spu {
 
     // $1F801D8A: Key on (voices 16-23)
     fn key_on_high(&mut self, value: u32) {
-        log::trace!("Key on high write: {value:04X}");
+        log::debug!("Key on high write: {value:04X}");
 
         for voice in 16..24 {
             if value.bit(voice - 16) {
                 log::trace!("Keying on voice {voice}");
-                self.voices[voice as usize].key_on(&self.audio_ram);
+                self.voices[voice as usize].key_on(&self.sound_ram);
             }
         }
 
@@ -553,7 +661,7 @@ impl Spu {
 
     // $1F801D8C: Key off (voices 0-15)
     fn key_off_low(&mut self, value: u32) {
-        log::trace!("Key off low write: {value:04X}");
+        log::debug!("Key off low write: {value:04X}");
 
         for voice in 0..16 {
             if value.bit(voice) {
@@ -567,7 +675,7 @@ impl Spu {
 
     // $1F801D8E: Key off (voices 16-23)
     fn key_off_high(&mut self, value: u32) {
-        log::trace!("Key off high write: {value:04X}");
+        log::debug!("Key off high write: {value:04X}");
 
         for voice in 16..24 {
             if value.bit(voice - 16) {

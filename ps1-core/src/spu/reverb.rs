@@ -1,7 +1,7 @@
 use crate::num::U32Ext;
 use crate::spu;
 use crate::spu::voice::Voice;
-use crate::spu::{multiply_volume_i32, AudioRam, I32Ext};
+use crate::spu::{multiply_volume_i32, I32Ext, SoundRam};
 use bincode::{Decode, Encode};
 use std::cmp;
 
@@ -68,7 +68,7 @@ trait AudioRamExt {
     fn set_i16(&mut self, address: u32, sample: i16);
 }
 
-impl AudioRamExt for AudioRam {
+impl AudioRamExt for SoundRam {
     fn get_i16(&self, address: u32) -> i16 {
         let address = address as usize;
         i16::from_le_bytes([self[address], self[address + 1]])
@@ -115,16 +115,16 @@ impl ReverbUnit {
         &mut self,
         voices: &[Voice; spu::NUM_VOICES],
         cd_sample: (i16, i16),
-        audio_ram: &mut AudioRam,
+        sound_ram: &mut SoundRam,
     ) {
         let input_sample = self.compute_input_sample(voices, cd_sample);
 
-        self.perform_same_side_reflection(input_sample, audio_ram);
-        self.perform_different_side_reflection(input_sample, audio_ram);
+        self.perform_same_side_reflection(input_sample, sound_ram);
+        self.perform_different_side_reflection(input_sample, sound_ram);
 
-        let comb_filter_output = self.apply_comb_filter(audio_ram);
-        let apf1_output = self.apply_all_pass_filter_1(comb_filter_output, audio_ram);
-        let apf2_output = self.apply_all_pass_filter_2(apf1_output, audio_ram);
+        let comb_filter_output = self.apply_comb_filter(sound_ram);
+        let apf1_output = self.apply_all_pass_filter_1(comb_filter_output, sound_ram);
+        let apf2_output = self.apply_all_pass_filter_2(apf1_output, sound_ram);
 
         let v_out = self.output_volume.get(self.clock);
         let output_sample = multiply_volume_i32(apf2_output, v_out);
@@ -134,7 +134,7 @@ impl ReverbUnit {
         if self.clock == ReverbClock::Right {
             self.buffer_current_addr = cmp::max(
                 self.buffer_start_addr,
-                self.buffer_current_addr.wrapping_add(2) & spu::AUDIO_RAM_MASK,
+                self.buffer_current_addr.wrapping_add(2) & spu::SOUND_RAM_MASK,
             );
         }
 
@@ -168,24 +168,24 @@ impl ReverbUnit {
         input_sample
     }
 
-    fn perform_same_side_reflection(&mut self, input_sample: i32, audio_ram: &mut AudioRam) {
+    fn perform_same_side_reflection(&mut self, input_sample: i32, sound_ram: &mut SoundRam) {
         if !self.writes_enabled {
             return;
         }
 
         let m_addr = self.same_reflect_addr_1.get(self.clock);
         let d_addr = self.same_reflect_addr_2.get(self.clock);
-        self.perform_reflection(input_sample, m_addr, d_addr, audio_ram);
+        self.perform_reflection(input_sample, m_addr, d_addr, sound_ram);
     }
 
-    fn perform_different_side_reflection(&mut self, input_sample: i32, audio_ram: &mut AudioRam) {
+    fn perform_different_side_reflection(&mut self, input_sample: i32, sound_ram: &mut SoundRam) {
         if !self.writes_enabled {
             return;
         }
 
         let m_addr = self.diff_reflect_addr_1.get(self.clock);
         let d_addr = self.diff_reflect_addr_2.get(self.clock.invert());
-        self.perform_reflection(input_sample, m_addr, d_addr, audio_ram);
+        self.perform_reflection(input_sample, m_addr, d_addr, sound_ram);
     }
 
     fn perform_reflection(
@@ -193,45 +193,45 @@ impl ReverbUnit {
         input_sample: i32,
         m_addr: u32,
         d_addr: u32,
-        audio_ram: &mut AudioRam,
+        sound_ram: &mut SoundRam,
     ) {
         let v_iir = self.reflection_volume_1;
         let v_wall = self.reflection_volume_2;
 
         let m_sample: i32 =
-            audio_ram.get_i16(self.relative_buffer_address(m_addr.wrapping_sub(2))).into();
-        let d_sample: i32 = audio_ram.get_i16(self.relative_buffer_address(d_addr)).into();
+            sound_ram.get_i16(self.relative_buffer_address(m_addr.wrapping_sub(2))).into();
+        let d_sample: i32 = sound_ram.get_i16(self.relative_buffer_address(d_addr)).into();
 
         let reflect_sample = m_sample
             + multiply_volume_i32(
                 input_sample + multiply_volume_i32(d_sample, v_wall) - m_sample,
                 v_iir,
             );
-        audio_ram.set_i16(self.relative_buffer_address(m_addr), reflect_sample.clamp_to_i16());
+        sound_ram.set_i16(self.relative_buffer_address(m_addr), reflect_sample.clamp_to_i16());
     }
 
-    fn apply_comb_filter(&self, audio_ram: &AudioRam) -> i32 {
+    fn apply_comb_filter(&self, sound_ram: &SoundRam) -> i32 {
         (0..4)
             .map(|i| {
                 let ram_addr = self.relative_buffer_address(self.comb_addrs[i].get(self.clock));
-                let comb_sample: i32 = audio_ram.get_i16(ram_addr).into();
+                let comb_sample: i32 = sound_ram.get_i16(ram_addr).into();
                 multiply_volume_i32(comb_sample, self.comb_volumes[i])
             })
             .sum()
     }
 
-    fn apply_all_pass_filter_1(&self, comb_filter_output: i32, audio_ram: &mut AudioRam) -> i32 {
+    fn apply_all_pass_filter_1(&self, comb_filter_output: i32, sound_ram: &mut SoundRam) -> i32 {
         let m_apf1 = self.apf_addr_1.get(self.clock);
         let d_apf1 = self.apf_offset_1;
         let v_apf1 = self.apf_volume_1;
-        self.apply_all_pass_filter(comb_filter_output, m_apf1, d_apf1, v_apf1, audio_ram)
+        self.apply_all_pass_filter(comb_filter_output, m_apf1, d_apf1, v_apf1, sound_ram)
     }
 
-    fn apply_all_pass_filter_2(&self, apf1_output: i32, audio_ram: &mut AudioRam) -> i32 {
+    fn apply_all_pass_filter_2(&self, apf1_output: i32, sound_ram: &mut SoundRam) -> i32 {
         let m_apf2 = self.apf_addr_2.get(self.clock);
         let d_apf2 = self.apf_offset_2;
         let v_apf2 = self.apf_volume_2;
-        self.apply_all_pass_filter(apf1_output, m_apf2, d_apf2, v_apf2, audio_ram)
+        self.apply_all_pass_filter(apf1_output, m_apf2, d_apf2, v_apf2, sound_ram)
     }
 
     fn apply_all_pass_filter(
@@ -240,21 +240,21 @@ impl ReverbUnit {
         m_apf: u32,
         d_apf: u32,
         v_apf: i32,
-        audio_ram: &mut AudioRam,
+        sound_ram: &mut SoundRam,
     ) -> i32 {
         let apf_input_sample: i32 =
-            audio_ram.get_i16(self.relative_buffer_address(m_apf.wrapping_sub(d_apf))).into();
+            sound_ram.get_i16(self.relative_buffer_address(m_apf.wrapping_sub(d_apf))).into();
 
         let new_apf_sample = prev_output - multiply_volume_i32(apf_input_sample, v_apf);
         if self.writes_enabled {
-            audio_ram.set_i16(self.relative_buffer_address(m_apf), new_apf_sample.clamp_to_i16());
+            sound_ram.set_i16(self.relative_buffer_address(m_apf), new_apf_sample.clamp_to_i16());
         }
 
         apf_input_sample + multiply_volume_i32(new_apf_sample, v_apf)
     }
 
     fn reverb_buffer_len(&self) -> u32 {
-        spu::AUDIO_RAM_LEN as u32 - self.buffer_start_addr
+        spu::SOUND_RAM_LEN as u32 - self.buffer_start_addr
     }
 
     fn relative_buffer_address(&self, register_addr: u32) -> u32 {

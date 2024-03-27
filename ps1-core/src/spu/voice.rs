@@ -3,7 +3,7 @@ mod gaussian;
 use crate::spu;
 use crate::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
 use crate::spu::envelope::{AdsrEnvelope, AdsrState, SweepEnvelope};
-use crate::spu::{adpcm, multiply_volume, AudioRam};
+use crate::spu::{adpcm, multiply_volume, SoundRam};
 use bincode::{Decode, Encode};
 use std::cmp;
 
@@ -37,7 +37,7 @@ impl Voice {
         }
     }
 
-    pub fn clock(&mut self, audio_ram: &AudioRam) {
+    pub fn clock(&mut self, sound_ram: &SoundRam) {
         self.volume_l.clock();
         self.volume_r.clock();
         self.adsr.clock();
@@ -50,7 +50,7 @@ impl Voice {
             self.pitch_counter -= 0x1000;
             self.adpcm_buffer.advance();
             if self.adpcm_buffer.at_end_of_block() {
-                self.decode_adpcm_block(audio_ram);
+                self.decode_adpcm_block(sound_ram);
             }
         }
 
@@ -89,7 +89,7 @@ impl Voice {
         self.repeat_address = (value & 0xFFFF) << 3;
     }
 
-    pub fn key_on(&mut self, audio_ram: &AudioRam) {
+    pub fn key_on(&mut self, sound_ram: &SoundRam) {
         self.adsr.key_on();
 
         self.current_address = self.start_address;
@@ -97,12 +97,12 @@ impl Voice {
         // Immediately decode first ADPCM block and reset ADPCM state
         self.adpcm_buffer.reset();
         self.pitch_counter = 0;
-        self.decode_adpcm_block(audio_ram);
+        self.decode_adpcm_block(sound_ram);
     }
 
-    fn decode_adpcm_block(&mut self, audio_ram: &AudioRam) {
+    fn decode_adpcm_block(&mut self, sound_ram: &SoundRam) {
         // TODO this can wrap since address is in 8-byte units
-        let block = &audio_ram[self.current_address as usize..(self.current_address + 16) as usize];
+        let block = &sound_ram[self.current_address as usize..(self.current_address + 16) as usize];
         adpcm::decode_spu_block(block, &mut self.adpcm_buffer);
 
         let AdpcmHeader { loop_start, loop_end, loop_repeat, .. } = self.adpcm_buffer.header;
@@ -117,7 +117,7 @@ impl Voice {
                 self.adsr.level = 0;
             }
         } else {
-            self.current_address = (self.current_address + 16) & spu::AUDIO_RAM_MASK;
+            self.current_address = (self.current_address + 16) & spu::SOUND_RAM_MASK;
         }
     }
 
