@@ -439,8 +439,7 @@ fn rasterize_pixel(
         return;
     }
 
-    // The sampling point is in the center of the pixel, so add 0.5 to both coordinates
-    let p = VertexFloat { x: f64::from(px) + 0.5, y: f64::from(py) + 0.5 };
+    let p = VertexFloat { x: px.into(), y: py.into() };
 
     // A given point is contained within the triangle if the Z component of the cross-product of
     // v0->p and v0->v1 is non-negative for each edge v0->v1 (assuming the vertices are ordered
@@ -574,8 +573,6 @@ fn interpolate_uv_coordinates(
     u: [u8; 3],
     v: [u8; 3],
 ) -> (u8, u8) {
-    let vertices = vertices.map(|vertex| VertexFloat { x: vertex.x + 0.5, y: vertex.y + 0.5 });
-
     let uf = u.map(f64::from);
     let vf = v.map(f64::from);
 
