@@ -90,6 +90,7 @@ enum PortState {
     SentIdLow,
     SentIdHigh,
     SentDigitalLow,
+    Disconnected,
     SendingZeroes,
 }
 
@@ -188,14 +189,18 @@ impl SerialPort {
                 PortState::ReceivedControllerAddress
             }
             // TODO memory cards and P2
-            (PortState::Idle, _) => {
+            (PortState::Idle | PortState::SendingZeroes, _) => {
                 self.rx_fifo.push(0);
                 PortState::SendingZeroes
             }
             // TODO ID hardcoded to $5A41 (digital controller)
-            (PortState::ReceivedControllerAddress, _) => {
+            (PortState::ReceivedControllerAddress, 0x42) => {
                 self.rx_fifo.push(0x41);
                 PortState::SentIdLow
+            }
+            (PortState::ReceivedControllerAddress, _) => {
+                self.rx_fifo.push(0x41);
+                PortState::Disconnected
             }
             // TODO memory cards
             // (PortState::ReceivedControllerAddress, _) => {
@@ -213,10 +218,7 @@ impl SerialPort {
                 self.rx_fifo.push((!(u16::from(inputs.p1) >> 8)) as u8);
                 PortState::Idle
             }
-            (PortState::SendingZeroes, _) => {
-                self.rx_fifo.push(0);
-                PortState::Idle
-            }
+            (PortState::Disconnected, _) => PortState::Disconnected,
         };
 
         if self.dsr_interrupt_enabled && !self.irq && !matches!(self.port_state, PortState::Idle) {
@@ -260,6 +262,8 @@ impl SerialPort {
         let value = u32::from(self.tx_fifo.ready_for_new_byte())
             | (u32::from(!self.rx_fifo.empty()) << 1)
             | (u32::from(self.tx_fifo == TxFifoState::Empty) << 2)
+            | (u32::from(matches!(self.port_state, PortState::Idle | PortState::Disconnected))
+                << 7)
             | (u32::from(self.irq) << 9)
             | (self.baudrate_timer.timer << 11);
 
