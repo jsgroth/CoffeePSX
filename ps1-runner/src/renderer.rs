@@ -248,11 +248,15 @@ impl WgpuRenderer {
             let vram_row = (2048 * vram_y) as usize;
             let frame_buffer_row = (params.frame_width * y) as usize;
 
+            // Always treat frame X as a halfword coordinate, even in 24bpp mode
+            // Final Fantasy 8 depends on this for FMVs
+            let vram_row_start = 2 * params.frame_x;
+
             match params.color_depth {
                 ColorDepthBits::Fifteen => {
                     for x in 0..params.frame_width {
-                        let vram_x = x.wrapping_add(params.frame_x) & 1023;
-                        let vram_addr = vram_row + (2 * vram_x) as usize;
+                        let vram_row_offset = (vram_row_start + 2 * x) & 2047;
+                        let vram_addr = vram_row + vram_row_offset as usize;
 
                         let rgb555_color =
                             u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
@@ -262,8 +266,7 @@ impl WgpuRenderer {
                 }
                 ColorDepthBits::TwentyFour => {
                     for x in 0..params.frame_width {
-                        let vram_x = x.wrapping_add(params.frame_x);
-                        let vram_row_offset = (3 * vram_x) as usize;
+                        let vram_row_offset = (vram_row_start + 3 * x) as usize;
 
                         let r = vram[vram_row | (vram_row_offset & 2047)];
                         let g = vram[vram_row | ((vram_row_offset + 1) & 2047)];
