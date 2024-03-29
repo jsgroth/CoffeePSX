@@ -1,10 +1,12 @@
 //! PS1 serial I/O port 0 (SIO0), used to communicate with controllers and memory cards
 
+mod controllers;
 mod rxfifo;
 
 use crate::input::Ps1Inputs;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
+use crate::sio::controllers::DigitalController;
 use crate::sio::rxfifo::RxFifo;
 use bincode::{Decode, Encode};
 use std::cmp;
@@ -97,8 +99,15 @@ enum PortState {
 const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
 
 #[derive(Debug, Clone, Encode, Decode)]
+enum SerialDevice {
+    NoDevice,
+    Disconnected,
+    DigitalController(DigitalController),
+}
+
+#[derive(Debug, Clone, Encode, Decode)]
 pub struct SerialPort {
-    port_state: PortState,
+    active_device: Option<SerialDevice>,
     tx_fifo: TxFifoState,
     rx_fifo: RxFifo,
     tx_enabled: bool,
@@ -117,7 +126,7 @@ pub struct SerialPort {
 impl SerialPort {
     pub fn new() -> Self {
         Self {
-            port_state: PortState::Idle,
+            active_device: None,
             tx_fifo: TxFifoState::Empty,
             rx_fifo: RxFifo::new(),
             tx_enabled: false,
@@ -183,45 +192,32 @@ impl SerialPort {
     fn process_tx_write(&mut self, value: u8, inputs: Ps1Inputs) {
         log::debug!("Processing SIO0 TX_DATA write {value:02X}");
 
-        self.port_state = match (self.port_state, value) {
-            (PortState::Idle, 0x01) if self.selected_port == Port::One => {
+        self.active_device = match self.active_device.take() {
+            Some(SerialDevice::NoDevice) => {
+                // If software is attempting to communicate with a device that is not connected,
+                // send 0 until it resets the port
                 self.rx_fifo.push(0);
-                PortState::ReceivedControllerAddress
+                Some(SerialDevice::NoDevice)
             }
-            // TODO memory cards and P2
-            (PortState::Idle | PortState::SendingZeroes, _) => {
+            Some(SerialDevice::Disconnected) => Some(SerialDevice::Disconnected),
+            Some(SerialDevice::DigitalController(controller)) => {
+                controller.process(value, &mut self.rx_fifo).map(SerialDevice::DigitalController)
+            }
+            None if value == 0x01 && self.selected_port == Port::One => {
                 self.rx_fifo.push(0);
-                PortState::SendingZeroes
+
+                // Connect controller 1
+                Some(SerialDevice::DigitalController(DigitalController::initial(inputs.p1)))
             }
-            // TODO ID hardcoded to $5A41 (digital controller)
-            (PortState::ReceivedControllerAddress, 0x42) => {
-                self.rx_fifo.push(0x41);
-                PortState::SentIdLow
+            None => {
+                self.rx_fifo.push(0);
+
+                // Pretend device is not connected
+                Some(SerialDevice::NoDevice)
             }
-            (PortState::ReceivedControllerAddress, _) => {
-                self.rx_fifo.push(0x41);
-                PortState::Disconnected
-            }
-            // TODO memory cards
-            // (PortState::ReceivedControllerAddress, _) => {
-            //     todo!("SIO0 controller, second byte was {value:02X}")
-            // }
-            (PortState::SentIdLow, _) => {
-                self.rx_fifo.push(0x5A);
-                PortState::SentIdHigh
-            }
-            (PortState::SentIdHigh, _) => {
-                self.rx_fifo.push((!u16::from(inputs.p1)) as u8);
-                PortState::SentDigitalLow
-            }
-            (PortState::SentDigitalLow, _) => {
-                self.rx_fifo.push((!(u16::from(inputs.p1) >> 8)) as u8);
-                PortState::Idle
-            }
-            (PortState::Disconnected, _) => PortState::Disconnected,
         };
 
-        if self.dsr_interrupt_enabled && !self.irq && !matches!(self.port_state, PortState::Idle) {
+        if self.dsr_interrupt_enabled && !self.irq && self.active_device.is_some() {
             self.irq = true;
             self.irq_delay_cycles = 100;
         }
@@ -259,11 +255,12 @@ impl SerialPort {
     // $1F801044: SIO0_STAT
     pub fn read_status(&self) -> u32 {
         // TODO Bit 7: DSR input level (/ACK)
+        let ack_high = matches!(self.active_device, None | Some(SerialDevice::Disconnected));
+
         let value = u32::from(self.tx_fifo.ready_for_new_byte())
             | (u32::from(!self.rx_fifo.empty()) << 1)
             | (u32::from(self.tx_fifo == TxFifoState::Empty) << 2)
-            | (u32::from(matches!(self.port_state, PortState::Idle | PortState::Disconnected))
-                << 7)
+            | (u32::from(ack_high) << 7)
             | (u32::from(self.irq) << 9)
             | (self.baudrate_timer.timer << 11);
 
@@ -337,7 +334,7 @@ impl SerialPort {
 
         if !self.dtr_on {
             self.tx_fifo = TxFifoState::Empty;
-            self.port_state = PortState::Idle;
+            self.active_device = None;
         }
 
         log::debug!("SIO0_CTRL write: {value:04X}");

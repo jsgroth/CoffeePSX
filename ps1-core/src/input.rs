@@ -1,7 +1,7 @@
 use proc_bitfield::bitfield;
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    #[derive(Clone, Copy, PartialEq, Eq, Default, bincode::Encode, bincode::Decode)]
     pub struct Ps1JoypadState(u16): Debug, IntoRaw {
         pub select: bool @ 0,
         pub start: bool @ 3,
