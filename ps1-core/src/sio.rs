@@ -1,12 +1,14 @@
 //! PS1 serial I/O port 0 (SIO0), used to communicate with controllers and memory cards
 
 mod controllers;
+pub mod memcard;
 mod rxfifo;
 
 use crate::input::Ps1Inputs;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
 use crate::sio::controllers::DigitalController;
+use crate::sio::memcard::{ConnectedMemoryCard, MemoryCard};
 use crate::sio::rxfifo::RxFifo;
 use bincode::{Decode, Encode};
 use std::cmp;
@@ -103,11 +105,13 @@ enum SerialDevice {
     NoDevice,
     Disconnected,
     DigitalController(DigitalController),
+    MemoryCard(ConnectedMemoryCard),
 }
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct SerialPort {
     active_device: Option<SerialDevice>,
+    memory_card_1: MemoryCard,
     tx_fifo: TxFifoState,
     rx_fifo: RxFifo,
     tx_enabled: bool,
@@ -124,9 +128,10 @@ pub struct SerialPort {
 }
 
 impl SerialPort {
-    pub fn new() -> Self {
+    pub fn new(memory_card_1: Option<Vec<u8>>) -> Self {
         Self {
             active_device: None,
+            memory_card_1: MemoryCard::new(memory_card_1),
             tx_fifo: TxFifoState::Empty,
             rx_fifo: RxFifo::new(),
             tx_enabled: false,
@@ -201,13 +206,28 @@ impl SerialPort {
             }
             Some(SerialDevice::Disconnected) => Some(SerialDevice::Disconnected),
             Some(SerialDevice::DigitalController(controller)) => {
+                log::debug!("SIO0 connected to digital controller in port 1");
+
                 controller.process(value, &mut self.rx_fifo).map(SerialDevice::DigitalController)
+            }
+            Some(SerialDevice::MemoryCard(memory_card)) => {
+                log::debug!("SIO0 connected to memory card in port 1");
+
+                memory_card
+                    .process(value, &mut self.rx_fifo, &mut self.memory_card_1)
+                    .map(SerialDevice::MemoryCard)
             }
             None if value == 0x01 && self.selected_port == Port::One => {
                 self.rx_fifo.push(0);
 
                 // Connect controller 1
                 Some(SerialDevice::DigitalController(DigitalController::initial(inputs.p1)))
+            }
+            None if value == 0x81 && self.selected_port == Port::One => {
+                self.rx_fifo.push(0);
+
+                // Connect memory card 1
+                Some(SerialDevice::MemoryCard(ConnectedMemoryCard::initial()))
             }
             None => {
                 self.rx_fifo.push(0);
@@ -357,5 +377,9 @@ impl SerialPort {
 
     pub fn read_baudrate_reload(&self) -> u32 {
         self.baudrate_timer.raw_reload_value
+    }
+
+    pub fn memory_card_1(&mut self) -> &mut MemoryCard {
+        &mut self.memory_card_1
     }
 }

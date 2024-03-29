@@ -73,6 +73,15 @@ pub trait AudioOutput {
     fn queue_samples(&mut self, samples: &[(f64, f64)]) -> Result<(), Self::Err>;
 }
 
+pub trait SaveWriter {
+    type Err;
+
+    /// # Errors
+    ///
+    /// Should propagate any error encountered while persisting the memory card.
+    fn save_memory_card_1(&mut self, card_data: &[u8]) -> Result<(), Self::Err>;
+}
+
 #[derive(Debug, Error)]
 pub enum Ps1Error {
     #[error("Incorrect BIOS ROM size; expected 512KB, was {bios_len}")]
@@ -84,11 +93,13 @@ pub enum Ps1Error {
 pub type Ps1Result<T> = Result<T, Ps1Error>;
 
 #[derive(Debug, Error)]
-pub enum TickError<RErr, AErr> {
+pub enum TickError<RErr, AErr, SErr> {
     #[error("Error rendering frame: {0}")]
     Render(RErr),
     #[error("Error queueing audio samples: {0}")]
     Audio(AErr),
+    #[error("Error saving memory card: {0}")]
+    SaveWrite(SErr),
     #[error("CD-ROM error: {0}")]
     CdRom(#[from] CdRomError),
 }
@@ -117,18 +128,25 @@ pub struct Ps1Emulator {
 pub struct Ps1EmulatorBuilder {
     bios_rom: Vec<u8>,
     disc: Option<CdRom>,
+    memory_card_1: Option<Vec<u8>>,
     tty_enabled: bool,
 }
 
 impl Ps1EmulatorBuilder {
     #[must_use]
     pub fn new(bios_rom: Vec<u8>) -> Self {
-        Self { bios_rom, disc: None, tty_enabled: false }
+        Self { bios_rom, disc: None, memory_card_1: None, tty_enabled: false }
     }
 
     #[must_use]
     pub fn with_disc(mut self, disc: CdRom) -> Self {
         self.disc = Some(disc);
+        self
+    }
+
+    #[must_use]
+    pub fn with_memory_card_1(mut self, memory_card_1: Vec<u8>) -> Self {
+        self.memory_card_1 = Some(memory_card_1);
         self
     }
 
@@ -142,7 +160,7 @@ impl Ps1EmulatorBuilder {
     ///
     /// Will return an error if the BIOS ROM is invalid.
     pub fn build(self) -> Ps1Result<Ps1Emulator> {
-        Ps1Emulator::new(self.bios_rom, self.disc, self.tty_enabled)
+        Ps1Emulator::new(self.bios_rom, self.disc, self.memory_card_1, self.tty_enabled)
     }
 }
 
@@ -165,7 +183,12 @@ impl Ps1Emulator {
     /// # Errors
     ///
     /// Will return an error if the BIOS ROM is invalid.
-    pub fn new(bios_rom: Vec<u8>, disc: Option<CdRom>, tty_enabled: bool) -> Ps1Result<Self> {
+    pub fn new(
+        bios_rom: Vec<u8>,
+        disc: Option<CdRom>,
+        memory_card_1: Option<Vec<u8>>,
+        tty_enabled: bool,
+    ) -> Ps1Result<Self> {
         let memory = Memory::new(bios_rom)?;
 
         let mut emulator = Self {
@@ -179,7 +202,7 @@ impl Ps1Emulator {
             memory_control: MemoryControl::new(),
             dma_controller: DmaController::new(),
             interrupt_registers: InterruptRegisters::new(),
-            sio0: SerialPort::new(),
+            sio0: SerialPort::new(memory_card_1),
             timers: Timers::new(),
             scheduler: Scheduler::new(),
             last_render_cycles: 0,
@@ -243,12 +266,14 @@ impl Ps1Emulator {
     ///
     /// Will propagate any error encountered while rendering a frame.
     #[inline]
-    pub fn tick<R: Renderer, A: AudioOutput>(
+    #[allow(clippy::type_complexity)]
+    pub fn tick<R: Renderer, A: AudioOutput, S: SaveWriter>(
         &mut self,
         inputs: Ps1Inputs,
         renderer: &mut R,
         audio_output: &mut A,
-    ) -> Result<TickEffect, TickError<R::Err, A::Err>> {
+        save_writer: &mut S,
+    ) -> Result<TickEffect, TickError<R::Err, A::Err, S::Err>> {
         self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
             spu: &mut self.spu,
@@ -279,7 +304,7 @@ impl Ps1Emulator {
         self.sio0.tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
         let tick_effect = if self.scheduler.is_event_ready() {
-            self.process_scheduler_events(renderer, audio_output)?
+            self.process_scheduler_events(renderer, audio_output, save_writer)?
         } else {
             TickEffect::None
         };
@@ -288,18 +313,20 @@ impl Ps1Emulator {
             // Force a frame render
             // TODO handle this with the scheduler if the GPU stops generating VBlank IRQs due to
             // invalid Y1/Y2
-            self.render_frame(renderer, audio_output)?;
+            self.render_frame(renderer, audio_output, save_writer)?;
             return Ok(TickEffect::FrameRendered);
         }
 
         Ok(tick_effect)
     }
 
-    fn render_frame<R: Renderer, A: AudioOutput>(
+    #[allow(clippy::type_complexity)]
+    fn render_frame<R: Renderer, A: AudioOutput, S: SaveWriter>(
         &mut self,
         renderer: &mut R,
         audio_output: &mut A,
-    ) -> Result<(), TickError<R::Err, A::Err>> {
+        save_writer: &mut S,
+    ) -> Result<(), TickError<R::Err, A::Err, S::Err>> {
         self.last_render_cycles = self.scheduler.cpu_cycle_counter();
 
         renderer
@@ -309,15 +336,22 @@ impl Ps1Emulator {
         audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
         self.audio_buffer.clear();
 
+        let memory_card_1 = self.sio0.memory_card_1();
+        if memory_card_1.get_and_clear_dirty() {
+            save_writer.save_memory_card_1(memory_card_1.data()).map_err(TickError::SaveWrite)?;
+        }
+
         Ok(())
     }
 
     #[inline]
-    fn process_scheduler_events<R: Renderer, A: AudioOutput>(
+    #[allow(clippy::type_complexity)]
+    fn process_scheduler_events<R: Renderer, A: AudioOutput, S: SaveWriter>(
         &mut self,
         renderer: &mut R,
         audio_output: &mut A,
-    ) -> Result<TickEffect, TickError<R::Err, A::Err>> {
+        save_writer: &mut S,
+    ) -> Result<TickEffect, TickError<R::Err, A::Err, S::Err>> {
         let mut tick_effect = TickEffect::None;
 
         while let Some(event) = self.scheduler.pop_ready_event() {
@@ -330,7 +364,7 @@ impl Ps1Emulator {
                     self.interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
                     self.timers.schedule_next_vblank(&mut self.scheduler);
 
-                    self.render_frame(renderer, audio_output)?;
+                    self.render_frame(renderer, audio_output, save_writer)?;
 
                     tick_effect = TickEffect::FrameRendered;
                 }

@@ -1,13 +1,13 @@
 mod renderer;
 
 use crate::renderer::WgpuRenderer;
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use cdrom::reader::{CdRom, CdRomFileFormat};
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
-use ps1_core::api::{AudioOutput, Ps1Emulator, TickEffect};
+use ps1_core::api::{AudioOutput, Ps1Emulator, SaveWriter, TickEffect};
 use ps1_core::input::Ps1Inputs;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -51,6 +51,26 @@ impl AudioOutput for CpalAudioOutput {
         }
 
         Ok(())
+    }
+}
+
+struct FsSaveWriter {
+    path: PathBuf,
+}
+
+impl FsSaveWriter {
+    fn load_memory_card(&self) -> anyhow::Result<Vec<u8>> {
+        fs::read(&self.path)
+            .context(format!("Error reading memory card 1 from '{}'", self.path.display()))
+    }
+}
+
+impl SaveWriter for FsSaveWriter {
+    type Err = anyhow::Error;
+
+    fn save_memory_card_1(&mut self, card_data: &[u8]) -> Result<(), Self::Err> {
+        fs::write(&self.path, card_data)
+            .context(format!("Error saving memory card 1 to '{}'", self.path.display()))
     }
 }
 
@@ -227,6 +247,9 @@ fn main() -> anyhow::Result<()> {
 
     log::info!("Loading BIOS from '{}'", args.bios_path);
 
+    let mut save_writer = FsSaveWriter { path: "card1.mcd".into() };
+    let memory_card_1 = save_writer.load_memory_card().ok();
+
     let bios_rom = fs::read(&args.bios_path)?;
     let mut emulator_builder = Ps1Emulator::builder(bios_rom).tty_enabled(args.tty_enabled);
     if let Some(disc_path) = &args.disc_path {
@@ -240,6 +263,11 @@ fn main() -> anyhow::Result<()> {
 
         let disc = CdRom::open(disc_path, format)?;
         emulator_builder = emulator_builder.with_disc(disc);
+    }
+
+    if let Some(memory_card_1) = memory_card_1 {
+        log::info!("Loaded memory card 1 from '{}'", save_writer.path.display());
+        emulator_builder = emulator_builder.with_memory_card_1(memory_card_1);
     }
 
     let mut emulator = emulator_builder.build()?;
@@ -277,7 +305,7 @@ fn main() -> anyhow::Result<()> {
 
         let exe = fs::read(exe_path)?;
         loop {
-            emulator.tick(inputs, &mut renderer, &mut audio_output)?;
+            emulator.tick(inputs, &mut renderer, &mut audio_output, &mut save_writer)?;
             if emulator.cpu_pc() == 0x80030000 {
                 emulator.sideload_exe(&exe)?;
                 log::info!("EXE sideloaded");
@@ -331,7 +359,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             loop {
-                match emulator.tick(inputs, &mut renderer, &mut audio_output) {
+                match emulator.tick(inputs, &mut renderer, &mut audio_output, &mut save_writer) {
                     Ok(TickEffect::None) => {}
                     Ok(TickEffect::FrameRendered) => {
                         step_to_next_frame = false;

@@ -5,27 +5,25 @@ Work-in-progress attempt at a PlayStation emulator. Few games boot right now and
 ## Status
 
 Implemented:
-* The R3000-compatible CPU, minus I-cache and remotely accurate timing
+* The R3000-compatible CPU, minus remotely accurate timing
 * The GTE
-* The GPU, with a (buggy) software renderer
-* Part of the SPU, enough to get basic audio output
-* Enough CD-ROM functionality to get some games to boot and run
+* The GPU, with a (very very slow) software rasterizer
+* Most of the SPU
+* Most of the CD-ROM controller
 * Partial MDEC functionality (15bpp/24bpp only, assumes output is always read via DMA1)
-* Digital controllers (P1 only)
+* Digital controllers, P1 only
+* Memory card, port 1 only and shared across all games
 * Most of the hardware timers
 
 Not yet implemented:
 * Accurate CPU timing; currently hardcoded to 2 cycles per instruction with no bus access delays
-* CPU instruction cache
 * DMA timings and GPU draw timings; right now all DMAs and GPU commands finish instantly from software's perspective
-* Correct triangle rasterization
-  * Games that render lots of polygons have noticeable geometry errors
-* SPU: Capture buffers, noise generator, pitch modulation, interrupts, reverb FIR filter
-* Some CD-ROM functionality, including audio report interrupts and non-standard CD-XA audio modes
+* SPU: Capture buffers, noise generator, pitch modulation, reverb FIR filter
+* Some CD-ROM functionality including infrequently used commands, audio report interrupts, and non-standard CD-XA audio modes
 * MDEC 4bpp/8bpp modes
-  * Even 15bpp/24bpp MDEC does not work properly in some/most games, possibly timing-related
+  * Even 15bpp/24bpp MDEC does not work properly in some games, possibly timing-related
 * Analog controllers and P2 inputs
-* Memory cards
+* More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
 * Interrupts and synchronization modes for dotclock and HBlank timers
 
 ## Build Dependencies (Linux)
