@@ -1,6 +1,8 @@
 //! LSI CW33300, the PS1 CPU
 //!
-//! Uses the MIPS I instruction set and is binary-compatible with the R3000
+//! Uses the MIPS I instruction set and is binary-compatible with the R3000. Includes 2 MIPS
+//! coprocessors, the standard System Control Processor (CP0) and a 3D math coprocessor called the
+//! Geometry Transformation Engine (CP2, or usually GTE).
 
 mod cp0;
 mod gte;

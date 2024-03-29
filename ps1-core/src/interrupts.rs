@@ -1,4 +1,4 @@
-//! PS1 control registers (e.g. interrupt registers)
+//! PS1 interrupt registers, `I_STAT` and `I_MASK`
 
 use bincode::{Decode, Encode};
 

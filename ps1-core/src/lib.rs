@@ -13,6 +13,3 @@ mod scheduler;
 mod sio;
 mod spu;
 mod timers;
-
-pub const VRAM_WIDTH: u16 = 1024;
-pub const VRAM_HEIGHT: u16 = 512;

@@ -1,4 +1,13 @@
 //! PS1 DMA registers and transfers
+//!
+//! DMA channels:
+//! - DMA0: MDEC In (RAM-to-MDEC)
+//! - DMA1: MDEC Out (MDEC-to-RAM)
+//! - DMA2: GPU
+//! - DMA3: CD-ROM
+//! - DMA4: SPU
+//! - DMA5: PIO (Parallel I/O port, apparently not used by any games?)
+//! - DMA6: OTC (Ordering Table Clear, used to prepare the graphics ordering table in RAM)
 
 use crate::cd::CdController;
 use crate::gpu::Gpu;

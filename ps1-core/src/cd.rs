@@ -1,4 +1,7 @@
-//! PS1 CD-ROM controller and drive
+//! PS1 CD-ROM controller
+//!
+//! The controller is emulated as a whole instead of separately emulating the drive, the 68HC05, and
+//! the DSP at a low level. This works because of the restricted interface exposed to the CPU and DMA.
 
 mod audio;
 mod control;

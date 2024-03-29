@@ -152,7 +152,7 @@ pub enum TickEffect {
     FrameRendered,
 }
 
-// The SPU clock rate is exactly 1/768 the CPU clock rate
+// The SPU/CD-ROM clock rate is exactly 1/768 the CPU clock rate
 // This _should_ be 44100 Hz, but it may not be exactly depending on the exact oscillator speed
 const SPU_CLOCK_DIVIDER: u64 = 768;
 
@@ -278,10 +278,16 @@ impl Ps1Emulator {
         // TODO use scheduler instead of advancing SIO0 every CPU tick
         self.sio0.tick(cpu_cycles, inputs, &mut self.interrupt_registers);
 
-        let tick_effect = self.process_scheduler_events(renderer, audio_output)?;
+        let tick_effect = if self.scheduler.is_event_ready() {
+            self.process_scheduler_events(renderer, audio_output)?
+        } else {
+            TickEffect::None
+        };
 
         if self.scheduler.cpu_cycle_counter() - self.last_render_cycles >= 33_868_800 / 30 {
             // Force a frame render
+            // TODO handle this with the scheduler if the GPU stops generating VBlank IRQs due to
+            // invalid Y1/Y2
             self.render_frame(renderer, audio_output)?;
             return Ok(TickEffect::FrameRendered);
         }
@@ -306,6 +312,7 @@ impl Ps1Emulator {
         Ok(())
     }
 
+    #[inline]
     fn process_scheduler_events<R: Renderer, A: AudioOutput>(
         &mut self,
         renderer: &mut R,
@@ -313,10 +320,13 @@ impl Ps1Emulator {
     ) -> Result<TickEffect, TickError<R::Err, A::Err>> {
         let mut tick_effect = TickEffect::None;
 
-        while self.scheduler.is_event_ready() {
-            let event = self.scheduler.pop_event();
+        while let Some(event) = self.scheduler.pop_ready_event() {
             match event.event_type {
                 SchedulerEventType::VBlank => {
+                    // VBlank event: Generate VBlank IRQ and render the current display frame buffer
+                    // to video output.
+                    // Triggers once per frame (when scanline == Y2) unless the GPU's vertical
+                    // display range is invalid
                     self.interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
                     self.timers.schedule_next_vblank(&mut self.scheduler);
 
@@ -325,6 +335,9 @@ impl Ps1Emulator {
                     tick_effect = TickEffect::FrameRendered;
                 }
                 SchedulerEventType::SpuAndCdClock => {
+                    // SPU/CD-ROM clock event: Clock the CD-ROM controller and the SPU, then push
+                    // the current stereo audio sample to audio output.
+                    // Triggers every 768 CPU clocks which is 44100 Hz
                     self.cd_controller.clock(&mut self.interrupt_registers)?;
                     self.audio_buffer
                         .push(self.spu.clock(&self.cd_controller, &mut self.interrupt_registers));
@@ -334,14 +347,20 @@ impl Ps1Emulator {
                     ));
                 }
                 SchedulerEventType::Timer0Irq => {
+                    // Timer 0 IRQ event: Set the Timer 0 IRQ flag (rarely used but can track the GPU dot clock).
+                    // Trigger rate depends on Timer 0 configuration
                     self.interrupt_registers.set_interrupt_flag(InterruptType::Timer0);
                     self.timers.schedule_next_timer_0_irq(&mut self.scheduler);
                 }
                 SchedulerEventType::Timer1Irq => {
+                    // Timer 1 IRQ event: Set the Timer 1 IRQ flag (usually counts GPU HBlank signals).
+                    // Trigger rate depends on Timer 1 configuration
                     self.interrupt_registers.set_interrupt_flag(InterruptType::Timer1);
                     self.timers.scheduler_next_timer_1_irq(&mut self.scheduler);
                 }
                 SchedulerEventType::Timer2Irq => {
+                    // Timer 2 IRQ event: Set the Timer 2 IRQ flag (usually ticks at system clock rate / 8).
+                    // Trigger rate depends on Timer 2 configuration
                     self.interrupt_registers.set_interrupt_flag(InterruptType::Timer2);
                     self.timers.schedule_next_timer_2_irq(&mut self.scheduler);
                 }

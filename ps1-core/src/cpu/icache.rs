@@ -1,3 +1,12 @@
+//! CPU instruction cache (I-cache)
+//!
+//! Opcodes are automatically cached in I-cache when executing code out of kuseg or kseg0.
+//! kseg1 does not use I-cache.
+//!
+//! The cache has capacity for 1024 opcodes (4KB) and has 4-word cache lines. Address bits 2-11 are
+//! used as the cache index, and each cache line is tagged with address bits 12-31 to prevent a
+//! different address from incorrectly using the cached opcode.
+
 use bincode::{Decode, Encode};
 use std::array;
 

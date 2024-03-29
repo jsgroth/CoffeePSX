@@ -1,4 +1,8 @@
 //! PS1 hardware timers
+//!
+//! Timer 0: Can track the system clock or the GPU dot clock (rarely used)
+//! Timer 1: Can track the system clock or it can count GPU HBlank signals (i.e. a scanline counter)
+//! Timer 2: Can track the system clock or the system clock / 8
 
 use crate::num::U32Ext;
 use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};

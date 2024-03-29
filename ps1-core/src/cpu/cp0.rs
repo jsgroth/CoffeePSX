@@ -1,3 +1,7 @@
+//! MIPS System Control Processor, or CP0
+//!
+//! Mainly responsible for exception handling and cache management
+
 use crate::cpu::Exception;
 use crate::num::U32Ext;
 use bincode::{Decode, Encode};

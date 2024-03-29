@@ -1,3 +1,5 @@
+//! SPU reverb code
+
 use crate::num::U32Ext;
 use crate::spu;
 use crate::spu::voice::Voice;

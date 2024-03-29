@@ -1,4 +1,6 @@
 //! PS1 SPU (Sound Processing Unit)
+//!
+//! The SPU is a 24-channel ADPCM playback chip with 512KB of sound RAM.
 
 pub mod adpcm;
 mod envelope;

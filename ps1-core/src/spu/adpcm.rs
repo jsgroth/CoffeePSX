@@ -1,3 +1,10 @@
+//! SPU ADPCM decoding
+//!
+//! Each 16-byte ADPCM block contains 28 compressed PCM samples.
+//!
+//! The block begins with a 2-byte header specifying the ADPCM shift value, the ADPCM filter value,
+//! and loop flags. The remaining 14 bytes contain 4-bit ADPCM sample values.
+
 use crate::spu::I32Ext;
 use bincode::{Decode, Encode};
 

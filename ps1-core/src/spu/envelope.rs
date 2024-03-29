@@ -1,3 +1,5 @@
+//! Volume and envelope code
+
 use crate::num::U32Ext;
 use bincode::{Decode, Encode};
 use std::cmp;

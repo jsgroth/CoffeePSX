@@ -1,4 +1,4 @@
-//! PS1 system memory (main RAM / scratchpad / BIOS ROM)
+//! PS1 system memory (main RAM / scratchpad / BIOS ROM) and memory control registers
 
 use crate::api::{Ps1Error, Ps1Result};
 use crate::num::U32Ext;

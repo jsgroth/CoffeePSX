@@ -1,4 +1,11 @@
 //! PS1 GPU (Graphics Processing Unit)
+//!
+//! The GPU has no real 3D capabilities. Its primary capability is that it can rasterize triangles,
+//! lines, and rectangles into a 2D frame buffer. Games render 3D graphics by using the GTE to
+//! compute the scene geometry and then using the GPU to rasterize the geometry.
+//!
+//! Rasterization can use flat shading, Gouraud shading (color interpolation), or texture mapping.
+//! Texture mappings can use raw texels (texture pixels) or they can modulate the texel colors.
 
 mod gp0;
 mod gp1;

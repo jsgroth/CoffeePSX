@@ -1,3 +1,7 @@
+//! GP0 command processing
+//!
+//! GP0 commands are primarily related to drawing graphics
+
 mod rasterize;
 
 use crate::gpu::gp0::rasterize::{

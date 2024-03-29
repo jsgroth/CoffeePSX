@@ -1,3 +1,5 @@
+//! SIO0 controller code
+
 use crate::input::Ps1JoypadState;
 use crate::sio::rxfifo::RxFifo;
 use bincode::{Decode, Encode};

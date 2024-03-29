@@ -1,3 +1,5 @@
+//! A (quite slow) software rasterizer. Needs to be rewritten
+
 #![allow(clippy::many_single_char_names)]
 
 use crate::gpu::gp0::{

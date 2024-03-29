@@ -1,3 +1,7 @@
+//! GP1 command processing
+//!
+//! GP1 commands are primarily display-related, plus a few GPU control commands
+
 use crate::api::ColorDepthBits;
 use crate::gpu::gp0::Gp0CommandState;
 use crate::gpu::registers::{

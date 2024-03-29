@@ -1,3 +1,5 @@
+// Table from <https://psx-spx.consoledev.net/cdromdrive/#cdrom-xa-audio-adpcm-compression>
+// Used in zig-zag interpolation when resampling 37800/19800 Hz ADPCM samples to 44100 Hz
 pub const INTERPOLATION: &[i16; 7 * 29] = &[
     0, 0, 0, 0, -0x0001, 0x0002, -0x0005, 0, 0, 0, -0x0001, 0x0003, -0x0008, 0x0011, 0, 0, -0x0001,
     0x0003, -0x0008, 0x0010, -0x0023, 0, -0x0002, 0x0003, -0x0008, 0x0011, -0x0023, 0x0046, 0, 0,

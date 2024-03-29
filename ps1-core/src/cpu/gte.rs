@@ -1,4 +1,8 @@
 //! Geometry Transformation Engine (GTE), a 3D math coprocessor
+//!
+//! Since the PS1 GPU has no real 3D capabilities, the GTE is typically used to prepare geometry
+//! before sending it to the GPU for rasterization. Most of the vector/matrix operations are
+//! performed in 32-bit fixed-point decimal using a 44-bit accumulator.
 
 mod calculation;
 mod colors;

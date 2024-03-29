@@ -50,7 +50,6 @@ macro_rules! memory_map {
 
 impl<'a> Bus<'a> {
     // TODO memory control for main RAM and BIOS ROM
-    // TODO I-cache for opcode reads
     pub fn read_u8(&mut self, address: u32) -> u32 {
         memory_map!(address, [
             main_ram => self.memory.read_main_ram_u8(address).into(),

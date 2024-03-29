@@ -81,7 +81,7 @@ impl Scheduler {
         self.heap.remove_one(|event| event.event_type == event_type);
     }
 
-    pub fn pop_event(&mut self) -> SchedulerEvent {
-        self.heap.pop()
+    pub fn pop_ready_event(&mut self) -> Option<SchedulerEvent> {
+        self.is_event_ready().then(|| self.heap.pop())
     }
 }

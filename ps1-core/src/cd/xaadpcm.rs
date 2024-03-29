@@ -1,34 +1,34 @@
 //! CD-XA ADPCM code
-
-// The CD-XA ADPCM compression format is the same as the SPU ADPCM format, but the data layout is
-// a bit different.
-//
-// The coding info byte in the sector subheader specifies metadata that applies to the entire sector:
-// - Mono or Stereo
-// - 37800 Hz or 18900 Hz
-// - 4-bit or 8-bit samples
-// - Emphasis flag (apparently not used by any released games)
-//
-// Each sector contains 18 data blocks that are each 128 bytes. The number of samples in each data
-// block depends on coding info and is one of the following:
-// - 224 4-bit Mono samples
-// - 112 4-bit Stereo samples or 8-bit Mono samples
-// - 56 8-bit Stereo samples
-//
-// In total, that means each ADPCM sector contains one of the following:
-// - 4032 4-bit Mono samples (equivalent to 8 CD-DA sectors at 37800 Hz or 16 at 18900 Hz)
-// - 2016 4-bit Stereo samples (equivalent to 4 CD-DA sectors at 37800 Hz or 8 at 18900 Hz)
-// - 1008 8-bit Stereo samples (equivalent to 2 CD-DA sectors at 37800 Hz or 4 at 18900 Hz)
-//
-// Each 128-byte data block is split into either 8 audio blocks (4-bit samples) or 4 audio blocks
-// (8-bit samples), with each audio block containing 28 samples. For Stereo the audio blocks alternate
-// between the left channel and the right channel, and audio blocks are played two at a time. For
-// Mono the audio blocks are played one at a time in sequence.
-//
-// Data blocks begin with a 16-byte header that specifies the ADPCM shift and filter values for each
-// audio block. The remaining 112 bytes contain interleaved ADPCM sample values: the first sample
-// from each block, then the second sample from each block, then the third, etc. The final 4 bytes
-// contain the 28th sample from each block.
+//!
+//! The CD-XA ADPCM compression format is the same as the SPU ADPCM format, but the data layout is
+//! a bit different.
+//!
+//! The coding info byte in the sector subheader specifies metadata that applies to the entire sector:
+//! - Mono or Stereo
+//! - 37800 Hz or 18900 Hz
+//! - 4-bit or 8-bit samples
+//! - Emphasis flag (apparently not used by any released games)
+//!
+//! Each sector contains 18 data blocks that are each 128 bytes. The number of samples in each data
+//! block depends on coding info and is one of the following:
+//! - 224 4-bit Mono samples
+//! - 112 4-bit Stereo samples or 8-bit Mono samples
+//! - 56 8-bit Stereo samples
+//!
+//! In total, that means each ADPCM sector contains one of the following:
+//! - 4032 4-bit Mono samples (equivalent to 8 CD-DA sectors at 37800 Hz or 16 at 18900 Hz)
+//! - 2016 4-bit Stereo samples (equivalent to 4 CD-DA sectors at 37800 Hz or 8 at 18900 Hz)
+//! - 1008 8-bit Stereo samples (equivalent to 2 CD-DA sectors at 37800 Hz or 4 at 18900 Hz)
+//!
+//! Each 128-byte data block is split into either 8 audio blocks (4-bit samples) or 4 audio blocks
+//! (8-bit samples), with each audio block containing 28 samples. For Stereo the audio blocks alternate
+//! between the left channel and the right channel, and audio blocks are played two at a time. For
+//! Mono the audio blocks are played one at a time in sequence.
+//!
+//! Data blocks begin with a 16-byte header that specifies the ADPCM shift and filter values for each
+//! audio block. The remaining 112 bytes contain interleaved ADPCM sample values: the first sample
+//! from each block, then the second sample from each block, then the third, etc. The final 4 bytes
+//! contain the 28th sample from each block.
 
 mod tables;
 
