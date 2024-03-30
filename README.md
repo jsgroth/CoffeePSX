@@ -1,8 +1,10 @@
 # ps1-emu
 
-Work-in-progress attempt at a PlayStation emulator. Many games do not boot, and performance in 3D games is quite poor. Currently CLI-only, no GUI.
+Work-in-progress attempt at a PlayStation emulator. Some games boot, but many do not boot, and performance in 3D games is quite poor. Currently CLI-only, no GUI.
 
 Currently standalone rather than being an additional backend in [jgenesis](https://github.com/jsgroth/jgenesis) in order to enable easier experimentation for rendering and parallelism, since this is the first console I've emulated that supports 3D graphics (and a double-digit MHz main CPU).
+
+The `cdrom` crate is a fork of the `cdrom` crate that [jgenesis](https://github.com/jsgroth/jgenesis) uses for Sega CD, but all changes to it in this repo have been upstreamed (e.g. support for Mode 2 data tracks) because I do not want the two to diverge.
 
 ## Status
 
@@ -21,6 +23,7 @@ Not yet implemented:
 * Accurate CPU timing; currently hardcoded to 2 cycles per instruction with no bus access delays
 * DMA timings and GPU draw timings; right now all DMAs and GPU commands finish instantly from software's perspective
 * PAL display and video timings; only NTSC is supported right now
+* Proper aspect ratio handling; the renderer currently simply stretches to fill the window (which defaults to an aspect-correct but small size)
 * SPU: Capture buffers, noise generator, pitch modulation, reverb FIR filter
 * Some CD-ROM functionality including infrequently used commands, audio report interrupts, and non-standard CD-XA audio modes
 * MDEC 4bpp/8bpp modes
@@ -84,3 +87,7 @@ Hotkeys:
 * Toggle VRAM view: ' key (Quote)
 * Toggle Vertical Overscan Cropping: . key (Period)
 * Exit: Esc key
+
+## Screenshot
+
+![Screenshot from 2024-03-30 01-09-14](https://github.com/jsgroth/ps1-emu/assets/1137683/99c35745-31b0-4a1b-8733-321bc8a4a372)
