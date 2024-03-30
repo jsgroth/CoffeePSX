@@ -544,7 +544,7 @@ fn rasterize_pixel(
 }
 
 fn modulate(texture_color: u8, shading_color: u8) -> u8 {
-    (f64::from(texture_color) * f64::from(shading_color) / 128.0).clamp(0.0, 255.0) as u8
+    cmp::min(255, u16::from(texture_color) * u16::from(shading_color) / 128) as u8
 }
 
 fn modulate_color(texture_color: Color, shading_color: Color) -> Color {
@@ -556,6 +556,10 @@ fn modulate_color(texture_color: Color, shading_color: Color) -> Color {
 }
 
 fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]) -> Color {
+    if colors[0] == colors[1] && colors[1] == colors[2] {
+        return colors[0];
+    }
+
     let rf = colors.map(|color| f64::from(color.r));
     let gf = colors.map(|color| f64::from(color.g));
     let bf = colors.map(|color| f64::from(color.b));
@@ -585,7 +589,6 @@ fn interpolate_uv_coordinates(
     let u = alpha * uf[0] + beta * uf[1] + gamma * uf[2];
     let v = alpha * vf[0] + beta * vf[1] + gamma * vf[2];
 
-    // Floor rather than round because rounding looks smoother than what the PS1 GPU outputs
     let u = u.round() as u8;
     let v = v.round() as u8;
 

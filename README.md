@@ -2,7 +2,7 @@
 
 Work-in-progress attempt at a PlayStation emulator. Many games do not boot, and performance in 3D games is quite poor. Currently CLI-only, no GUI.
 
-Currently standalone rather than being an additional backend in [https://github.com/jsgroth/jgenesis](jgenesis) in order to enable easier experimentation for rendering and parallelism, since this is the first console I've emulated that supports 3D graphics (and a double-digit MHz main CPU).
+Currently standalone rather than being an additional backend in [jgenesis](https://github.com/jsgroth/jgenesis) in order to enable easier experimentation for rendering and parallelism, since this is the first console I've emulated that supports 3D graphics (and a double-digit MHz main CPU).
 
 ## Status
 
