@@ -11,6 +11,7 @@ use std::ops::BitOr;
 pub const INVALID_PARAMETER: u8 = 0x10;
 pub const WRONG_NUM_PARAMETERS: u8 = 0x20;
 pub const INVALID_COMMAND: u8 = 0x40;
+pub const CANNOT_RESPOND_YET: u8 = 0x80;
 
 // Roughly 18,944 CPU cycles
 pub const GET_ID_SECOND_CYCLES: u32 = 24;
@@ -159,6 +160,24 @@ impl CdController {
         let minutes = cd::binary_to_bcd(start_time.minutes);
         let seconds = cd::binary_to_bcd(start_time.seconds);
         int3!(self, [stat!(self), minutes, seconds]);
+
+        CommandState::Idle
+    }
+
+    // $10: GetLocL() -> INT3(amm, ass, asect, mode, file, channel, sm, ci)
+    // Returns header and subheader bytes from the most recently read sector (data tracks only)
+    pub(super) fn execute_get_loc_l(&mut self) -> CommandState {
+        if !matches!(self.drive_state, DriveState::Reading(..)) {
+            int5!(self, [stat!(self, ERROR), CANNOT_RESPOND_YET]);
+            return CommandState::Idle;
+        }
+
+        // Header in bytes 12-15, subheader in bytes 16-20
+        self.interrupts.flags |= 3;
+        self.response_fifo.reset();
+        for &byte in &self.sector_buffer[12..20] {
+            self.response_fifo.push(byte);
+        }
 
         CommandState::Idle
     }
