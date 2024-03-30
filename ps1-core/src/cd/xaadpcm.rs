@@ -32,6 +32,7 @@
 
 mod tables;
 
+use crate::num::U8Ext;
 use crate::spu::adpcm;
 use bincode::{Decode, Encode};
 
@@ -66,6 +67,12 @@ impl ResampleRingBuffer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+enum ChannelMode {
+    Stereo,
+    Mono,
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct XaAdpcmState {
     pub file: u8,
@@ -80,6 +87,7 @@ pub struct XaAdpcmState {
     block_buffer_r: [i16; 32],
     resample_ring_buffer_l: ResampleRingBuffer,
     resample_ring_buffer_r: ResampleRingBuffer,
+    channel_mode: ChannelMode,
 }
 
 impl XaAdpcmState {
@@ -97,6 +105,7 @@ impl XaAdpcmState {
             block_buffer_r: [0; 32],
             resample_ring_buffer_l: ResampleRingBuffer::new(),
             resample_ring_buffer_r: ResampleRingBuffer::new(),
+            channel_mode: ChannelMode::Stereo,
         }
     }
 
@@ -114,9 +123,12 @@ impl XaAdpcmState {
 
     pub fn decode_sector(&mut self, sector: &[u8]) {
         let coding_info = sector[19];
-        if coding_info != 0x01 {
+        if coding_info != 0x00 && coding_info != 0x01 {
             todo!("CD-XA ADPCM sector with coding info {coding_info:02X}");
         }
+
+        self.channel_mode =
+            if coding_info.bit(0) { ChannelMode::Stereo } else { ChannelMode::Mono };
 
         self.adpcm_buffer_l.clear();
         self.adpcm_buffer_r.clear();
@@ -128,18 +140,38 @@ impl XaAdpcmState {
         // At end, skip 20 padding bytes + 4 EDC bytes
         for data_block in sector[24..2352 - 24].chunks_exact(128) {
             for audio_block_idx in 0..4 {
-                decode_audio_block(
-                    data_block,
-                    2 * audio_block_idx,
-                    &mut self.block_buffer_l,
-                    &mut self.adpcm_buffer_l,
-                );
-                decode_audio_block(
-                    data_block,
-                    2 * audio_block_idx + 1,
-                    &mut self.block_buffer_r,
-                    &mut self.adpcm_buffer_r,
-                );
+                match self.channel_mode {
+                    ChannelMode::Stereo => {
+                        // Stereo: Block N is the next L block and block N+1 is the next R block
+                        decode_audio_block(
+                            data_block,
+                            2 * audio_block_idx,
+                            &mut self.block_buffer_l,
+                            &mut self.adpcm_buffer_l,
+                        );
+                        decode_audio_block(
+                            data_block,
+                            2 * audio_block_idx + 1,
+                            &mut self.block_buffer_r,
+                            &mut self.adpcm_buffer_r,
+                        );
+                    }
+                    ChannelMode::Mono => {
+                        // Mono: Decode the next 2 blocks in sequence using the same buffers
+                        decode_audio_block(
+                            data_block,
+                            2 * audio_block_idx,
+                            &mut self.block_buffer_l,
+                            &mut self.adpcm_buffer_l,
+                        );
+                        decode_audio_block(
+                            data_block,
+                            2 * audio_block_idx + 1,
+                            &mut self.block_buffer_l,
+                            &mut self.adpcm_buffer_l,
+                        );
+                    }
+                }
             }
         }
 
@@ -148,11 +180,25 @@ impl XaAdpcmState {
             &mut self.output_buffer_l,
             &mut self.resample_ring_buffer_l,
         );
-        resample_to_44100hz(
-            &self.adpcm_buffer_r,
-            &mut self.output_buffer_r,
-            &mut self.resample_ring_buffer_r,
-        );
+
+        match self.channel_mode {
+            ChannelMode::Stereo => {
+                resample_to_44100hz(
+                    &self.adpcm_buffer_r,
+                    &mut self.output_buffer_r,
+                    &mut self.resample_ring_buffer_r,
+                );
+            }
+            ChannelMode::Mono => {
+                // If Mono, use the L ADPCM buffer instead of the R ADPCM buffer because Mono ADPCM
+                // decoding only populates the L buffer
+                resample_to_44100hz(
+                    &self.adpcm_buffer_l,
+                    &mut self.output_buffer_r,
+                    &mut self.resample_ring_buffer_r,
+                );
+            }
+        }
     }
 
     pub fn maybe_output_sample(&mut self) -> Option<(i16, i16)> {
