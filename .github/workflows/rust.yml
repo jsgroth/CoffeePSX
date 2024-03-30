@@ -36,9 +36,9 @@ jobs:
       run: |
         cargo build
 
-#    - name: Check Clippy warnings
-#      run: |
-#        cargo clippy -- -D warnings
+    - name: Check Clippy warnings
+      run: |
+        cargo clippy -- -D warnings
 
     - name: Run tests
       run: |
