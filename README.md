@@ -1,6 +1,8 @@
 # ps1-emu
 
-Work-in-progress attempt at a PlayStation emulator. Few games boot right now and 3D games have major graphical glitches.
+Work-in-progress attempt at a PlayStation emulator. Many games do not boot, and performance in 3D games is quite poor. Currently CLI-only, no GUI.
+
+Currently standalone rather than being an additional backend in [https://github.com/jsgroth/jgenesis](jgenesis) in order to enable easier experimentation for rendering and parallelism, since this is the first console I've emulated that supports 3D graphics (and a double-digit MHz main CPU).
 
 ## Status
 
@@ -18,13 +20,14 @@ Implemented:
 Not yet implemented:
 * Accurate CPU timing; currently hardcoded to 2 cycles per instruction with no bus access delays
 * DMA timings and GPU draw timings; right now all DMAs and GPU commands finish instantly from software's perspective
+* PAL display and video timings; only NTSC is supported right now
 * SPU: Capture buffers, noise generator, pitch modulation, reverb FIR filter
 * Some CD-ROM functionality including infrequently used commands, audio report interrupts, and non-standard CD-XA audio modes
 * MDEC 4bpp/8bpp modes
   * Even 15bpp/24bpp MDEC does not work properly in some games, possibly timing-related
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
-* Interrupts and synchronization modes for dotclock and HBlank timers
+* Interrupts and synchronization modes for dot clock and HBlank timers
 
 ## Build Dependencies (Linux)
 
