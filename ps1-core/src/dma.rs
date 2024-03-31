@@ -326,27 +326,41 @@ impl DmaController {
                     log::debug!("MDEC-Out DMA complete");
                 }
                 2 => {
-                    log::trace!("Running GPU DMA");
+                    log::debug!(
+                        "Running GPU DMA; SyncMode={:?}, BA={}, BS={}",
+                        self.channel_configs[2].sync_mode,
+                        self.channel_configs[2].num_blocks,
+                        self.channel_configs[2].block_size
+                    );
                     run_gpu_dma(&mut self.channel_configs[2], gpu, memory);
-                    log::trace!("GPU DMA complete");
+                    log::debug!("GPU DMA complete");
                 }
                 3 => {
                     log::debug!(
-                        "Running CD-ROM DMA, block size is {}",
+                        "Running CD-ROM DMA, BA={} and BS={}",
+                        self.channel_configs[3].num_blocks,
                         self.channel_configs[3].block_size
                     );
                     run_cdrom_dma(&self.channel_configs[3], memory, cd_controller);
                     log::debug!("CD-ROM DMA complete");
                 }
                 4 => {
-                    log::debug!("Running SPU DMA");
+                    log::debug!(
+                        "Running SPU DMA, BA={} and BS={}",
+                        self.channel_configs[4].num_blocks,
+                        self.channel_configs[4].block_size
+                    );
                     run_spu_dma(&mut self.channel_configs[4], memory, spu);
                     log::debug!("SPU DMA complete");
                 }
                 6 => {
-                    log::trace!("Running OTC DMA");
+                    log::debug!(
+                        "Running OTC DMA, BA={} and BS={}",
+                        self.channel_configs[6].num_blocks,
+                        self.channel_configs[6].block_size
+                    );
                     run_otc_dma(&self.channel_configs[6], memory);
-                    log::trace!("OTC DMA complete");
+                    log::debug!("OTC DMA complete");
                 }
                 _ => todo!("DMA start on channel {channel}"),
             }
