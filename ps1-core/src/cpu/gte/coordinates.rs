@@ -30,7 +30,7 @@ impl GeometryTransformationEngine {
     // Applies perspective transformation to V0
     // Coordinates are written to the screen X/Y/Z FIFOs, and the depth cueing interpolation factor
     // is written to IR0
-    pub(super) fn rtps(&mut self, opcode: u32) {
+    pub(super) fn rtps(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE RTPS: {opcode:08X}");
 
         let translation = self.read_translation_vector();
@@ -39,11 +39,13 @@ impl GeometryTransformationEngine {
 
         self.matrix_multiply_add(opcode, &v0, &rotation, &translation, MatrixMultiplyBehavior::Rtp);
         self.perform_perspective_transformation(opcode, WithDepthCalculation::Yes);
+
+        14
     }
 
     // RTPT: Perspective transformation, triple
     // Equivalent to RTPS but processes V1 and V2 in addition to V0
-    pub(super) fn rtpt(&mut self, opcode: u32) {
+    pub(super) fn rtpt(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE RTPT: {opcode:08X}");
 
         let translation = self.read_translation_vector();
@@ -60,12 +62,14 @@ impl GeometryTransformationEngine {
         let v2 = self.read_vector16_packed(Register::VXY2, Register::VZ2);
         self.matrix_multiply_add(opcode, &v2, &rotation, &translation, MatrixMultiplyBehavior::Rtp);
         self.perform_perspective_transformation(opcode, WithDepthCalculation::Yes);
+
+        22
     }
 
     // NCLIP: Normal clipping
     // Computes the Z component of the cross product of the 3 screen X/Y coordinates in the FIFO,
     // and writes the result to MAC0
-    pub(super) fn nclip(&mut self) {
+    pub(super) fn nclip(&mut self) -> u32 {
         log::trace!("GTE NCLIP");
 
         let (sx0, sy0) = self.read_screen_xy(Register::SXY0);
@@ -75,12 +79,14 @@ impl GeometryTransformationEngine {
         let mac0 = sx0 * sy1 + sx1 * sy2 + sx2 * sy0 - sx0 * sy2 - sx1 * sy0 - sx2 * sy1;
         self.check_mac0_overflow(mac0);
         self.r[Register::MAC0] = i64::from(mac0) as u32;
+
+        7
     }
 
     // AVSZ3: Average of three Z values
     // Averages the last three screen Z coordinates in the FIFO using the specified scale factor (ZSF3),
     // and writes the result to MAC0 and OTZ
-    pub(super) fn avsz3(&mut self) {
+    pub(super) fn avsz3(&mut self) -> u32 {
         log::trace!("GTE AVSZ3");
 
         let sz1 = fixedpoint::screen_z(self.r[Register::SZ1]);
@@ -93,12 +99,14 @@ impl GeometryTransformationEngine {
         self.r[Register::MAC0] = i64::from(mac0) as u32;
 
         self.set_otz();
+
+        4
     }
 
     // AVSZ4: Average of four Z values
     // Averages all four screen Z coordinates in he FIFO using the specified scale factor (ZSF4), and
     // writes the result to MAC0 and OTZ
-    pub(super) fn avsz4(&mut self) {
+    pub(super) fn avsz4(&mut self) -> u32 {
         log::trace!("GTE AVSZ4");
 
         let sz0 = fixedpoint::screen_z(self.r[Register::SZ0]);
@@ -112,6 +120,8 @@ impl GeometryTransformationEngine {
         self.r[Register::MAC0] = i64::from(mac0) as u32;
 
         self.set_otz();
+
+        5
     }
 
     fn set_otz(&mut self) {

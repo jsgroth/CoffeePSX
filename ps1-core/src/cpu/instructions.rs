@@ -638,7 +638,9 @@ impl R3000 {
         let operation = opcode & 0xFFFFFF;
         match parse_coprocessor(opcode) {
             0 => self.cp0.execute_operation(operation),
-            2 => self.gte.execute_opcode(opcode),
+            2 => {
+                self.instruction_cycles += self.gte.execute_opcode(opcode);
+            }
             cp => todo!("COP{cp} {opcode:08X}"),
         }
     }

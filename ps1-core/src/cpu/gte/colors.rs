@@ -11,14 +11,16 @@ const ZERO_VECTOR: [FixedPointDecimal<0>; 3] =
 
 impl GeometryTransformationEngine {
     // NCS: Normal color, single
-    pub(super) fn ncs(&mut self, opcode: u32) {
+    pub(super) fn ncs(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE NCS {opcode:08X}");
 
         self.normal_color(opcode, Register::VXY0, Register::VZ0);
+
+        13
     }
 
     // NCT: Normal color, triple
-    pub(super) fn nct(&mut self, opcode: u32) {
+    pub(super) fn nct(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE NCT {opcode:08X}");
 
         for (vxy, vz) in [
@@ -28,6 +30,8 @@ impl GeometryTransformationEngine {
         ] {
             self.normal_color(opcode, vxy, vz);
         }
+
+        29
     }
 
     fn normal_color(&mut self, opcode: u32, vxy_register: usize, vz_register: usize) {
@@ -38,15 +42,17 @@ impl GeometryTransformationEngine {
 
     // NCCS: Normal color, single vector
     // Performs color calculation on the vector V0 with no depth cueing
-    pub(super) fn nccs(&mut self, opcode: u32) {
+    pub(super) fn nccs(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE NCCS {opcode:08X}");
 
         self.normal_color_vector(opcode, Register::VXY0, Register::VZ0);
+
+        16
     }
 
     // NCCT: Normal color, single vector
     // Same as NCCS but runs sequentially on V0, V1, and V2
-    pub(super) fn ncct(&mut self, opcode: u32) {
+    pub(super) fn ncct(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE NCCT {opcode:08X}");
 
         for (vxy, vz) in [
@@ -56,6 +62,8 @@ impl GeometryTransformationEngine {
         ] {
             self.normal_color_vector(opcode, vxy, vz);
         }
+
+        38
     }
 
     fn normal_color_vector(&mut self, opcode: u32, vxy_register: usize, vz_register: usize) {
@@ -69,14 +77,16 @@ impl GeometryTransformationEngine {
     // NCDS: Normal color depth cue, single vector
     // Performs color calculation on the vector V0 with depth cueing and writes the results to the
     // color FIFO
-    pub(super) fn ncds(&mut self, opcode: u32) {
+    pub(super) fn ncds(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE NCDS {opcode:08X}");
 
         self.normal_color_depth_cue(opcode, Register::VXY0, Register::VZ0);
+
+        18
     }
 
     // NCDT: Normal color depth cue, triple vector
-    pub(super) fn ncdt(&mut self, opcode: u32) {
+    pub(super) fn ncdt(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE NCDT {opcode:08X}");
 
         for (vxy, vz) in [
@@ -86,6 +96,8 @@ impl GeometryTransformationEngine {
         ] {
             self.normal_color_depth_cue(opcode, vxy, vz);
         }
+
+        43
     }
 
     fn normal_color_depth_cue(&mut self, opcode: u32, vxy_register: usize, vz_register: usize) {
@@ -98,17 +110,19 @@ impl GeometryTransformationEngine {
     }
 
     // CC: Color calculation
-    pub(super) fn cc(&mut self, opcode: u32) {
+    pub(super) fn cc(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE CC {opcode:08X}");
 
         self.apply_light_color_matrix(opcode);
         self.apply_color_vector();
         self.apply_mac_shift(opcode);
         self.push_to_color_fifo(opcode);
+
+        10
     }
 
     // CDP: Color depth cue
-    pub(super) fn cdp(&mut self, opcode: u32) {
+    pub(super) fn cdp(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE CDP {opcode:08X}");
 
         self.apply_light_color_matrix(opcode);
@@ -116,37 +130,45 @@ impl GeometryTransformationEngine {
         self.apply_depth_cue(opcode);
         self.apply_mac_shift(opcode);
         self.push_to_color_fifo(opcode);
+
+        12
     }
 
     // DCPL: Depth cue color light
-    pub(super) fn dcpl(&mut self, opcode: u32) {
+    pub(super) fn dcpl(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE DCPL {opcode:08X}");
 
         self.apply_color_vector();
         self.apply_depth_cue(opcode);
         self.apply_mac_shift(opcode);
         self.push_to_color_fifo(opcode);
+
+        7
     }
 
     // DPCS: Depth cue, single vector
     // Reads color vector from RGBC
-    pub(super) fn dpcs(&mut self, opcode: u32) {
+    pub(super) fn dpcs(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE DPCS {opcode:08X}");
 
         let [r, g, b, _] = self.r[Register::RGBC].to_le_bytes();
         self.depth_cue_vector(opcode, r, g, b);
+
+        7
     }
 
     // DPCT: Depth cue, triple vector
     // Repeatedly reads color vector from RGB0, which changes at the end of each iteration due to
     // the color FIFO push
-    pub(super) fn dpct(&mut self, opcode: u32) {
+    pub(super) fn dpct(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE DPCT {opcode:08X}");
 
         for _ in 0..3 {
             let [r, g, b, _] = self.r[Register::RGB0].to_le_bytes();
             self.depth_cue_vector(opcode, r, g, b);
         }
+
+        16
     }
 
     fn depth_cue_vector(&mut self, opcode: u32, r: u8, g: u8, b: u8) {
@@ -162,7 +184,7 @@ impl GeometryTransformationEngine {
 
     // INTPL: Interpolation of a vector and a far color
     #[allow(clippy::redundant_closure_for_method_calls)]
-    pub(super) fn intpl(&mut self, opcode: u32) {
+    pub(super) fn intpl(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE INTPL {opcode:08X}");
 
         // MAC = IR << 12
@@ -172,6 +194,8 @@ impl GeometryTransformationEngine {
         self.apply_depth_cue(opcode);
         self.apply_mac_shift(opcode);
         self.push_to_color_fifo(opcode);
+
+        7
     }
 
     // MAC = (LLM * V) >> (sf * 12)
@@ -278,26 +302,30 @@ impl GeometryTransformationEngine {
 
     // GPF: General-purpose interpolation
     // Interpolates the current contents of the IR vector and pushes to the color FIFO
-    pub(super) fn gpf(&mut self, opcode: u32) {
+    pub(super) fn gpf(&mut self, opcode: u32) -> u32 {
         self.set_mac::<0>(
             FixedPointDecimal::ZERO,
             FixedPointDecimal::ZERO,
             FixedPointDecimal::ZERO,
         );
         self.general_purpose_interpolation(opcode);
+
+        4
     }
 
     // GPL General-purpose interpolation with base
     // Interpolates the current contents of the IR vector, accumulates into the MAC vector, and
     // pushes to the color FIFO
     #[allow(clippy::redundant_closure_for_method_calls)]
-    pub(super) fn gpl(&mut self, opcode: u32) {
+    pub(super) fn gpl(&mut self, opcode: u32) -> u32 {
         if opcode.bit(gte::SF_BIT) {
             let [mac1, mac2, mac3] = self.read_mac_vector::<0>().map(|mac| mac.shift_to::<12>());
             self.set_mac(mac1, mac2, mac3);
         }
 
         self.general_purpose_interpolation(opcode);
+
+        4
     }
 
     fn general_purpose_interpolation(&mut self, opcode: u32) {

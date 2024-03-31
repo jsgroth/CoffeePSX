@@ -274,7 +274,7 @@ impl Ps1Emulator {
         audio_output: &mut A,
         save_writer: &mut S,
     ) -> Result<TickEffect, TickError<R::Err, A::Err, S::Err>> {
-        self.cpu.execute_instruction(&mut Bus {
+        let cpu_cycles = self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
             spu: &mut self.spu,
             cd_controller: &mut self.cd_controller,
@@ -291,12 +291,6 @@ impl Ps1Emulator {
         if self.tty_enabled {
             self.check_for_putchar_call();
         }
-
-        // Very, very rough timing: Assume that the CPU takes on average 2 cycles/instruction.
-        // On actual hardware, timing varies depending on what memory was accessed (if any),
-        // whether the opcode read hit in I-cache, and whether the instruction wrote to memory
-        // while the write queue was full.
-        let cpu_cycles = 2;
 
         self.scheduler.increment_cpu_cycles(cpu_cycles.into());
 

@@ -10,7 +10,7 @@ impl GeometryTransformationEngine {
     // MVMVA: Multiply vector by matrix and vector addition
     // Matrix and vector parameters are specified using opcode bits, and the result is written to
     // IR1-3 and MAC1-3
-    pub(super) fn mvmva(&mut self, opcode: u32) {
+    pub(super) fn mvmva(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE MVMVA {opcode:08X}");
 
         let matrix = match (opcode >> 17) & 3 {
@@ -34,7 +34,7 @@ impl GeometryTransformationEngine {
             1 => self.read_background_color().map(FixedPointDecimal::reinterpret),
             2 => {
                 self.bugged_fc_mvmva(opcode, &multiply_vector, &matrix);
-                return;
+                return 7;
             }
             3 => [FixedPointDecimal::ZERO, FixedPointDecimal::ZERO, FixedPointDecimal::ZERO],
             _ => unreachable!("value & 3 is always <= 3"),
@@ -47,6 +47,8 @@ impl GeometryTransformationEngine {
             &translation_vector,
             MatrixMultiplyBehavior::Standard,
         );
+
+        7
     }
 
     // MVMVA with Tx=2 is supposed to translate by the FC vector but the implementation is bugged.
@@ -113,7 +115,7 @@ impl GeometryTransformationEngine {
 
     // SQR: Square vector
     // Squares the components of the IR vector
-    pub(super) fn sqr(&mut self, opcode: u32) {
+    pub(super) fn sqr(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE SQR {opcode:08X}");
 
         let ir_squared = self.read_ir_vector().map(|ir| ir * ir);
@@ -126,11 +128,13 @@ impl GeometryTransformationEngine {
 
         let [mac1, mac2, mac3] = self.read_mac_vector::<0>();
         self.set_ir(mac1, mac2, mac3, false);
+
+        4
     }
 
     // OP: Cross product
     // Computes the cross product of the IR vector and [RT11, RT22, RT33], and stores the result in IR
-    pub(super) fn op(&mut self, opcode: u32) {
+    pub(super) fn op(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE OP {opcode:08X}");
 
         let [ir1, ir2, ir3] = self.read_ir_vector();
@@ -151,5 +155,7 @@ impl GeometryTransformationEngine {
 
         let [mac1, mac2, mac3] = self.read_mac_vector::<0>();
         self.set_ir(mac1, mac2, mac3, opcode.bit(gte::LM_BIT));
+
+        5
     }
 }

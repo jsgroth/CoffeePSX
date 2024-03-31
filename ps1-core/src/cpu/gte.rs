@@ -178,7 +178,8 @@ impl GeometryTransformationEngine {
         }
     }
 
-    pub fn execute_opcode(&mut self, opcode: u32) {
+    #[must_use]
+    pub fn execute_opcode(&mut self, opcode: u32) -> u32 {
         log::trace!("GTE opcode: {opcode:08X}");
 
         // Clear flags and clip MAC registers to 32 bits
@@ -209,7 +210,10 @@ impl GeometryTransformationEngine {
             0x3D => self.gpf(opcode),
             0x3E => self.gpl(opcode),
             0x3F => self.ncct(opcode),
-            _ => log::warn!("Unimplemented GTE command {command:02X} {opcode:08X}"),
+            _ => {
+                log::error!("Unofficial GTE command executed: {command:02X} {opcode:08X}");
+                0
+            }
         }
     }
 
