@@ -162,6 +162,7 @@ impl<'a> Bus<'a> {
     fn write_io_register(&mut self, address: u32, value: u32, size: OpSize) {
         log::debug!("I/O register write: {address:08X} {value:08X} {size:?}");
 
+        // TODO figure out how to properly handle 8-bit/16-bit writes to I/O registers
         match address & 0xFFFF {
             0x1000..=0x1020 => self.memory_control.write_register(address, value),
             0x1040 => self.sio0.write_tx_data(value),
@@ -190,7 +191,7 @@ impl<'a> Bus<'a> {
             0x10F0 => self.dma_controller.write_control(value),
             0x10F4 => self.dma_controller.write_interrupt(value, self.interrupt_registers),
             0x10F6 => self.dma_controller.write_interrupt(
-                (value << 16) | (self.dma_controller.read_interrupt() & 0xFFFF),
+                (size.mask(value) << 16) | (self.dma_controller.read_interrupt() & 0xFFFF),
                 self.interrupt_registers,
             ),
             0x1100..=0x112F => self.timers.write_register(address, value, self.scheduler),

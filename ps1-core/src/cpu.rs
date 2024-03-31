@@ -123,6 +123,16 @@ pub enum OpSize {
     Word,
 }
 
+impl OpSize {
+    pub fn mask(self, value: u32) -> u32 {
+        match self {
+            Self::Byte => value & 0xFF,
+            Self::HalfWord => value & 0xFFFF,
+            Self::Word => value,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct R3000 {
     registers: Registers,
