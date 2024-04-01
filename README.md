@@ -9,7 +9,7 @@ The `cdrom` crate is a fork of the `cdrom` crate that [jgenesis](https://github.
 ## Status
 
 Implemented:
-* The R3000-compatible CPU, minus remotely accurate timing
+* The R3000-compatible CPU
 * The GTE
 * The GPU, with a (very very slow) software rasterizer
 * Most of the SPU
@@ -20,11 +20,11 @@ Implemented:
 * Most of the hardware timers
 
 Not yet implemented:
-* Accurate CPU timing; currently hardcoded to 2 cycles per instruction with no bus access delays
+* Accurate timing for memory writes (i.e. implementing the CPU write queue)
 * DMA timings and GPU draw timings; right now all DMAs and GPU commands finish instantly from software's perspective
 * PAL display and video timings; only NTSC is supported right now
 * Proper aspect ratio handling; the renderer currently simply stretches to fill the window (which defaults to an aspect-correct but small size)
-* SPU: Capture buffers, noise generator, pitch modulation, reverb FIR filter
+* SPU: Capture buffers, reverb FIR filter
 * Some CD-ROM functionality including infrequently used commands, audio report interrupts, and non-standard CD-XA audio modes
 * MDEC 4bpp/8bpp modes
   * Even 15bpp/24bpp MDEC does not work properly in some games, possibly timing-related

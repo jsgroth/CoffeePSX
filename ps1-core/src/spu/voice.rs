@@ -12,12 +12,15 @@ pub struct Voice {
     pub volume_l: SweepEnvelope,
     pub volume_r: SweepEnvelope,
     pub sample_rate: u16,
+    pub noise_enabled: bool,
+    pub pitch_modulation_enabled: bool,
     start_address: u32,
     repeat_address: u32,
     current_address: u32,
     pub adsr: AdsrEnvelope,
     adpcm_buffer: SpuAdpcmBuffer,
     pitch_counter: u16,
+    pub current_amplitude: i16,
     pub current_sample: (i16, i16),
 }
 
@@ -27,24 +30,33 @@ impl Voice {
             volume_l: SweepEnvelope::new(),
             volume_r: SweepEnvelope::new(),
             sample_rate: 0,
+            noise_enabled: false,
+            pitch_modulation_enabled: false,
             start_address: 0,
             repeat_address: 0,
             current_address: 0,
             adsr: AdsrEnvelope::new(),
             adpcm_buffer: SpuAdpcmBuffer::new(),
             pitch_counter: 0,
+            current_amplitude: 0,
             current_sample: (0, 0),
         }
     }
 
-    pub fn clock(&mut self, sound_ram: &SoundRam) {
+    pub fn clock(&mut self, sound_ram: &SoundRam, noise_output: i16, prev_voice_output: i16) {
         self.volume_l.clock();
         self.volume_r.clock();
         self.adsr.clock();
 
-        // Pitch counter cannot step at greater than $4000 per clock (4 * 44100 Hz)
-        // TODO pitch modulation
-        let pitch_counter_step = cmp::min(0x4000, self.sample_rate);
+        let pitch_counter_step = if self.pitch_modulation_enabled {
+            apply_pitch_modulation(self.sample_rate, prev_voice_output)
+        } else {
+            self.sample_rate
+        };
+
+        // Step cannot be larger than $4000 (4 * 44100 Hz)
+        let pitch_counter_step = cmp::min(0x4000, pitch_counter_step);
+
         self.pitch_counter += pitch_counter_step;
         while self.pitch_counter >= 0x1000 {
             self.pitch_counter -= 0x1000;
@@ -54,18 +66,22 @@ impl Voice {
             }
         }
 
-        self.current_sample = self.sample();
+        self.sample(noise_output);
     }
 
-    fn sample(&self) -> (i16, i16) {
-        let raw_sample =
-            gaussian::interpolate(self.adpcm_buffer.four_most_recent_samples(), self.pitch_counter);
+    fn sample(&mut self, noise_output: i16) {
+        let raw_sample = if !self.noise_enabled {
+            gaussian::interpolate(self.adpcm_buffer.four_most_recent_samples(), self.pitch_counter)
+        } else {
+            noise_output
+        };
         let sample = multiply_volume(raw_sample, self.adsr.level);
+        self.current_amplitude = sample;
 
         let sample_l = multiply_volume(sample, self.volume_l.volume);
         let sample_r = multiply_volume(sample, self.volume_r.volume);
 
-        (sample_l, sample_r)
+        self.current_sample = (sample_l, sample_r);
     }
 
     pub fn read_start_address(&self) -> u32 {
@@ -124,4 +140,15 @@ impl Voice {
     pub fn key_off(&mut self) {
         self.adsr.key_off();
     }
+}
+
+fn apply_pitch_modulation(sample_rate: u16, prev_voice_output: i16) -> u16 {
+    let factor = i32::from(prev_voice_output) + 0x8000;
+
+    // Hardware glitch: Sample rates greater than $7FFF are sign extended to 32 bits
+    let step: i32 = (sample_rate as i16).into();
+    let step = (step * factor) >> 15;
+
+    // Hardware glitch (when sample rate greater than $7FFF): Sign is dropped
+    step as u16
 }

@@ -4,6 +4,7 @@
 
 pub mod adpcm;
 mod envelope;
+mod noise;
 mod reverb;
 mod voice;
 
@@ -12,6 +13,7 @@ use crate::cpu::OpSize;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
 use crate::spu::envelope::VolumeControl;
+use crate::spu::noise::NoiseGenerator;
 use crate::spu::reverb::ReverbUnit;
 use crate::spu::voice::Voice;
 use bincode::{Decode, Encode};
@@ -160,8 +162,6 @@ struct ControlRegisters {
     cd_audio_enabled: bool,
     external_audio_reverb_enabled: bool,
     cd_audio_reverb_enabled: bool,
-    noise_shift: u8,
-    noise_step: u8,
     // Recorded in case software reads the KON or KOFF registers
     last_key_on_write: u32,
     last_key_off_write: u32,
@@ -176,19 +176,23 @@ impl ControlRegisters {
             cd_audio_enabled: false,
             external_audio_reverb_enabled: false,
             cd_audio_reverb_enabled: false,
-            noise_shift: 0,
-            noise_step: 0,
             last_key_on_write: 0,
             last_key_off_write: 0,
         }
     }
 
     // $1F801DAA: SPU control register (SPUCNT)
-    fn read_spucnt(&self, sound_ram: &SoundRam, data_port: &DataPort, reverb: &ReverbUnit) -> u32 {
+    fn read_spucnt(
+        &self,
+        sound_ram: &SoundRam,
+        data_port: &DataPort,
+        reverb: &ReverbUnit,
+        noise: &NoiseGenerator,
+    ) -> u32 {
         (u32::from(self.spu_enabled) << 15)
             | (u32::from(self.amplifier_enabled) << 14)
-            | (u32::from(self.noise_shift) << 10)
-            | (u32::from(self.noise_step) << 8)
+            | (u32::from(noise.shift) << 10)
+            | (u32::from(noise.step) << 8)
             | (u32::from(reverb.writes_enabled) << 7)
             | (u32::from(sound_ram.irq_enabled) << 6)
             | ((data_port.mode as u32) << 4)
@@ -205,11 +209,12 @@ impl ControlRegisters {
         sound_ram: &mut SoundRam,
         data_port: &mut DataPort,
         reverb: &mut ReverbUnit,
+        noise: &mut NoiseGenerator,
     ) {
         self.spu_enabled = value.bit(15);
         self.amplifier_enabled = value.bit(14);
-        self.noise_shift = ((value >> 10) & 0xF) as u8;
-        self.noise_step = ((value >> 8) & 3) as u8;
+        noise.write_shift(((value >> 10) & 0xF) as u8);
+        noise.step = ((value >> 8) & 3) as u8;
         reverb.writes_enabled = value.bit(7);
         sound_ram.irq_enabled = value.bit(6);
         data_port.mode = DataPortMode::from_bits(value >> 4);
@@ -225,8 +230,8 @@ impl ControlRegisters {
         log::debug!("SPUCNT write");
         log::debug!("  SPU enabled: {}", self.spu_enabled);
         log::debug!("  Amplifier enabled: {}", self.amplifier_enabled);
-        log::debug!("  Noise shift: {}", self.noise_shift);
-        log::debug!("  Noise step: {}", self.noise_step + 4);
+        log::debug!("  Noise shift: {}", noise.shift);
+        log::debug!("  Noise step: {}", noise.step + 4);
         log::debug!("  Reverb writes enabled: {}", reverb.writes_enabled);
         log::debug!("  IRQ enabled: {}", sound_ram.irq_enabled);
         log::debug!("  Data port mode: {:?}", data_port.mode);
@@ -261,6 +266,7 @@ pub struct Spu {
     volume: VolumeControl,
     data_port: DataPort,
     reverb: ReverbUnit,
+    noise: NoiseGenerator,
     last_irq_bit: bool,
 }
 
@@ -273,6 +279,7 @@ impl Spu {
             volume: VolumeControl::new(),
             data_port: DataPort::new(),
             reverb: ReverbUnit::default(),
+            noise: NoiseGenerator::new(),
             last_irq_bit: false,
         }
     }
@@ -284,9 +291,12 @@ impl Spu {
     ) -> (f64, f64) {
         self.volume.main_l.clock();
         self.volume.main_r.clock();
+        self.noise.clock();
 
+        let mut prev_voice_output = 0;
         for voice in &mut self.voices {
-            voice.clock(&self.sound_ram);
+            voice.clock(&self.sound_ram, self.noise.output, prev_voice_output);
+            prev_voice_output = voice.current_amplitude;
         }
 
         // Grab current CD audio samples
@@ -358,22 +368,10 @@ impl Spu {
             0x1D8A => self.control.last_key_on_write >> 16,
             0x1D8C => self.control.last_key_off_write & 0xFFFF,
             0x1D8E => self.control.last_key_off_write >> 16,
-            0x1D90 => {
-                log::warn!("Unimplemented pitch modulation enabled read (low halfword)");
-                0
-            }
-            0x1D92 => {
-                log::warn!("Unimplemented pitch modulation enabled read (high halfword)");
-                0
-            }
-            0x1D94 => {
-                log::warn!("Unimplemented noise on read (voices 0-15)");
-                0
-            }
-            0x1D96 => {
-                log::warn!("Unimplemented noise on read (voices 16-23)");
-                0
-            }
+            0x1D90 => self.reduce_voices_low(|voice| voice.pitch_modulation_enabled),
+            0x1D92 => self.reduce_voices_high(|voice| voice.pitch_modulation_enabled),
+            0x1D94 => self.reduce_voices_low(|voice| voice.noise_enabled),
+            0x1D96 => self.reduce_voices_high(|voice| voice.noise_enabled),
             0x1D98 => self.reverb.read_reverb_on_low(),
             0x1D9A => self.reverb.read_reverb_on_high(),
             0x1D9C => todo!("ENDX voices 0-15 read"),
@@ -382,7 +380,12 @@ impl Spu {
             0x1DA4 => self.sound_ram.read_irq_address(),
             0x1DA6 => self.data_port.read_start_address(),
             0x1DA8 => todo!("SPU data port read"),
-            0x1DAA => self.control.read_spucnt(&self.sound_ram, &self.data_port, &self.reverb),
+            0x1DAA => self.control.read_spucnt(
+                &self.sound_ram,
+                &self.data_port,
+                &self.reverb,
+                &self.noise,
+            ),
             // TODO return an actual value for sound RAM data transfer control?
             0x1DAC => 0x0004,
             0x1DAE => self.read_status_register(),
@@ -423,6 +426,14 @@ impl Spu {
         }
     }
 
+    fn reduce_voices_low(&self, f: impl Fn(&Voice) -> bool) -> u32 {
+        (0..16).map(|i| u32::from(f(&self.voices[i])) << i).reduce(|a, b| a | b).unwrap()
+    }
+
+    fn reduce_voices_high(&self, f: impl Fn(&Voice) -> bool) -> u32 {
+        (16..24).map(|i| u32::from(f(&self.voices[i])) << (i - 16)).reduce(|a, b| a | b).unwrap()
+    }
+
     pub fn write_register(&mut self, address: u32, value: u32, size: OpSize) {
         log::trace!("SPU register write: {address:08X} {value:08X} {size:?}");
 
@@ -458,14 +469,10 @@ impl Spu {
             0x1D8A => self.key_on_high(value),
             0x1D8C => self.key_off_low(value),
             0x1D8E => self.key_off_high(value),
-            0x1D90 => log::warn!(
-                "Unimplemented pitch modulation enabled write (low halfword): {value:04X}"
-            ),
-            0x1D92 => log::warn!(
-                "Unimplemented pitch modulation enabled mode write (high halfword): {value:04X}"
-            ),
-            0x1D94 => log::warn!("Unimplemented noise mode write (low halfword): {value:04X}"),
-            0x1D96 => log::warn!("Unimplemented noise mode write (high halfword): {value:04X}"),
+            0x1D90 => self.write_pitch_modulation_low(value),
+            0x1D92 => self.write_pitch_modulation_high(value),
+            0x1D94 => self.write_noise_low(value),
+            0x1D96 => self.write_noise_high(value),
             0x1D98 => self.reverb.write_reverb_on_low(value),
             0x1D9A => self.reverb.write_reverb_on_high(value),
             0x1D9C => {
@@ -483,6 +490,7 @@ impl Spu {
                 &mut self.sound_ram,
                 &mut self.data_port,
                 &mut self.reverb,
+                &mut self.noise,
             ),
             0x1DAC => {
                 // Sound RAM data transfer control register; writing any value other than $0004
@@ -687,6 +695,43 @@ impl Spu {
         }
 
         self.control.record_koff_high_write(value);
+    }
+
+    // $1F801D90: Pitch modulation enabled (voices 1-15)
+    // Pitch modulation cannot be enabled for voice 0
+    fn write_pitch_modulation_low(&mut self, value: u32) {
+        log::debug!("Pitch modulation low write: {value:04X}");
+
+        for voice in 1..16 {
+            self.voices[voice].pitch_modulation_enabled = value.bit(voice as u8);
+        }
+    }
+
+    // $1F801D92: Pitch modulation enabled (voices 16-23)
+    fn write_pitch_modulation_high(&mut self, value: u32) {
+        log::debug!("Pitch modulation high write: {value:04X}");
+
+        for voice in 16..24 {
+            self.voices[voice].pitch_modulation_enabled = value.bit((voice - 16) as u8);
+        }
+    }
+
+    // $1F801D94: Noise enabled (voices 0-15)
+    fn write_noise_low(&mut self, value: u32) {
+        log::debug!("Noise low write: {value:04X}");
+
+        for voice in 0..16 {
+            self.voices[voice].noise_enabled = value.bit(voice as u8);
+        }
+    }
+
+    // $1F801D96: Noise enabled (voices 16-23)
+    fn write_noise_high(&mut self, value: u32) {
+        log::debug!("Noise high write: {value:04X}");
+
+        for voice in 16..24 {
+            self.voices[voice].noise_enabled = value.bit((voice - 16) as u8);
+        }
     }
 }
 

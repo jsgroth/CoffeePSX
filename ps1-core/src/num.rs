@@ -8,6 +8,16 @@ impl U8Ext for u8 {
     }
 }
 
+pub trait I16Ext {
+    fn bit(self, i: u8) -> bool;
+}
+
+impl I16Ext for i16 {
+    fn bit(self, i: u8) -> bool {
+        self & (1 << i) != 0
+    }
+}
+
 pub trait U32Ext {
     fn bit(self, i: u8) -> bool;
 
