@@ -456,14 +456,14 @@ fn rasterize_pixel(
         // The PS1 GPU does not draw edges on the bottom of the triangle when this happens,
         // nor does it draw a vertical right edge
         if cpz.abs() < 1e-3 {
-            // Since the vertices are clockwise, decreasing X means this edge is on the
-            // bottom of the triangle.
-            if edge.1.x < edge.0.x {
+            // Since the vertices are clockwise, decreasing Y means this edge is on the
+            // bottom or right of the triangle.
+            if edge.1.y < edge.0.y {
                 return;
             }
 
-            // If the X values are equal and Y is increasing, this is a vertical right edge
-            if (edge.1.x - edge.0.x) < 1e-3 && edge.1.y > edge.0.y {
+            // If the Y values are equal and X is decreasing, this is a horizontal bottom edge
+            if (edge.1.y - edge.0.y).abs() < 1e-3 && edge.1.x < edge.0.x {
                 return;
             }
         }
