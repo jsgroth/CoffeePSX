@@ -98,6 +98,7 @@ enum Command {
     GetTD,
     GetTN,
     Init,
+    Mute,
     Pause,
     Play,
     ReadN,
@@ -191,6 +192,7 @@ pub struct CdController {
     drive_state: DriveState,
     drive_mode: DriveMode,
     seek_location: Option<CdTime>,
+    audio_muted: bool,
     current_audio_sample: (i16, i16),
     cd_to_spu_volume: [[u8; 2]; 2],
     next_cd_to_spu_volume: [[u8; 2]; 2],
@@ -211,6 +213,7 @@ impl CdController {
             drive_state: DriveState::default(),
             drive_mode: DriveMode::new(),
             seek_location: None,
+            audio_muted: false,
             current_audio_sample: (0, 0),
             cd_to_spu_volume: [[0; 2]; 2],
             next_cd_to_spu_volume: [[0; 2]; 2],
@@ -357,6 +360,7 @@ impl CdController {
             Command::GetTD => self.execute_get_td(),
             Command::GetTN => self.execute_get_tn(),
             Command::Init => self.execute_init(),
+            Command::Mute => self.execute_mute(),
             Command::Pause => self.execute_pause(),
             Command::Play => self.execute_play(),
             Command::ReadN | Command::ReadS => self.execute_read(),
@@ -531,6 +535,7 @@ impl CdController {
             0x08 => (Command::Stop, std_receive_cycles),
             0x09 => (Command::Pause, std_receive_cycles),
             0x0A => (Command::Init, INIT_COMMAND_CYCLES),
+            0x0B => (Command::Mute, std_receive_cycles),
             0x0C => (Command::Demute, std_receive_cycles),
             0x0D => (Command::SetFilter, std_receive_cycles),
             0x0E => (Command::SetMode, std_receive_cycles),
@@ -608,7 +613,7 @@ impl CdController {
     }
 
     pub fn current_audio_sample(&self) -> (i16, i16) {
-        self.current_audio_sample
+        if self.audio_muted { (0, 0) } else { self.current_audio_sample }
     }
 
     pub fn spu_volume_matrix(&self) -> [[u8; 2]; 2] {

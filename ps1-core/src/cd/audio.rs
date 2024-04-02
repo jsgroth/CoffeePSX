@@ -25,10 +25,20 @@ impl PlayState {
 }
 
 impl CdController {
+    // $0B: Mute() -> INT3(stat)
+    // Mutes CD audio output, both CD-DA and ADPCM
+    pub(super) fn execute_mute(&mut self) -> CommandState {
+        self.audio_muted = true;
+
+        int3!(self, [stat!(self)]);
+
+        CommandState::Idle
+    }
+
     // $0C: Demute() -> INT3(stat)
     // Demutes CD audio output, both CD-DA and ADPCM
     pub(super) fn execute_demute(&mut self) -> CommandState {
-        log::warn!("Demute command not yet implemented");
+        self.audio_muted = false;
 
         int3!(self, [stat!(self)]);
 

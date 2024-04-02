@@ -79,8 +79,8 @@ impl CdController {
     // $0A: Init() -> INT3(stat), INT2(stat)
     // Resets mode, aborts any in-progress commands, and activates the drive motor if it is stopped
     pub(super) fn execute_init(&mut self) -> CommandState {
-        // TODO should set mode to $20 (everything 0 except 2340-byte sectors)
-        self.drive_mode = DriveMode::from(0);
+        self.drive_mode = DriveMode::from(0x20);
+        self.audio_muted = false;
 
         if !self.drive_state.is_stopped_or_spinning_up() {
             self.drive_state = DriveState::Paused(self.drive_state.current_time());
