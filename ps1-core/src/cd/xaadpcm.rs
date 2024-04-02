@@ -73,6 +73,14 @@ enum ChannelMode {
     Mono,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+enum SampleRate {
+    // 39800 Hz
+    Normal,
+    // 18900 Hz
+    Half,
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct XaAdpcmState {
     pub file: u8,
@@ -88,6 +96,7 @@ pub struct XaAdpcmState {
     resample_ring_buffer_l: ResampleRingBuffer,
     resample_ring_buffer_r: ResampleRingBuffer,
     channel_mode: ChannelMode,
+    sample_rate: SampleRate,
 }
 
 impl XaAdpcmState {
@@ -106,6 +115,7 @@ impl XaAdpcmState {
             resample_ring_buffer_l: ResampleRingBuffer::new(),
             resample_ring_buffer_r: ResampleRingBuffer::new(),
             channel_mode: ChannelMode::Stereo,
+            sample_rate: SampleRate::Normal,
         }
     }
 
@@ -123,12 +133,15 @@ impl XaAdpcmState {
 
     pub fn decode_sector(&mut self, sector: &[u8]) {
         let coding_info = sector[19];
-        if coding_info != 0x00 && coding_info != 0x01 {
+        if coding_info != 0x00 && coding_info != 0x01 && coding_info != 0x04 && coding_info != 0x05
+        {
             todo!("CD-XA ADPCM sector with coding info {coding_info:02X}");
         }
 
         self.channel_mode =
             if coding_info.bit(0) { ChannelMode::Stereo } else { ChannelMode::Mono };
+
+        self.sample_rate = if coding_info.bit(2) { SampleRate::Half } else { SampleRate::Normal };
 
         self.adpcm_buffer_l.clear();
         self.adpcm_buffer_r.clear();
@@ -176,6 +189,7 @@ impl XaAdpcmState {
         }
 
         resample_to_44100hz(
+            self.sample_rate,
             &self.adpcm_buffer_l,
             &mut self.output_buffer_l,
             &mut self.resample_ring_buffer_l,
@@ -184,6 +198,7 @@ impl XaAdpcmState {
         match self.channel_mode {
             ChannelMode::Stereo => {
                 resample_to_44100hz(
+                    self.sample_rate,
                     &self.adpcm_buffer_r,
                     &mut self.output_buffer_r,
                     &mut self.resample_ring_buffer_r,
@@ -193,6 +208,7 @@ impl XaAdpcmState {
                 // If Mono, use the L ADPCM buffer instead of the R ADPCM buffer because Mono ADPCM
                 // decoding only populates the L buffer
                 resample_to_44100hz(
+                    self.sample_rate,
                     &self.adpcm_buffer_l,
                     &mut self.output_buffer_r,
                     &mut self.resample_ring_buffer_r,
@@ -253,25 +269,37 @@ fn i4_sample(sample: u8) -> i32 {
     (((sample as i8) << 4) >> 4).into()
 }
 
-fn resample_to_44100hz(input: &[i16], output: &mut Vec<i16>, ring_buffer: &mut ResampleRingBuffer) {
+fn resample_to_44100hz(
+    sample_rate: SampleRate,
+    input: &[i16],
+    output: &mut Vec<i16>,
+    ring_buffer: &mut ResampleRingBuffer,
+) {
+    let pushes_per_sample = match sample_rate {
+        SampleRate::Normal => 1,
+        SampleRate::Half => 2,
+    };
+
     let mut counter = 0;
     for &input_sample in input {
-        ring_buffer.push(input_sample);
+        for _ in 0..pushes_per_sample {
+            ring_buffer.push(input_sample);
 
-        counter += 1;
-        if counter == 6 {
-            counter = 0;
+            counter += 1;
+            if counter == 6 {
+                counter = 0;
 
-            for table in 0..7 {
-                let mut sum = 0;
-                for i in 1..30 {
-                    let ring_buffer_value: i32 =
-                        ring_buffer.buffer[ring_buffer.idx.wrapping_sub(i) & 0x1F].into();
-                    let table_value: i32 = tables::INTERPOLATION[7 * (i - 1) + table].into();
-                    sum += (ring_buffer_value * table_value) >> 15;
+                for table in 0..7 {
+                    let mut sum = 0;
+                    for i in 1..30 {
+                        let ring_buffer_value: i32 =
+                            ring_buffer.buffer[ring_buffer.idx.wrapping_sub(i) & 0x1F].into();
+                        let table_value: i32 = tables::INTERPOLATION[7 * (i - 1) + table].into();
+                        sum += (ring_buffer_value * table_value) >> 15;
+                    }
+
+                    output.push(sum.clamp(i16::MIN.into(), i16::MAX.into()) as i16);
                 }
-
-                output.push(sum.clamp(i16::MIN.into(), i16::MAX.into()) as i16);
             }
         }
     }
