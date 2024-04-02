@@ -337,41 +337,25 @@ fn validate_address(address: u32) {
     }
 }
 
-fn memory_access_cycles_u8(address: u32) -> u32 {
-    match address & 0x1FFFFFFF {
-        // 5 cycles for a main RAM access
-        0x00000000..=0x007FFFFF => 5,
-        // 0 cycles for a scratchpad access
-        0x1F800000..=0x1F8003FF => 0,
-        // 7 cycles for an 8-bit BIOS ROM access
-        0x1FC00000..=0x1FFFFFFF => 7,
-        // 3 cycles for I/O region?
-        _ => 3,
-    }
+macro_rules! impl_memory_access_cycles {
+    ($name:ident, $bios_cycles:expr) => {
+        fn $name(address: u32) -> u32 {
+            match address & 0x1FFFFFFF {
+                // Main RAM
+                // TODO I think this is supposed to be 5 or 6 cycles, but that causes slowdown in some
+                // games; possibly varies based on 8-bit/16-bit/32-bit
+                0x00000000..=0x007FFFFF => 3,
+                // Scratchpad RAM
+                0x1F800000..=0x1F8003FF => 0,
+                // BIOS ROM
+                0x1FC00000..=0x1FFFFFFF => $bios_cycles,
+                // I/O registers
+                _ => 3,
+            }
+        }
+    };
 }
 
-fn memory_access_cycles_u16(address: u32) -> u32 {
-    match address & 0x1FFFFFFF {
-        // 5 cycles for a main RAM access
-        0x00000000..=0x007FFFFF => 5,
-        // 0 cycles for a scratchpad access
-        0x1F800000..=0x1F8003FF => 0,
-        // 13 cycles for a 16-bit BIOS ROM access
-        0x1FC00000..=0x1FFFFFFF => 13,
-        // 3 cycles for I/O region?
-        _ => 3,
-    }
-}
-
-fn memory_access_cycles_u32(address: u32) -> u32 {
-    match address & 0x1FFFFFFF {
-        // 5 cycles for a main RAM access
-        0x00000000..=0x007FFFFF => 5,
-        // 0 cycles for a scratchpad access
-        0x1F800000..=0x1F8003FF => 0,
-        // 25 cycles for a 32-bit BIOS ROM access
-        0x1FC00000..=0x1FFFFFFF => 25,
-        // 3 cycles for I/O region?
-        _ => 3,
-    }
-}
+impl_memory_access_cycles!(memory_access_cycles_u8, 7);
+impl_memory_access_cycles!(memory_access_cycles_u16, 13);
+impl_memory_access_cycles!(memory_access_cycles_u32, 25);
