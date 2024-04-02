@@ -200,6 +200,7 @@ pub struct CdController {
     drive_state: DriveState,
     drive_mode: DriveMode,
     seek_location: Option<CdTime>,
+    scex_read: bool,
     audio_muted: bool,
     current_audio_sample: (i16, i16),
     cd_to_spu_volume: [[u8; 2]; 2],
@@ -209,6 +210,9 @@ pub struct CdController {
 
 impl CdController {
     pub fn new(disc: Option<CdRom>) -> Self {
+        // Pretend the SCEx region code was always read if there's a disc in the drive
+        let scex_read = disc.is_some();
+
         Self {
             index: 0,
             disc,
@@ -221,6 +225,7 @@ impl CdController {
             drive_state: DriveState::default(),
             drive_mode: DriveMode::new(),
             seek_location: None,
+            scex_read,
             audio_muted: false,
             current_audio_sample: (0, 0),
             cd_to_spu_volume: [[0; 2]; 2],
@@ -414,6 +419,28 @@ impl CdController {
         }
 
         match self.parameter_fifo.pop() {
+            // $04: Start checking for SCEx string and reset SCEx counters
+            // Some games (e.g. Spyro 3) use this and $05 for mod chip detection. They execute $04
+            // while the drive is running, then execute $05 after a few seconds and validate that
+            // the drive did not successfully read an 'SCEx' string.
+            0x04 => {
+                int3!(self, [stat!(self)]);
+
+                // The SCEx string is contained in the lead-in area, and I don't think the drive
+                // will ever re-read the lead-in after booting? Unless a Reset command is executed
+                self.scex_read = false;
+            }
+            // $05: Get SCEx counters
+            0x05 => {
+                // First value is number of 'Sxxx' strings read and second value is number of 'SCEx' strings
+                // Pretend they are always equal
+                if self.scex_read {
+                    int3!(self, [0x01, 0x01]);
+                } else {
+                    int3!(self, [0x00, 0x00]);
+                }
+            }
+            // $20: Get controller BIOS version
             0x20 => {
                 // TODO use a different BIOS version?
                 int3!(self, [0x95, 0x07, 0x24, 0xC1]);
