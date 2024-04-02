@@ -52,8 +52,15 @@ impl CdInterruptRegisters {
         Self { enabled: 0, flags: 0, prev_pending: false }
     }
 
+    // Used for the CD-ROM IRQ bit in I_STAT
     fn pending(self) -> bool {
         self.enabled & self.flags != 0
+    }
+
+    // Used to determine whether an interrupt is currently "queued"
+    // Spyro 3 depends on interrupts "queueing" when flags are set even if the interrupts are not enabled
+    fn int_queued(self) -> bool {
+        self.flags & 7 != 0
     }
 
     fn read_enabled(self) -> u8 {
@@ -116,6 +123,7 @@ enum Command {
 #[derive(Debug, Clone, Copy, Encode, Decode)]
 enum CommandState {
     Idle,
+    CommandQueued { command: Command, cycles: u32 },
     ReceivingCommand { command: Command, cycles_remaining: u32 },
     GeneratingSecondResponse { command: Command, cycles_remaining: u32 },
 }
@@ -148,7 +156,7 @@ enum DriveState {
     Reading(ReadState),
     PreparingToPlay { time: CdTime, cycles_remaining: u32 },
     Playing(PlayState),
-    Paused(CdTime),
+    Paused { time: CdTime, int2_queued: bool },
 }
 
 impl Default for DriveState {
@@ -161,7 +169,7 @@ impl DriveState {
     fn current_time(self) -> CdTime {
         match self {
             Self::Stopped | Self::SpinningUp { .. } => CdTime::ZERO,
-            Self::Paused(time)
+            Self::Paused { time, .. }
             | Self::PreparingToRead { time, .. }
             | Self::Reading(ReadState { time, .. })
             | Self::PreparingToPlay { time, .. }
@@ -247,10 +255,7 @@ impl CdController {
                 log::debug!(
                     "Drive finished spinning up; generating INT2 and pausing at start of disc"
                 );
-                // TODO wait to generate INT2?
-                self.drive_state = DriveState::Paused(CdTime::ZERO);
-                int2!(self, [stat!(self)]);
-                self.drive_state
+                DriveState::Paused { time: CdTime::ZERO, int2_queued: true }
             }
             DriveState::SpinningUp {
                 cycles_remaining: 1,
@@ -274,10 +279,7 @@ impl CdController {
                 next: SeekNextState::Pause,
             } => {
                 log::debug!("Drive finished seeking to {destination}; generating INT2 and pausing");
-                // TODO wait to generate INT2?
-                self.drive_state = DriveState::Paused(destination);
-                int2!(self, [stat!(self)]);
-                self.drive_state
+                DriveState::Paused { time: destination, int2_queued: true }
             }
             DriveState::Seeking { destination, cycles_remaining: 1, next: SeekNextState::Read } => {
                 log::debug!("Drive finished seeking to {destination}; preparing to read");
@@ -311,7 +313,14 @@ impl CdController {
                 DriveState::PreparingToPlay { time, cycles_remaining: cycles_remaining - 1 }
             }
             DriveState::Playing(state) => self.progress_play_state(state)?,
-            DriveState::Paused(time) => DriveState::Paused(time),
+            DriveState::Paused { time, mut int2_queued } => {
+                if int2_queued && !self.interrupts.int_queued() {
+                    int2!(self, [stat!(self)]);
+                    int2_queued = false;
+                }
+
+                DriveState::Paused { time, int2_queued }
+            }
         };
 
         Ok(())
@@ -320,19 +329,22 @@ impl CdController {
     fn advance_command_state(&mut self) {
         self.command_state = match self.command_state {
             CommandState::Idle => CommandState::Idle,
-            CommandState::ReceivingCommand { command, cycles_remaining: 1 } => {
-                if !self.interrupts.pending() {
-                    self.execute_command(command)
+            CommandState::CommandQueued { command, cycles } => {
+                if !self.interrupts.int_queued() {
+                    CommandState::ReceivingCommand { command, cycles_remaining: cycles }
                 } else {
-                    // If an interrupt is pending, the controller waits until it is cleared
-                    CommandState::ReceivingCommand { command, cycles_remaining: 1 }
+                    // The controller will not acccept a command if any interrupts are queued
+                    CommandState::CommandQueued { command, cycles }
                 }
+            }
+            CommandState::ReceivingCommand { command, cycles_remaining: 1 } => {
+                self.execute_command(command)
             }
             CommandState::ReceivingCommand { command, cycles_remaining } => {
                 CommandState::ReceivingCommand { command, cycles_remaining: cycles_remaining - 1 }
             }
             CommandState::GeneratingSecondResponse { command, cycles_remaining: 1 } => {
-                if !self.interrupts.pending() {
+                if !self.interrupts.int_queued() {
                     self.generate_second_response(command)
                 } else {
                     // If an interrupt is pending, the controller waits until it is cleared
@@ -502,7 +514,10 @@ impl CdController {
 
     fn read_status_register(&self) -> u8 {
         // TODO Bit 2: XA-ADPCM FIFO not empty (hardcoded to 0)
-        let receiving_command = matches!(self.command_state, CommandState::ReceivingCommand { .. });
+        let receiving_command = matches!(
+            self.command_state,
+            CommandState::CommandQueued { .. } | CommandState::ReceivingCommand { .. }
+        );
         let status = self.index
             | (u8::from(self.parameter_fifo.empty()) << 3)
             | (u8::from(!self.parameter_fifo.full()) << 4)

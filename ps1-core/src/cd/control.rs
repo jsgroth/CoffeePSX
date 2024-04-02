@@ -83,7 +83,8 @@ impl CdController {
         self.audio_muted = false;
 
         if !self.drive_state.is_stopped_or_spinning_up() {
-            self.drive_state = DriveState::Paused(self.drive_state.current_time());
+            self.drive_state =
+                DriveState::Paused { time: self.drive_state.current_time(), int2_queued: false };
         }
 
         int3!(self, [stat!(self)]);
@@ -141,7 +142,8 @@ impl CdController {
 
         // TODO check if motor is stopped
 
-        self.drive_state = DriveState::Paused(self.drive_state.current_time());
+        self.drive_state =
+            DriveState::Paused { time: self.drive_state.current_time(), int2_queued: false };
 
         log::debug!("Paused drive at {}", self.drive_state.current_time());
 
@@ -162,7 +164,8 @@ impl CdController {
     pub(super) fn execute_stop(&mut self) -> CommandState {
         // Pause drive before generating INT3 stat
         if !self.drive_state.is_stopped_or_spinning_up() {
-            self.drive_state = DriveState::Paused(self.drive_state.current_time());
+            self.drive_state =
+                DriveState::Paused { time: self.drive_state.current_time(), int2_queued: false };
         }
 
         int3!(self, [stat!(self)]);

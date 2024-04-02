@@ -51,12 +51,13 @@ impl CdController {
         }
 
         if !int1_generated
-            && !self.interrupts.pending()
+            && !self.interrupts.int_queued()
             && !matches!(self.command_state, CommandState::ReceivingCommand { .. })
         {
             int1_generated = true;
             int1!(self, [stat!(self)]);
 
+            // TODO should the copy wait until software requests the data sector?
             if self.drive_mode.raw_sectors {
                 self.data_fifo.copy_from_slice(&self.sector_buffer[12..2352]);
             } else {

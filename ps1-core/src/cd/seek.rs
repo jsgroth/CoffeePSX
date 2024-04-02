@@ -83,7 +83,7 @@ pub(super) fn determine_drive_state(
         | DriveState::Reading(ReadState { time, .. })
         | DriveState::PreparingToPlay { time, .. }
         | DriveState::Playing(PlayState { time, .. })
-        | DriveState::Paused(time) => {
+        | DriveState::Paused { time, .. } => {
             let seek_cycles = cmp::max(MIN_SEEK_CYCLES, estimate_seek_cycles(time, destination));
             DriveState::Seeking { destination, cycles_remaining: seek_cycles, next }
         }
