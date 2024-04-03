@@ -62,7 +62,7 @@ pub trait Renderer {
     /// # Errors
     ///
     /// Should propagate any error encountered while rendering the frame.
-    fn render_frame(&mut self, vram: &[u8], params: RenderParams) -> Result<(), Self::Err>;
+    fn render_frame(&mut self, vram: &[u16], params: RenderParams) -> Result<(), Self::Err>;
 }
 
 pub trait AudioOutput {

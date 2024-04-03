@@ -137,7 +137,7 @@ impl VramTransferFields {
         let vram_x = (self.destination_x + self.col) & 0x3FF;
         let vram_y = (self.destination_y + self.row) & 0x1FF;
 
-        2048 * vram_y + 2 * vram_x
+        1024 * vram_y + vram_x
     }
 
     #[must_use]
@@ -405,7 +405,7 @@ impl Gpu {
         let mut word = 0_u32;
         for shift in [0, 16] {
             let vram_addr = fields.vram_addr() as usize;
-            let halfword = u16::from_le_bytes([self.vram[vram_addr], self.vram[vram_addr + 1]]);
+            let halfword = self.vram[vram_addr];
             word |= u32::from(halfword) << shift;
 
             if fields.increment() == IncrementEffect::Finished {
@@ -718,7 +718,7 @@ impl Gpu {
             "Executing VRAM copy from X={source_x_base} / Y={source_y} to X={dest_x_base} / Y={dest_y}, width={width} and height={height}"
         );
 
-        let forced_mask_bit = u8::from(self.gp0.draw_settings.force_mask_bit) << 7;
+        let forced_mask_bit = u16::from(self.gp0.draw_settings.force_mask_bit) << 15;
         let check_mask_bit = self.gp0.draw_settings.check_mask_bit;
 
         for _ in 0..height {
@@ -726,12 +726,11 @@ impl Gpu {
             let mut dest_x = dest_x_base;
 
             for _ in 0..width {
-                let source_addr = (2048 * source_y + 2 * source_x) as usize;
-                let dest_addr = (2048 * dest_y + 2 * dest_x) as usize;
+                let source_addr = (1024 * source_y + source_x) as usize;
+                let dest_addr = (1024 * dest_y + dest_x) as usize;
 
-                if !check_mask_bit || self.vram[dest_addr + 1] & 0x80 == 0 {
-                    self.vram[dest_addr] = self.vram[source_addr];
-                    self.vram[dest_addr + 1] = self.vram[source_addr + 1] | forced_mask_bit;
+                if !check_mask_bit || self.vram[dest_addr] & 0x8000 == 0 {
+                    self.vram[dest_addr] = self.vram[source_addr] | forced_mask_bit;
                 }
 
                 source_x = source_x.wrapping_add(1) & 0x3FF;
@@ -748,15 +747,13 @@ impl Gpu {
         value: u32,
         mut fields: VramTransferFields,
     ) -> Gp0CommandState {
-        let forced_mask_bit = u8::from(self.gp0.draw_settings.force_mask_bit) << 7;
+        let forced_mask_bit = u16::from(self.gp0.draw_settings.force_mask_bit) << 15;
 
         for halfword in [value & 0xFFFF, value >> 16] {
             let vram_addr = fields.vram_addr() as usize;
 
-            if !self.gp0.draw_settings.check_mask_bit || self.vram[vram_addr + 1] & 0x80 == 0 {
-                let [lsb, msb] = (halfword as u16).to_le_bytes();
-                self.vram[vram_addr] = lsb;
-                self.vram[vram_addr + 1] = msb | forced_mask_bit;
+            if !self.gp0.draw_settings.check_mask_bit || self.vram[vram_addr] & 0x8000 == 0 {
+                self.vram[vram_addr] = (halfword as u16) | forced_mask_bit;
             }
 
             if fields.increment() == IncrementEffect::Finished {

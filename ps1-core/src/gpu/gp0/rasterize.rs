@@ -211,14 +211,13 @@ fn draw_line_pixel(
         return;
     }
 
-    let vram_addr = (2048 * v.y + 2 * v.x) as usize;
-    if draw_settings.check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+    let vram_addr = (1024 * v.y + v.x) as usize;
+    if draw_settings.check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
         return;
     }
 
     let color = if semi_transparency {
-        let existing_color =
-            Color::from_15_bit(u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]));
+        let existing_color = Color::from_15_bit(vram[vram_addr]);
         semi_transparency_mode.apply(existing_color, raw_color)
     } else {
         raw_color
@@ -231,9 +230,8 @@ fn draw_line_pixel(
         color
     };
 
-    let [color_lsb, color_msb] = dithered_color.truncate_to_15_bit().to_le_bytes();
-    vram[vram_addr] = color_lsb;
-    vram[vram_addr + 1] = color_msb | (u8::from(draw_settings.force_mask_bit) << 7);
+    vram[vram_addr] =
+        dithered_color.truncate_to_15_bit() | (u16::from(draw_settings.force_mask_bit) << 15);
 }
 
 #[derive(Debug, Clone)]
@@ -436,8 +434,8 @@ fn rasterize_pixel(
         check_mask_bit,
     }: RasterizePixelArgs<'_>,
 ) {
-    let vram_addr = (2048 * py + 2 * px) as usize;
-    if check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+    let vram_addr = (1024 * py + px) as usize;
+    if check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
         return;
     }
 
@@ -526,7 +524,7 @@ fn rasterize_pixel(
     };
 
     let masked_color = if semi_transparent && (texture_mode == TextureMode::None || mask_bit) {
-        let existing_pixel = u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
+        let existing_pixel = vram[vram_addr];
         let existing_color = Color::from_15_bit(existing_pixel);
 
         let semi_transparency_mode = match texture_mode {
@@ -553,9 +551,8 @@ fn rasterize_pixel(
         masked_color
     };
 
-    let [color_lsb, color_msb] = dithered_color.truncate_to_15_bit().to_le_bytes();
-    vram[vram_addr] = color_lsb;
-    vram[vram_addr + 1] = color_msb | (u8::from(mask_bit || force_mask_bit) << 7);
+    vram[vram_addr] =
+        dithered_color.truncate_to_15_bit() | (u16::from(mask_bit || force_mask_bit) << 15);
 }
 
 fn modulate(texture_color: u8, shading_color: u8) -> u8 {
@@ -643,29 +640,30 @@ fn sample_texture(
 
     match texpage.color_depth {
         TextureColorDepthBits::Four => {
-            let vram_addr = 2048 * y + 2 * 64 * texpage.x_base + u / 2;
-            let shift = 4 * (u % 2);
+            let vram_addr = 1024 * y + 64 * texpage.x_base + u / 4;
+            let shift = 4 * (u % 4);
             let clut_index: u32 = ((vram[vram_addr as usize] >> shift) & 0xF).into();
 
-            let clut_base_addr = 2048 * clut_y + 2 * 16 * clut_x;
-            let clut_addr = clut_base_addr + 2 * clut_index;
+            let clut_base_addr = 1024 * clut_y + 16 * clut_x;
+            let clut_addr = clut_base_addr + clut_index;
 
-            u16::from_le_bytes([vram[clut_addr as usize], vram[(clut_addr + 1) as usize]])
+            vram[clut_addr as usize]
         }
         TextureColorDepthBits::Eight => {
-            let vram_x_bytes = (2 * 64 * texpage.x_base + u) & 0x7FF;
-            let vram_addr = 2048 * y + vram_x_bytes;
-            let clut_index: u32 = vram[vram_addr as usize].into();
+            let vram_x_bytes = (64 * texpage.x_base + u / 2) & 0x3FF;
+            let vram_addr = 1024 * y + vram_x_bytes;
+            let shift = 8 * (u % 2);
+            let clut_index: u32 = ((vram[vram_addr as usize] >> shift) & 0xFF).into();
 
-            let clut_base_addr = 2048 * clut_y + 2 * 16 * clut_x;
-            let clut_addr = clut_base_addr + 2 * clut_index;
+            let clut_base_addr = 1024 * clut_y + 16 * clut_x;
+            let clut_addr = clut_base_addr + clut_index;
 
-            u16::from_le_bytes([vram[clut_addr as usize], vram[(clut_addr + 1) as usize]])
+            vram[clut_addr as usize]
         }
         TextureColorDepthBits::Fifteen => {
             let vram_x_pixels = (64 * texpage.x_base + u) & 0x3FF;
-            let vram_addr = (2048 * y + 2 * vram_x_pixels) as usize;
-            u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]])
+            let vram_addr = (1024 * y + vram_x_pixels) as usize;
+            vram[vram_addr]
         }
     }
 }
@@ -775,22 +773,19 @@ fn rectangle_solid_color(
 ) {
     for y in y_range.0..=y_range.1 {
         for x in x_range.0..=x_range.1 {
-            let vram_addr = (2048 * y + 2 * x) as usize;
-            if check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+            let vram_addr = (1024 * y + x) as usize;
+            if check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
                 continue;
             }
 
             let color = if semi_transparent {
-                let existing_color =
-                    Color::from_15_bit(u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]));
+                let existing_color = Color::from_15_bit(vram[vram_addr]);
                 semi_transparency_mode.apply(existing_color, color)
             } else {
                 color
             };
 
-            let [color_lsb, color_msb] = color.truncate_to_15_bit().to_le_bytes();
-            vram[vram_addr] = color_lsb;
-            vram[vram_addr + 1] = color_msb | (u8::from(force_mask_bit) << 7);
+            vram[vram_addr] = color.truncate_to_15_bit() | (u16::from(force_mask_bit) << 15);
         }
     }
 }
@@ -814,8 +809,8 @@ fn rectangle_textured(
     for y in y_range.0..=y_range.1 {
         let v = texture_params.v.wrapping_add((y - y_range.0) as u8);
         for x in x_range.0..=x_range.1 {
-            let vram_addr = (2048 * y + 2 * x) as usize;
-            if check_mask_bit && vram[vram_addr + 1] & 0x80 != 0 {
+            let vram_addr = (1024 * y + x) as usize;
+            if check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
                 continue;
             }
 
@@ -843,16 +838,14 @@ fn rectangle_textured(
 
             let texture_mask_bit = texture_pixel & 0x8000 != 0;
             let masked_color = if semi_transparent && texture_mask_bit {
-                let existing_color =
-                    Color::from_15_bit(u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]));
+                let existing_color = Color::from_15_bit(vram[vram_addr]);
                 semi_transparency_mode.apply(existing_color, texture_color)
             } else {
                 texture_color
             };
 
-            let [color_lsb, color_msb] = masked_color.truncate_to_15_bit().to_le_bytes();
-            vram[vram_addr] = color_lsb;
-            vram[vram_addr + 1] = color_msb | (u8::from(texture_mask_bit || force_mask_bit) << 7);
+            vram[vram_addr] = masked_color.truncate_to_15_bit()
+                | (u16::from(texture_mask_bit | force_mask_bit) << 15);
         }
     }
 }
@@ -863,16 +856,15 @@ pub fn fill(fill_x: u32, fill_y: u32, width: u32, height: u32, color: Color, vra
     let width = ((width & 0x3FF) + 0xF) & !0xF;
     let height = height & 0x1FF;
 
-    let [color_lsb, color_msb] = color.truncate_to_15_bit().to_le_bytes();
+    let color = color.truncate_to_15_bit();
 
     for y_offset in 0..height {
         for x_offset in 0..width {
             let x = (fill_x + x_offset) & 0x3FF;
             let y = (fill_y + y_offset) & 0x1FF;
 
-            let vram_addr = (2048 * y + 2 * x) as usize;
-            vram[vram_addr] = color_lsb;
-            vram[vram_addr + 1] = color_msb;
+            let vram_addr = (1024 * y + x) as usize;
+            vram[vram_addr] = color;
         }
     }
 }

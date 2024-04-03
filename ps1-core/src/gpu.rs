@@ -18,9 +18,9 @@ use crate::scheduler::Scheduler;
 use crate::timers::Timers;
 use bincode::{Decode, Encode};
 
-const VRAM_LEN: usize = 1024 * 1024;
+const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
 
-type Vram = [u8; VRAM_LEN];
+type Vram = [u16; VRAM_LEN_HALFWORDS];
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Gpu {
@@ -33,7 +33,7 @@ pub struct Gpu {
 impl Gpu {
     pub fn new() -> Self {
         Self {
-            vram: vec![0; VRAM_LEN].into_boxed_slice().try_into().unwrap(),
+            vram: vec![0; VRAM_LEN_HALFWORDS].into_boxed_slice().try_into().unwrap(),
             registers: Registers::new(),
             gp0: Gp0State::new(),
             gpu_read_buffer: 0,
@@ -67,7 +67,7 @@ impl Gpu {
         self.handle_gp1_write(value, timers, scheduler);
     }
 
-    pub fn vram(&self) -> &[u8] {
+    pub fn vram(&self) -> &[u16] {
         self.vram.as_ref()
     }
 

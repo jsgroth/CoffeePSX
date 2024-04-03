@@ -209,12 +209,11 @@ impl WgpuRenderer {
     }
 
     // TODO pay attention to display width and X offset?
-    fn populate_frame_buffer(&mut self, vram: &[u8], params: RenderParams) {
+    fn populate_frame_buffer(&mut self, vram: &[u16], params: RenderParams) {
         log::debug!("Populating frame buffer using parameters {params:?}");
 
         if self.dumping_vram {
-            for (i, chunk) in vram.chunks_exact(2).enumerate() {
-                let rgb555_color = u16::from_le_bytes([chunk[0], chunk[1]]);
+            for (i, &rgb555_color) in vram.iter().enumerate() {
                 self.frame_buffer[i] = convert_rgb555_color(rgb555_color);
             }
             return;
@@ -244,33 +243,45 @@ impl WgpuRenderer {
         );
         for y in y_begin..y_end {
             let vram_y =
-                y.wrapping_add(params.frame_y).wrapping_add_signed(-params.display_y_offset) & 511;
-            let vram_row = (2048 * vram_y) as usize;
+                y.wrapping_add(params.frame_y).wrapping_add_signed(-params.display_y_offset)
+                    & 0x1FF;
+            let vram_row = (1024 * vram_y) as usize;
             let frame_buffer_row = (params.frame_width * y) as usize;
 
             // Always treat frame X as a halfword coordinate, even in 24bpp mode
             // Final Fantasy 8 depends on this for FMVs
-            let vram_row_start = 2 * params.frame_x;
+            let vram_row_start = params.frame_x;
 
             match params.color_depth {
                 ColorDepthBits::Fifteen => {
                     for x in 0..params.frame_width {
-                        let vram_row_offset = (vram_row_start + 2 * x) & 2047;
+                        let vram_row_offset = (vram_row_start + x) & 0x3FF;
                         let vram_addr = vram_row + vram_row_offset as usize;
 
-                        let rgb555_color =
-                            u16::from_le_bytes([vram[vram_addr], vram[vram_addr + 1]]);
+                        let rgb555_color = vram[vram_addr];
                         self.frame_buffer[frame_buffer_row + x as usize] =
                             convert_rgb555_color(rgb555_color);
                     }
                 }
                 ColorDepthBits::TwentyFour => {
                     for x in 0..params.frame_width {
-                        let vram_row_offset = (vram_row_start + 3 * x) as usize;
+                        let vram_row_offset = (vram_row_start + 3 * x / 2) as usize;
+                        let first_halfword = vram[vram_row | (vram_row_offset & 0x7FF)];
+                        let second_halfword = vram[vram_row | ((vram_row_offset + 1) & 0x7FF)];
 
-                        let r = vram[vram_row | (vram_row_offset & 2047)];
-                        let g = vram[vram_row | ((vram_row_offset + 1) & 2047)];
-                        let b = vram[vram_row | ((vram_row_offset + 2) & 2047)];
+                        let (r, g, b) = if x % 2 == 0 {
+                            (
+                                first_halfword as u8,
+                                (first_halfword >> 8) as u8,
+                                second_halfword as u8,
+                            )
+                        } else {
+                            (
+                                (first_halfword >> 8) as u8,
+                                second_halfword as u8,
+                                (second_halfword >> 8) as u8,
+                            )
+                        };
                         self.frame_buffer[frame_buffer_row + x as usize] = Color::rgb(r, g, b);
                     }
                 }
@@ -551,7 +562,7 @@ const RGB_5_TO_8: &[u8; 32] = &[
 impl Renderer for WgpuRenderer {
     type Err = WgpuError;
 
-    fn render_frame(&mut self, vram: &[u8], params: RenderParams) -> Result<(), Self::Err> {
+    fn render_frame(&mut self, vram: &[u16], params: RenderParams) -> Result<(), Self::Err> {
         self.populate_frame_buffer(vram, params);
 
         let (overscan_rows_top, frame_size) = if self.dumping_vram {
