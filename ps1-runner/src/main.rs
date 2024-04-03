@@ -7,7 +7,7 @@ use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
-use ps1_core::api::{AudioOutput, Ps1Emulator, SaveWriter, TickEffect};
+use ps1_core::api::{AudioOutput, Ps1Emulator, Ps1EmulatorState, SaveWriter, TickEffect};
 use ps1_core::input::Ps1Inputs;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -182,7 +182,7 @@ macro_rules! bincode_config {
 fn save_state(path: &PathBuf, emulator: &Ps1Emulator) -> anyhow::Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
-    bincode::encode_into_std_write(emulator, &mut writer, bincode_config!())?;
+    bincode::encode_into_std_write(emulator.to_state(), &mut writer, bincode_config!())?;
 
     log::info!("Saved state to '{}'", path.display());
 
@@ -199,10 +199,10 @@ fn load_state(path: &PathBuf, emulator: &mut Ps1Emulator) {
     };
     let mut reader = BufReader::new(file);
 
-    match bincode::decode_from_std_read::<Ps1Emulator, _, _>(&mut reader, bincode_config!()) {
-        Ok(mut loaded_emulator) => {
-            loaded_emulator.set_disc(emulator.take_disc());
-            *emulator = loaded_emulator;
+    match bincode::decode_from_std_read::<Ps1EmulatorState, _, _>(&mut reader, bincode_config!()) {
+        Ok(loaded_state) => {
+            let unserialized = emulator.take_unserialized_fields();
+            *emulator = Ps1Emulator::from_state(loaded_state, unserialized);
 
             log::info!("Loaded state from '{}'", path.display());
         }

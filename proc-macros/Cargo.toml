@@ -1,19 +1,20 @@
 [package]
-name = "ps1-core"
+name = "proc-macros"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-cdrom = { path = "../cdrom" }
-proc-macros = { path = "../proc-macros" }
+[lib]
+proc-macro = true
 
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"
+
+[dev-dependencies]
 bincode = { workspace = true, features = ["derive"] }
-log = { workspace = true }
-proc-bitfield = { workspace = true }
-rand = { workspace = true }
-thiserror = { workspace = true }
 
 [lints]
 workspace = true

@@ -25,6 +25,7 @@ use cdrom::reader::CdRom;
 use cdrom::CdRomResult;
 #[allow(clippy::wildcard_imports)]
 use macros::*;
+use proc_macros::SaveState;
 use std::{array, cmp};
 
 // Roughly 23,796 CPU cycles
@@ -187,9 +188,10 @@ const BYTES_PER_SECTOR: usize = 2352;
 
 type SectorBuffer = [u8; BYTES_PER_SECTOR];
 
-#[derive(Debug, Encode, Decode)]
+#[derive(Debug, SaveState)]
 pub struct CdController {
     index: u8,
+    #[save_state(skip)]
     disc: Option<CdRom>,
     interrupts: CdInterruptRegisters,
     parameter_fifo: ParameterFifo,
@@ -231,6 +233,28 @@ impl CdController {
             cd_to_spu_volume: [[0; 2]; 2],
             next_cd_to_spu_volume: [[0; 2]; 2],
             xa_adpcm: XaAdpcmState::new(),
+        }
+    }
+
+    pub fn from_state(state: CdControllerState, disc: Option<CdRom>) -> Self {
+        Self {
+            index: state.index,
+            disc,
+            interrupts: state.interrupts,
+            parameter_fifo: state.parameter_fifo,
+            response_fifo: state.response_fifo,
+            data_fifo: state.data_fifo,
+            sector_buffer: state.sector_buffer,
+            command_state: state.command_state,
+            drive_state: state.drive_state,
+            drive_mode: state.drive_mode,
+            seek_location: state.seek_location,
+            scex_read: state.scex_read,
+            audio_muted: state.audio_muted,
+            current_audio_sample: state.current_audio_sample,
+            cd_to_spu_volume: state.cd_to_spu_volume,
+            next_cd_to_spu_volume: state.next_cd_to_spu_volume,
+            xa_adpcm: state.xa_adpcm,
         }
     }
 
@@ -664,10 +688,6 @@ impl CdController {
 
     pub fn take_disc(&mut self) -> Option<CdRom> {
         self.disc.take()
-    }
-
-    pub fn set_disc(&mut self, disc: Option<CdRom>) {
-        self.disc = disc;
     }
 }
 

@@ -1,7 +1,7 @@
 //! PS1 public interface and main loop
 
 use crate::bus::Bus;
-use crate::cd::CdController;
+use crate::cd::{CdController, CdControllerState};
 use crate::cpu::R3000;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
@@ -16,6 +16,7 @@ use crate::timers::Timers;
 use bincode::{Decode, Encode};
 use cdrom::reader::CdRom;
 use cdrom::CdRomError;
+use proc_macros::SaveState;
 use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
@@ -104,12 +105,17 @@ pub enum TickError<RErr, AErr, SErr> {
     CdRom(#[from] CdRomError),
 }
 
-#[derive(Debug, Encode, Decode)]
+pub struct UnserializedFields {
+    disc: Option<CdRom>,
+}
+
+#[derive(Debug, SaveState)]
 pub struct Ps1Emulator {
     cpu: R3000,
     gpu: Gpu,
     spu: Spu,
     audio_buffer: Vec<(f64, f64)>,
+    #[save_state(to = CdControllerState)]
     cd_controller: CdController,
     mdec: MacroblockDecoder,
     memory: Memory,
@@ -419,11 +425,28 @@ impl Ps1Emulator {
     }
 
     #[must_use]
-    pub fn take_disc(&mut self) -> Option<CdRom> {
-        self.cd_controller.take_disc()
+    pub fn take_unserialized_fields(&mut self) -> UnserializedFields {
+        UnserializedFields { disc: self.cd_controller.take_disc() }
     }
 
-    pub fn set_disc(&mut self, disc: Option<CdRom>) {
-        self.cd_controller.set_disc(disc);
+    pub fn from_state(state: Ps1EmulatorState, unserialized: UnserializedFields) -> Self {
+        Self {
+            cpu: state.cpu,
+            gpu: state.gpu,
+            spu: state.spu,
+            audio_buffer: state.audio_buffer,
+            cd_controller: CdController::from_state(state.cd_controller, unserialized.disc),
+            mdec: state.mdec,
+            memory: state.memory,
+            memory_control: state.memory_control,
+            dma_controller: state.dma_controller,
+            interrupt_registers: state.interrupt_registers,
+            sio0: state.sio0,
+            timers: state.timers,
+            scheduler: state.scheduler,
+            last_render_cycles: state.last_render_cycles,
+            tty_enabled: state.tty_enabled,
+            tty_buffer: state.tty_buffer,
+        }
     }
 }

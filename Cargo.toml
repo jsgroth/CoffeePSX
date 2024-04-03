@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "cdrom",
+    "proc-macros",
     "ps1-core",
     "ps1-runner",
 ]

@@ -1606,6 +1606,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macros"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.53",
+]
+
+[[package]]
 name = "profiling"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1619,6 +1629,7 @@ dependencies = [
  "cdrom",
  "log",
  "proc-bitfield",
+ "proc-macros",
  "rand",
  "thiserror",
 ]
