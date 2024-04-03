@@ -168,7 +168,12 @@ impl Registers {
             matches!(gp0_state.command_state, Gp0CommandState::WaitingForCommand);
         let ready_to_send_vram =
             matches!(gp0_state.command_state, Gp0CommandState::SendingToCpu(..));
-        let ready_to_receive_dma = ready_to_receive_command;
+        let ready_to_receive_dma = matches!(
+            gp0_state.command_state,
+            Gp0CommandState::WaitingForCommand
+                | Gp0CommandState::SendingToCpu(..)
+                | Gp0CommandState::ReceivingFromCpu(..)
+        );
 
         let dma_request: u32 = match self.dma_mode {
             DmaMode::Off => 0,
