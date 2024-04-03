@@ -10,10 +10,12 @@ cdrom = { path = "../cdrom" }
 proc-macros = { path = "../proc-macros" }
 
 bincode = { workspace = true, features = ["derive"] }
+bytemuck = { workspace = true, features = ["derive"] }
 log = { workspace = true }
 proc-bitfield = { workspace = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
+wgpu = { workspace = true }
 
 [lints]
 workspace = true

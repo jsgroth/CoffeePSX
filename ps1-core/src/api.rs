@@ -5,6 +5,7 @@ use crate::cd::{CdController, CdControllerState};
 use crate::cpu::R3000;
 use crate::dma::DmaController;
 use crate::gpu::Gpu;
+use crate::gpu::GpuState;
 use crate::input::Ps1Inputs;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::mdec::MacroblockDecoder;
@@ -18,7 +19,10 @@ use cdrom::reader::CdRom;
 use cdrom::CdRomError;
 use proc_macros::SaveState;
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 use thiserror::Error;
+
+pub use crate::gpu::DisplayConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum ColorDepthBits {
@@ -42,27 +46,17 @@ impl ColorDepthBits {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct RenderParams {
-    pub color_depth: ColorDepthBits,
-    pub frame_x: u32,
-    pub frame_y: u32,
-    pub frame_width: u32,
-    pub frame_height: u32,
-    pub display_x_offset: i32,
-    pub display_y_offset: i32,
-    pub display_width: u32,
-    pub display_height: u32,
-    pub display_enabled: bool,
-}
-
 pub trait Renderer {
     type Err;
 
     /// # Errors
     ///
     /// Should propagate any error encountered while rendering the frame.
-    fn render_frame(&mut self, vram: &[u16], params: RenderParams) -> Result<(), Self::Err>;
+    fn render_frame(
+        &mut self,
+        frame: &wgpu::Texture,
+        pixel_aspect_ratio: f64,
+    ) -> Result<(), Self::Err>;
 }
 
 pub trait AudioOutput {
@@ -107,11 +101,15 @@ pub enum TickError<RErr, AErr, SErr> {
 
 pub struct UnserializedFields {
     disc: Option<CdRom>,
+    wgpu_device: Rc<wgpu::Device>,
+    wgpu_queue: Rc<wgpu::Queue>,
+    display_config: DisplayConfig,
 }
 
 #[derive(Debug, SaveState)]
 pub struct Ps1Emulator {
     cpu: R3000,
+    #[save_state(to = GpuState)]
     gpu: Gpu,
     spu: Spu,
     audio_buffer: Vec<(f64, f64)>,
@@ -133,6 +131,9 @@ pub struct Ps1Emulator {
 #[derive(Debug)]
 pub struct Ps1EmulatorBuilder {
     bios_rom: Vec<u8>,
+    wgpu_device: Rc<wgpu::Device>,
+    wgpu_queue: Rc<wgpu::Queue>,
+    display_config: DisplayConfig,
     disc: Option<CdRom>,
     memory_card_1: Option<Vec<u8>>,
     tty_enabled: bool,
@@ -140,8 +141,20 @@ pub struct Ps1EmulatorBuilder {
 
 impl Ps1EmulatorBuilder {
     #[must_use]
-    pub fn new(bios_rom: Vec<u8>) -> Self {
-        Self { bios_rom, disc: None, memory_card_1: None, tty_enabled: false }
+    pub fn new(
+        bios_rom: Vec<u8>,
+        wgpu_device: Rc<wgpu::Device>,
+        wgpu_queue: Rc<wgpu::Queue>,
+    ) -> Self {
+        Self {
+            bios_rom,
+            wgpu_device,
+            wgpu_queue,
+            display_config: DisplayConfig::default(),
+            disc: None,
+            memory_card_1: None,
+            tty_enabled: false,
+        }
     }
 
     #[must_use]
@@ -162,11 +175,25 @@ impl Ps1EmulatorBuilder {
         self
     }
 
+    #[must_use]
+    pub fn with_crop_vertical_overscan(mut self, crop_vertical_overscan: bool) -> Self {
+        self.display_config.crop_vertical_overscan = crop_vertical_overscan;
+        self
+    }
+
     /// # Errors
     ///
     /// Will return an error if the BIOS ROM is invalid.
     pub fn build(self) -> Ps1Result<Ps1Emulator> {
-        Ps1Emulator::new(self.bios_rom, self.disc, self.memory_card_1, self.tty_enabled)
+        Ps1Emulator::new(
+            self.bios_rom,
+            self.wgpu_device,
+            self.wgpu_queue,
+            self.display_config,
+            self.disc,
+            self.memory_card_1,
+            self.tty_enabled,
+        )
     }
 }
 
@@ -181,16 +208,14 @@ pub enum TickEffect {
 const SPU_CLOCK_DIVIDER: u64 = 768;
 
 impl Ps1Emulator {
-    #[must_use]
-    pub fn builder(bios_rom: Vec<u8>) -> Ps1EmulatorBuilder {
-        Ps1EmulatorBuilder::new(bios_rom)
-    }
-
     /// # Errors
     ///
     /// Will return an error if the BIOS ROM is invalid.
     pub fn new(
         bios_rom: Vec<u8>,
+        wgpu_device: Rc<wgpu::Device>,
+        wgpu_queue: Rc<wgpu::Queue>,
+        display_config: DisplayConfig,
         disc: Option<CdRom>,
         memory_card_1: Option<Vec<u8>>,
         tty_enabled: bool,
@@ -199,7 +224,7 @@ impl Ps1Emulator {
 
         let mut emulator = Self {
             cpu: R3000::new(),
-            gpu: Gpu::new(),
+            gpu: Gpu::new(wgpu_device, wgpu_queue, display_config),
             spu: Spu::new(),
             audio_buffer: Vec::with_capacity(1600),
             cd_controller: CdController::new(disc),
@@ -329,9 +354,9 @@ impl Ps1Emulator {
     ) -> Result<(), TickError<R::Err, A::Err, S::Err>> {
         self.last_render_cycles = self.scheduler.cpu_cycle_counter();
 
-        renderer
-            .render_frame(self.gpu.vram(), self.gpu.render_params())
-            .map_err(TickError::Render)?;
+        let pixel_aspect_ratio = self.gpu.pixel_aspect_ratio();
+        let frame = self.gpu.generate_frame_texture();
+        renderer.render_frame(frame, pixel_aspect_ratio).map_err(TickError::Render)?;
 
         audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
         self.audio_buffer.clear();
@@ -424,15 +449,31 @@ impl Ps1Emulator {
         }
     }
 
+    pub fn update_display_config(&mut self, display_config: DisplayConfig) {
+        self.gpu.update_display_config(display_config);
+    }
+
     #[must_use]
     pub fn take_unserialized_fields(&mut self) -> UnserializedFields {
-        UnserializedFields { disc: self.cd_controller.take_disc() }
+        let (wgpu_device, wgpu_queue, display_config) = self.gpu.get_wgpu_resources();
+
+        UnserializedFields {
+            disc: self.cd_controller.take_disc(),
+            wgpu_device,
+            wgpu_queue,
+            display_config,
+        }
     }
 
     pub fn from_state(state: Ps1EmulatorState, unserialized: UnserializedFields) -> Self {
         Self {
             cpu: state.cpu,
-            gpu: state.gpu,
+            gpu: Gpu::from_state(
+                state.gpu,
+                unserialized.wgpu_device,
+                unserialized.wgpu_queue,
+                unserialized.display_config,
+            ),
             spu: state.spu,
             audio_buffer: state.audio_buffer,
             cd_controller: CdController::from_state(state.cd_controller, unserialized.disc),

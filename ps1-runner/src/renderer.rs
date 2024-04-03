@@ -1,87 +1,197 @@
 use anyhow::anyhow;
-use ps1_core::api::{ColorDepthBits, RenderParams, Renderer};
+use ps1_core::api::Renderer;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::{cmp, iter};
-use thiserror::Error;
+use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
-    Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
-    BufferBinding, BufferBindingType, BufferUsages, ColorTargetState, ColorWrites,
-    CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor, Dx12Compiler, Extent3d,
-    Features, FilterMode, FragmentState, FrontFace, Gles3MinorVersion, ImageCopyTexture,
-    ImageDataLayout, Instance, InstanceDescriptor, InstanceFlags, Limits, LoadOp, MultisampleState,
-    Operations, Origin3d, PipelineLayoutDescriptor, PolygonMode, PowerPreference, PresentMode,
-    PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType,
-    SamplerDescriptor, ShaderModule, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
-    SurfaceError, SurfaceTargetUnsafe, Texture, TextureAspect, TextureDescriptor, TextureDimension,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBinding,
+    BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, CommandEncoder,
+    CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor, Extent3d, Features,
+    FilterMode, FragmentState, FrontFace, Instance, InstanceDescriptor, Limits, LoadOp,
+    MultisampleState, Operations, PipelineLayoutDescriptor, PolygonMode, PowerPreference,
+    PresentMode, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
+    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler,
+    SamplerBindingType, SamplerDescriptor, ShaderModule, ShaderStages, StoreOp, Surface,
+    SurfaceConfiguration, SurfaceTargetUnsafe, Texture, TextureDescriptor, TextureDimension,
     TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
     VertexState,
 };
-use winit::dpi::LogicalSize;
-use winit::window::Window;
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
-struct Color {
-    r: u8,
-    g: u8,
-    b: u8,
-    a: u8,
+struct PrescalePipeline {
+    texture: Texture,
+    bind_group_layout: BindGroupLayout,
+    width_scale_buffer: Buffer,
+    height_scale_buffer: Buffer,
+    pipeline: RenderPipeline,
 }
 
-impl Color {
-    const BLACK: Self = Self::rgb(0, 0, 0);
+impl PrescalePipeline {
+    fn new(
+        device: &Device,
+        scale_shader: &ShaderModule,
+        frame_size: Extent3d,
+        window_size: Extent3d,
+        pixel_aspect_ratio: f64,
+    ) -> Self {
+        let viewport = determine_viewport(frame_size, window_size, pixel_aspect_ratio);
 
-    const fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b, a: 255 }
+        let width_scale =
+            cmp::max(1, (viewport.width / frame_size.width as f32 + 0.1).floor() as u32);
+        let height_scale =
+            cmp::max(1, (viewport.height / frame_size.height as f32 + 0.1).floor() as u32);
+
+        let texture = device.create_texture(&TextureDescriptor {
+            label: "scaled_texture".into(),
+            size: Extent3d {
+                width: width_scale * frame_size.width,
+                height: height_scale * frame_size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8UnormSrgb,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        log::info!(
+            "Scaling frame of size {}x{} to {}x{}",
+            frame_size.width,
+            frame_size.height,
+            texture.size().width,
+            texture.size().height
+        );
+
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: "prescale_bind_group_layout".into(),
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: false },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let width_scale_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: "width_scale_buffer".into(),
+            contents: &width_scale.to_le_bytes(),
+            usage: BufferUsages::UNIFORM,
+        });
+        let height_scale_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: "height_scale_buffer".into(),
+            contents: &height_scale.to_le_bytes(),
+            usage: BufferUsages::UNIFORM,
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: "prescale_pipeline_layout".into(),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "prescale_pipeline".into(),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState { module: scale_shader, entry_point: "vs_main", buffers: &[] },
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleStrip,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: scale_shader,
+                entry_point: "fs_main",
+                targets: &[Some(ColorTargetState {
+                    format: TextureFormat::Rgba8UnormSrgb,
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+        });
+
+        Self { texture, bind_group_layout, width_scale_buffer, height_scale_buffer, pipeline }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct FrameSize {
-    width: u32,
-    height: u32,
+struct PrescaleKey {
+    frame_width: u32,
+    frame_height: u32,
+    pixel_aspect_ratio_bits: u64,
 }
 
-enum FrameScaling {
-    None { raw: Texture },
-    Scaled { raw: Texture, scaled: Texture, bind_group: BindGroup, pipeline: RenderPipeline },
+impl PrescaleKey {
+    fn new(frame_size: Extent3d, pixel_aspect_ratio: f64) -> Self {
+        Self {
+            frame_width: frame_size.width,
+            frame_height: frame_size.height,
+            pixel_aspect_ratio_bits: pixel_aspect_ratio.to_bits(),
+        }
+    }
 }
 
 pub struct WgpuRenderer {
     surface: Surface<'static>,
     surface_config: SurfaceConfiguration,
-    device: Device,
-    queue: Queue,
-    scale_module: ShaderModule,
+    device: Rc<Device>,
+    queue: Rc<Queue>,
     render_bind_group_layout: BindGroupLayout,
     render_pipeline: RenderPipeline,
-    frame_buffer: Vec<Color>,
-    frame_texture_format: TextureFormat,
-    frame_textures: HashMap<FrameSize, FrameScaling>,
     sampler: Sampler,
-    prescaling: bool,
     filter_mode: FilterMode,
-    dumping_vram: bool,
-    cropping_v_overscan: bool,
+    auto_prescale: bool,
+    prescale_shader: ShaderModule,
+    prescale_pipelines: HashMap<PrescaleKey, PrescalePipeline>,
 }
 
 impl WgpuRenderer {
     /// # Safety
     ///
-    /// The referenced window must live at least as long as the returned `WgpuRenderer`.
-    pub async unsafe fn new(window: &Window) -> anyhow::Result<Self> {
-        let instance = Instance::new(InstanceDescriptor {
-            backends: Backends::PRIMARY,
-            flags: InstanceFlags::default(),
-            dx12_shader_compiler: Dx12Compiler::default(),
-            gles_minor_version: Gles3MinorVersion::default(),
-        });
+    /// `window` must not outlive the returned `WgpuRenderer`.
+    pub async unsafe fn new<W>(window: &W, window_size: (u32, u32)) -> anyhow::Result<Self>
+    where
+        W: HasWindowHandle + HasDisplayHandle,
+    {
+        let instance = Instance::new(InstanceDescriptor::default());
 
-        let surface_target = SurfaceTargetUnsafe::from_window(window)?;
-        let surface = instance.create_surface_unsafe(surface_target)?;
+        let surface = instance.create_surface_unsafe(SurfaceTargetUnsafe::from_window(window)?)?;
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -89,10 +199,8 @@ impl WgpuRenderer {
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
             })
-            .await;
-        let Some(adapter) = adapter else {
-            return Err(anyhow!("Failed to obtain wgpu adapter"));
-        };
+            .await
+            .ok_or_else(|| anyhow!("Failed to obtain wgpu adapter"))?;
 
         let (device, queue) = adapter
             .request_device(
@@ -118,20 +226,14 @@ impl WgpuRenderer {
         let surface_config = SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
-            width: window.inner_size().width,
-            height: window.inner_size().height,
+            width: window_size.0,
+            height: window_size.1,
             present_mode: PresentMode::Mailbox,
             desired_maximum_frame_latency: 2,
             alpha_mode: CompositeAlphaMode::default(),
             view_formats: vec![],
         };
         surface.configure(&device, &surface_config);
-
-        let frame_texture_format = if surface_format.is_srgb() {
-            TextureFormat::Rgba8UnormSrgb
-        } else {
-            TextureFormat::Rgba8Unorm
-        };
 
         let render_bind_group_layout = create_render_bind_group_layout(&device);
 
@@ -146,24 +248,20 @@ impl WgpuRenderer {
         let filter_mode = FilterMode::Linear;
         let sampler = create_sampler(&device, filter_mode);
 
-        let scale_module = device.create_shader_module(wgpu::include_wgsl!("scale.wgsl"));
+        let prescale_shader = device.create_shader_module(wgpu::include_wgsl!("scale.wgsl"));
 
         Ok(Self {
             surface,
             surface_config,
-            device,
-            queue,
-            scale_module,
+            device: Rc::new(device),
+            queue: Rc::new(queue),
             render_bind_group_layout,
             render_pipeline,
-            frame_buffer: vec![Color::BLACK; 1024 * 512],
-            frame_texture_format,
-            frame_textures: HashMap::new(),
             sampler,
-            prescaling: true,
             filter_mode,
-            dumping_vram: false,
-            cropping_v_overscan: true,
+            auto_prescale: true,
+            prescale_shader,
+            prescale_pipelines: HashMap::new(),
         })
     }
 
@@ -171,137 +269,108 @@ impl WgpuRenderer {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
-    }
 
-    pub fn toggle_prescaling(&mut self) {
-        self.prescaling = !self.prescaling;
-        self.frame_textures.clear();
-
-        log::info!("Prescaling enabled: {}", self.prescaling);
+        self.prescale_pipelines.clear();
     }
 
     pub fn toggle_filter_mode(&mut self) {
         self.filter_mode = match self.filter_mode {
-            FilterMode::Nearest => FilterMode::Linear,
             FilterMode::Linear => FilterMode::Nearest,
+            FilterMode::Nearest => FilterMode::Linear,
         };
         self.sampler = create_sampler(&self.device, self.filter_mode);
 
-        log::info!("Current filter mode is {:?}", self.filter_mode);
+        log::info!("Filter mode is now {:?}", self.filter_mode);
     }
 
-    pub fn toggle_dumping_vram(&mut self, window: &Window) {
-        self.dumping_vram = !self.dumping_vram;
+    pub fn toggle_prescaling(&mut self) {
+        self.auto_prescale = !self.auto_prescale;
+        self.prescale_pipelines.clear();
 
-        if self.dumping_vram {
-            let _ = window.request_inner_size(LogicalSize::new(1024, 512));
-        } else {
-            let _ = window.request_inner_size(LogicalSize::new(585, 448));
-        }
-
-        log::info!("Dumping VRAM: {}", self.dumping_vram);
+        log::info!("Auto prescaling on: {}", self.auto_prescale);
     }
 
-    pub fn toggle_cropping_v_overscan(&mut self) {
-        self.cropping_v_overscan = !self.cropping_v_overscan;
-
-        log::info!("Cropping vertical overscan: {}", self.cropping_v_overscan);
+    pub fn device(&self) -> Rc<Device> {
+        Rc::clone(&self.device)
     }
 
-    // TODO pay attention to display width and X offset?
-    fn populate_frame_buffer(&mut self, vram: &[u16], params: RenderParams) {
-        log::debug!("Populating frame buffer using parameters {params:?}");
-
-        if self.dumping_vram {
-            for (i, &rgb555_color) in vram.iter().enumerate() {
-                self.frame_buffer[i] = convert_rgb555_color(rgb555_color);
-            }
-            return;
-        }
-
-        if !params.display_enabled || params.display_width == 0 || params.display_height == 0 {
-            self.frame_buffer[..(params.frame_width * params.frame_height) as usize]
-                .fill(Color::BLACK);
-            return;
-        }
-
-        if params.display_y_offset > 0 {
-            self.frame_buffer[..(params.frame_width * params.display_y_offset as u32) as usize]
-                .fill(Color::BLACK);
-        }
-
-        let effective_display_height = if params.frame_height == 480 {
-            params.display_height * 2
-        } else {
-            params.display_height
-        };
-
-        let y_begin = cmp::max(0, params.display_y_offset) as u32;
-        let y_end = cmp::min(
-            params.frame_height,
-            effective_display_height.wrapping_add_signed(params.display_y_offset),
-        );
-        for y in y_begin..y_end {
-            let vram_y =
-                y.wrapping_add(params.frame_y).wrapping_add_signed(-params.display_y_offset)
-                    & 0x1FF;
-            let vram_row = (1024 * vram_y) as usize;
-            let frame_buffer_row = (params.frame_width * y) as usize;
-
-            // Always treat frame X as a halfword coordinate, even in 24bpp mode
-            // Final Fantasy 8 depends on this for FMVs
-            let vram_row_start = params.frame_x;
-
-            match params.color_depth {
-                ColorDepthBits::Fifteen => {
-                    for x in 0..params.frame_width {
-                        let vram_row_offset = (vram_row_start + x) & 0x3FF;
-                        let vram_addr = vram_row + vram_row_offset as usize;
-
-                        let rgb555_color = vram[vram_addr];
-                        self.frame_buffer[frame_buffer_row + x as usize] =
-                            convert_rgb555_color(rgb555_color);
-                    }
-                }
-                ColorDepthBits::TwentyFour => {
-                    for x in 0..params.frame_width {
-                        let vram_row_offset = (vram_row_start + 3 * x / 2) as usize;
-                        let first_halfword = vram[vram_row | (vram_row_offset & 0x7FF)];
-                        let second_halfword = vram[vram_row | ((vram_row_offset + 1) & 0x7FF)];
-
-                        let (r, g, b) = if x % 2 == 0 {
-                            (
-                                first_halfword as u8,
-                                (first_halfword >> 8) as u8,
-                                second_halfword as u8,
-                            )
-                        } else {
-                            (
-                                (first_halfword >> 8) as u8,
-                                second_halfword as u8,
-                                (second_halfword >> 8) as u8,
-                            )
-                        };
-                        self.frame_buffer[frame_buffer_row + x as usize] = Color::rgb(r, g, b);
-                    }
-                }
-            }
-        }
-
-        if y_end < params.frame_height {
-            self.frame_buffer[(params.frame_width * y_end) as usize
-                ..(params.frame_width * params.frame_height) as usize]
-                .fill(Color::BLACK);
-        }
+    pub fn queue(&self) -> Rc<Queue> {
+        Rc::clone(&self.queue)
     }
 }
 
-fn convert_rgb555_color(rgb555_color: u16) -> Color {
-    let r = RGB_5_TO_8[(rgb555_color & 0x1F) as usize];
-    let g = RGB_5_TO_8[((rgb555_color >> 5) & 0x1F) as usize];
-    let b = RGB_5_TO_8[((rgb555_color >> 10) & 0x1F) as usize];
+impl Renderer for WgpuRenderer {
+    type Err = anyhow::Error;
 
-    Color::rgb(r, g, b)
+    fn render_frame(&mut self, frame: &Texture, pixel_aspect_ratio: f64) -> Result<(), Self::Err> {
+        let output = self.surface.get_current_texture()?;
+        let output_view = output.texture.create_view(&TextureViewDescriptor::default());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor { label: "render_encoder".into() });
+
+        let input_texture = if self.auto_prescale {
+            let prescale_pipeline = self
+                .prescale_pipelines
+                .entry(PrescaleKey::new(frame.size(), pixel_aspect_ratio))
+                .or_insert_with(|| {
+                    PrescalePipeline::new(
+                        &self.device,
+                        &self.prescale_shader,
+                        frame.size(),
+                        output.texture.size(),
+                        pixel_aspect_ratio,
+                    )
+                });
+
+            execute_prescale_pipeline(&self.device, prescale_pipeline, frame, &mut encoder);
+
+            &prescale_pipeline.texture
+        } else {
+            frame
+        };
+
+        let render_bind_group = create_render_bind_group(
+            &self.device,
+            &self.render_bind_group_layout,
+            input_texture,
+            &self.sampler,
+        );
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: "output_render_pass".into(),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &output_view,
+                    resolve_target: None,
+                    ops: Operations { load: LoadOp::Clear(Color::BLACK), store: StoreOp::Store },
+                })],
+                ..RenderPassDescriptor::default()
+            });
+
+            let viewport =
+                determine_viewport(frame.size(), output.texture.size(), pixel_aspect_ratio);
+            render_pass.set_viewport(
+                viewport.x,
+                viewport.y,
+                viewport.width,
+                viewport.height,
+                0.0,
+                1.0,
+            );
+
+            render_pass.set_bind_group(0, &render_bind_group, &[]);
+            render_pass.set_pipeline(&self.render_pipeline);
+
+            render_pass.draw(0..4, 0..1);
+        }
+
+        self.queue.submit(iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
 }
 
 fn create_render_bind_group_layout(device: &Device) -> BindGroupLayout {
@@ -328,181 +397,23 @@ fn create_render_bind_group_layout(device: &Device) -> BindGroupLayout {
     })
 }
 
-fn create_frame_scaling(
-    device: &Device,
-    scale_module: &ShaderModule,
-    format: TextureFormat,
-    size: FrameSize,
-    prescaling: bool,
-) -> FrameScaling {
-    log::info!("Creating {}x{} frame texture", size.width, size.height);
-
-    let raw = device.create_texture(&TextureDescriptor {
-        label: format!("raw_frame_texture_{}x{}", size.width, size.height).as_str().into(),
-        size: Extent3d { width: size.width, height: size.height, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: TextureDimension::D2,
-        format,
-        usage: TextureUsages::COPY_DST | TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
-
-    if !prescaling || (size.width >= 512 && size.height >= 448) {
-        return FrameScaling::None { raw };
-    }
-
-    let scaled_width = if size.width < 512 { 2 * size.width } else { size.width };
-    let scaled_height = if size.height < 448 { 2 * size.height } else { size.height };
-    log::info!(
-        "Scaling {}x{} frame to {scaled_width}x{scaled_height} before display",
-        size.width,
-        size.height
-    );
-
-    let scaled = device.create_texture(&TextureDescriptor {
-        label: format!("scaled_frame_texture_{scaled_width}x{scaled_height}").as_str().into(),
-        size: Extent3d { width: scaled_width, height: scaled_height, depth_or_array_layers: 1 },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: TextureDimension::D2,
-        format,
-        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-
-    let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-        label: "scale_bind_group_layout".into(),
-        entries: &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Texture {
-                    sample_type: TextureSampleType::Float { filterable: false },
-                    view_dimension: TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-
-    let width_scale_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: "width_scale_buffer".into(),
-        contents: &(scaled_width / size.width).to_le_bytes(),
-        usage: BufferUsages::UNIFORM,
-    });
-    let height_scale_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: "height_scale_buffer".into(),
-        contents: &(scaled_height / size.height).to_le_bytes(),
-        usage: BufferUsages::UNIFORM,
-    });
-
-    let raw_view = raw.create_view(&TextureViewDescriptor::default());
-
-    let bind_group = device.create_bind_group(&BindGroupDescriptor {
-        label: "scale_bind_group".into(),
-        layout: &bind_group_layout,
-        entries: &[
-            BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&raw_view) },
-            BindGroupEntry {
-                binding: 1,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &width_scale_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-            BindGroupEntry {
-                binding: 2,
-                resource: BindingResource::Buffer(BufferBinding {
-                    buffer: &height_scale_buffer,
-                    offset: 0,
-                    size: None,
-                }),
-            },
-        ],
-    });
-
-    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        label: "scale_pipeline_layout".into(),
-        bind_group_layouts: &[&bind_group_layout],
-        push_constant_ranges: &[],
-    });
-
-    let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: "scale_pipeline".into(),
-        layout: Some(&pipeline_layout),
-        vertex: VertexState { module: scale_module, entry_point: "vs_main", buffers: &[] },
-        primitive: PrimitiveState {
-            topology: PrimitiveTopology::TriangleStrip,
-            strip_index_format: None,
-            front_face: FrontFace::Ccw,
-            cull_mode: None,
-            unclipped_depth: false,
-            polygon_mode: PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: MultisampleState { count: 1, mask: !0, alpha_to_coverage_enabled: false },
-        fragment: Some(FragmentState {
-            module: scale_module,
-            entry_point: "fs_main",
-            targets: &[Some(ColorTargetState {
-                format,
-                blend: Some(BlendState::REPLACE),
-                write_mask: ColorWrites::ALL,
-            })],
-        }),
-        multiview: None,
-    });
-
-    FrameScaling::Scaled { raw, scaled, bind_group, pipeline }
-}
-
-fn create_sampler(device: &Device, filter_mode: FilterMode) -> Sampler {
-    device.create_sampler(&SamplerDescriptor {
-        label: "sampler".into(),
-        mag_filter: filter_mode,
-        min_filter: filter_mode,
-        mipmap_filter: filter_mode,
-        ..SamplerDescriptor::default()
-    })
-}
-
 fn create_render_bind_group(
     device: &Device,
     layout: &BindGroupLayout,
-    texture: &Texture,
+    frame: &Texture,
     sampler: &Sampler,
 ) -> BindGroup {
-    let texture_view = texture.create_view(&TextureViewDescriptor::default());
+    let frame_view = frame.create_view(&TextureViewDescriptor {
+        label: "render_frame_srgb_view".into(),
+        format: Some(TextureFormat::Rgba8UnormSrgb),
+        ..TextureViewDescriptor::default()
+    });
 
     device.create_bind_group(&BindGroupDescriptor {
         label: "render_bind_group".into(),
         layout,
         entries: &[
-            BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&texture_view) },
+            BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&frame_view) },
             BindGroupEntry { binding: 1, resource: BindingResource::Sampler(sampler) },
         ],
     })
@@ -548,139 +459,103 @@ fn create_render_pipeline(
     })
 }
 
-#[derive(Debug, Error)]
-pub enum WgpuError {
-    #[error("wgpu surface error: {0}")]
-    Surface(#[from] SurfaceError),
+fn create_sampler(device: &Device, filter_mode: FilterMode) -> Sampler {
+    device.create_sampler(&SamplerDescriptor {
+        label: "sampler".into(),
+        mag_filter: filter_mode,
+        min_filter: filter_mode,
+        mipmap_filter: filter_mode,
+        ..SamplerDescriptor::default()
+    })
 }
 
-const RGB_5_TO_8: &[u8; 32] = &[
-    0, 8, 16, 25, 33, 41, 49, 58, 66, 74, 82, 90, 99, 107, 115, 123, 132, 140, 148, 156, 165, 173,
-    181, 189, 197, 206, 214, 222, 230, 239, 247, 255,
-];
+struct Viewport {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
 
-impl Renderer for WgpuRenderer {
-    type Err = WgpuError;
-
-    fn render_frame(&mut self, vram: &[u16], params: RenderParams) -> Result<(), Self::Err> {
-        self.populate_frame_buffer(vram, params);
-
-        let (overscan_rows_top, frame_size) = if self.dumping_vram {
-            (0, FrameSize { width: 1024, height: 512 })
-        } else if self.cropping_v_overscan {
-            let cropped_frame_height = params.frame_height * 14 / 15;
-            let overscan_rows_top = params.frame_height / 30;
-
-            let frame_size = FrameSize { width: params.frame_width, height: cropped_frame_height };
-
-            (overscan_rows_top, frame_size)
-        } else {
-            (0, FrameSize { width: params.frame_width, height: params.frame_height })
+fn determine_viewport(
+    frame_size: Extent3d,
+    surface_size: Extent3d,
+    pixel_aspect_ratio: f64,
+) -> Viewport {
+    let aspect_correct_width =
+        (f64::from(surface_size.height) * pixel_aspect_ratio * f64::from(frame_size.width)
+            / f64::from(frame_size.height)) as f32;
+    if aspect_correct_width <= surface_size.width as f32 {
+        return Viewport {
+            x: (surface_size.width as f32 - aspect_correct_width) / 2.0,
+            y: 0.0,
+            width: aspect_correct_width,
+            height: surface_size.height as f32,
         };
-
-        let frame_scaling = self.frame_textures.entry(frame_size).or_insert_with(|| {
-            create_frame_scaling(
-                &self.device,
-                &self.scale_module,
-                self.frame_texture_format,
-                frame_size,
-                self.prescaling,
-            )
-        });
-
-        let raw_texture = match frame_scaling {
-            FrameScaling::None { raw } | FrameScaling::Scaled { raw, .. } => raw,
-        };
-
-        self.queue.write_texture(
-            ImageCopyTexture {
-                texture: raw_texture,
-                mip_level: 0,
-                origin: Origin3d::ZERO,
-                aspect: TextureAspect::All,
-            },
-            bytemuck::cast_slice(&self.frame_buffer),
-            ImageDataLayout {
-                offset: (frame_size.width * 4 * overscan_rows_top).into(),
-                bytes_per_row: Some(frame_size.width * 4),
-                rows_per_image: None,
-            },
-            Extent3d {
-                width: frame_size.width,
-                height: frame_size.height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor { label: "command_encoder".into() });
-
-        if let FrameScaling::Scaled { scaled, bind_group, pipeline, .. } = frame_scaling {
-            let scaled_view = scaled.create_view(&TextureViewDescriptor::default());
-
-            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: "scale_pass".into(),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &scaled_view,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: LoadOp::Clear(wgpu::Color::BLACK),
-                        store: StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            render_pass.set_bind_group(0, bind_group, &[]);
-            render_pass.set_pipeline(pipeline);
-
-            render_pass.draw(0..4, 0..1);
-        }
-
-        let output_texture = self.surface.get_current_texture()?;
-        let output_view = output_texture.texture.create_view(&TextureViewDescriptor::default());
-
-        let frame_texture = match frame_scaling {
-            FrameScaling::None { raw: texture } | FrameScaling::Scaled { scaled: texture, .. } => {
-                texture
-            }
-        };
-
-        let render_bind_group = create_render_bind_group(
-            &self.device,
-            &self.render_bind_group_layout,
-            frame_texture,
-            &self.sampler,
-        );
-
-        {
-            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: "render_pass".into(),
-                color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &output_view,
-                    resolve_target: None,
-                    ops: Operations {
-                        load: LoadOp::Clear(wgpu::Color::BLACK),
-                        store: StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            render_pass.set_bind_group(0, &render_bind_group, &[]);
-            render_pass.set_pipeline(&self.render_pipeline);
-
-            render_pass.draw(0..4, 0..1);
-        }
-
-        self.queue.submit(iter::once(encoder.finish()));
-        output_texture.present();
-
-        Ok(())
     }
+
+    let aspect_correct_height = (f64::from(surface_size.width) / pixel_aspect_ratio
+        * f64::from(frame_size.height)
+        / f64::from(frame_size.width)) as f32;
+    Viewport {
+        x: 0.0,
+        y: (surface_size.height as f32 - aspect_correct_height) / 2.0,
+        width: surface_size.width as f32,
+        height: aspect_correct_height,
+    }
+}
+
+fn execute_prescale_pipeline(
+    device: &Device,
+    pipeline: &PrescalePipeline,
+    frame: &Texture,
+    encoder: &mut CommandEncoder,
+) {
+    let frame_view = frame.create_view(&TextureViewDescriptor {
+        label: "prescale_frame_view".into(),
+        format: Some(TextureFormat::Rgba8UnormSrgb),
+        ..TextureViewDescriptor::default()
+    });
+
+    let bind_group = device.create_bind_group(&BindGroupDescriptor {
+        label: "prescale_bind_group".into(),
+        layout: &pipeline.bind_group_layout,
+        entries: &[
+            BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&frame_view) },
+            BindGroupEntry {
+                binding: 1,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &pipeline.width_scale_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::Buffer(BufferBinding {
+                    buffer: &pipeline.height_scale_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            },
+        ],
+    });
+
+    let scaled_view = pipeline.texture.create_view(&TextureViewDescriptor::default());
+
+    let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        label: "prescale_render_pass".into(),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: &scaled_view,
+            resolve_target: None,
+            ops: Operations { load: LoadOp::Clear(Color::BLACK), store: StoreOp::Store },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    });
+
+    render_pass.set_bind_group(0, &bind_group, &[]);
+    render_pass.set_pipeline(&pipeline.pipeline);
+
+    render_pass.draw(0..4, 0..1);
 }

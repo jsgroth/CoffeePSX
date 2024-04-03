@@ -1626,12 +1626,14 @@ name = "ps1-core"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "bytemuck",
  "cdrom",
  "log",
  "proc-bitfield",
  "proc-macros",
  "rand",
  "thiserror",
+ "wgpu",
 ]
 
 [[package]]

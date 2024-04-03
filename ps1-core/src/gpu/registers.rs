@@ -63,15 +63,6 @@ impl HorizontalResolution {
         }
     }
 
-    pub fn to_pixels(self) -> u16 {
-        match self {
-            Self::TwoFiftySix => 256,
-            Self::ThreeTwenty => 320,
-            Self::FiveTwelve => 512,
-            Self::SixForty => 640,
-        }
-    }
-
     pub fn dot_clock_divider(self) -> u16 {
         match self {
             Self::TwoFiftySix => 10,

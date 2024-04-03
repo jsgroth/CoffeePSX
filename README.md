@@ -23,7 +23,6 @@ Not yet implemented:
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
 * DMA timings and GPU draw timings; right now all DMAs and GPU commands finish instantly from software's perspective
 * PAL display and video timings; only NTSC is supported right now
-* Proper aspect ratio handling; the renderer currently simply stretches to fill the window (which defaults to an aspect-correct but small size)
 * SPU: Capture buffers, reverb FIR filter
 * Some CD-ROM functionality including infrequently used commands, audio report interrupts, and non-standard CD-XA audio modes
 * MDEC 4bpp/8bpp modes
@@ -82,7 +81,7 @@ Hotkeys:
 * Load state: F6 key
 * Pause: P key
 * Step to Next Frame: N key
-* Toggle 2x Prescaling: / key (Forward Slash)
+* Toggle Auto-Prescaling: / key (Forward Slash)
 * Toggle Bilinear Interpolation: ; key (Semicolon)
 * Toggle VRAM view: ' key (Quote)
 * Toggle Vertical Overscan Cropping: . key (Period)

@@ -7,7 +7,10 @@ use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
-use ps1_core::api::{AudioOutput, Ps1Emulator, Ps1EmulatorState, SaveWriter, TickEffect};
+use ps1_core::api::{
+    AudioOutput, DisplayConfig, Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, SaveWriter,
+    TickEffect,
+};
 use ps1_core::input::Ps1Inputs;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
@@ -115,6 +118,7 @@ struct HandleKeyEventArgs<'a, Stream> {
     audio_stream: &'a Stream,
     elwt: &'a EventLoopWindowTarget<()>,
     inputs: &'a mut Ps1Inputs,
+    display_config: &'a mut DisplayConfig,
     save_state_path: &'a PathBuf,
     paused: &'a mut bool,
     step_to_next_frame: &'a mut bool,
@@ -129,6 +133,7 @@ fn handle_key_event<Stream: StreamTrait>(
         audio_stream,
         elwt,
         inputs,
+        display_config,
         save_state_path,
         paused,
         step_to_next_frame,
@@ -160,8 +165,20 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
             KeyCode::KeyN if pressed => *step_to_next_frame = true,
             KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
-            KeyCode::Quote if pressed => renderer.toggle_dumping_vram(window),
-            KeyCode::Period if pressed => renderer.toggle_cropping_v_overscan(),
+            KeyCode::Quote if pressed => {
+                display_config.dump_vram = !display_config.dump_vram;
+                emulator.update_display_config(*display_config);
+
+                if display_config.dump_vram {
+                    let _ = window.request_inner_size(LogicalSize::new(1024, 512));
+                } else {
+                    let _ = window.request_inner_size(LogicalSize::new(585, 448));
+                }
+            }
+            KeyCode::Period if pressed => {
+                display_config.crop_vertical_overscan = !display_config.crop_vertical_overscan;
+                emulator.update_display_config(*display_config);
+            }
             _ => {}
         },
         PhysicalKey::Unidentified(_) => {}
@@ -250,8 +267,35 @@ fn main() -> anyhow::Result<()> {
     let mut save_writer = FsSaveWriter { path: "card1.mcd".into() };
     let memory_card_1 = save_writer.load_memory_card().ok();
 
+    let window_title = match (&args.disc_path, &args.exe_path) {
+        (None, None) => "PS1 - (BIOS only)".into(),
+        (Some(disc_path), None) => {
+            format!(
+                "PS1 - {}",
+                Path::new(disc_path).with_extension("").file_name().unwrap().to_str().unwrap()
+            )
+        }
+        (None, Some(exe_path)) => {
+            format!("PS1 - {}", Path::new(exe_path).file_name().unwrap().to_str().unwrap())
+        }
+        (Some(_), Some(_)) => unreachable!(),
+    };
+
+    let event_loop = EventLoop::new()?;
+    let window = WindowBuilder::new()
+        .with_title(window_title)
+        .with_inner_size(LogicalSize::new(585, 448))
+        .build(&event_loop)?;
+
+    // SAFETY: The renderer does not outlive the window
+    let mut renderer = pollster::block_on(unsafe {
+        WgpuRenderer::new(&window, (window.inner_size().width, window.inner_size().height))
+    })?;
+
     let bios_rom = fs::read(&args.bios_path)?;
-    let mut emulator_builder = Ps1Emulator::builder(bios_rom).tty_enabled(args.tty_enabled);
+    let mut emulator_builder =
+        Ps1EmulatorBuilder::new(bios_rom, renderer.device(), renderer.queue())
+            .tty_enabled(args.tty_enabled);
     if let Some(disc_path) = &args.disc_path {
         log::info!("Loading CD-ROM image from '{disc_path}'");
 
@@ -274,29 +318,6 @@ fn main() -> anyhow::Result<()> {
 
     let mut inputs = Ps1Inputs::default();
 
-    let window_title = match (&args.disc_path, &args.exe_path) {
-        (None, None) => "PS1 - (BIOS only)".into(),
-        (Some(disc_path), None) => {
-            format!(
-                "PS1 - {}",
-                Path::new(disc_path).with_extension("").file_name().unwrap().to_str().unwrap()
-            )
-        }
-        (None, Some(exe_path)) => {
-            format!("PS1 - {}", Path::new(exe_path).file_name().unwrap().to_str().unwrap())
-        }
-        (Some(_), Some(_)) => unreachable!(),
-    };
-
-    let event_loop = EventLoop::new()?;
-    let window = WindowBuilder::new()
-        .with_title(window_title)
-        .with_inner_size(LogicalSize::new(585, 448))
-        .build(&event_loop)?;
-
-    // SAFETY: The renderer does not outlive the window
-    let mut renderer = pollster::block_on(unsafe { WgpuRenderer::new(&window) })?;
-
     let (mut audio_output, audio_stream) = create_audio_output()?;
     audio_stream.play()?;
 
@@ -314,6 +335,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    let mut display_config = DisplayConfig::default();
     let mut paused = false;
     let mut step_to_next_frame = false;
 
@@ -335,6 +357,7 @@ fn main() -> anyhow::Result<()> {
                     audio_stream: &audio_stream,
                     elwt,
                     inputs: &mut inputs,
+                    display_config: &mut display_config,
                     save_state_path: &save_state_path,
                     paused: &mut paused,
                     step_to_next_frame: &mut step_to_next_frame,
