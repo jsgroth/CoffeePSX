@@ -297,7 +297,7 @@ pub fn triangle(
     }
 
     // Determine if the vertices are in clockwise order; if not, swap the first 2
-    if cross_product_z(v[0].to_float(), v[1].to_float(), v[2].to_float()) < 0.0 {
+    if cross_product_z(v[0], v[1], v[2]) < 0 {
         triangle_swapped_vertices(
             v,
             shading,
@@ -312,10 +312,6 @@ pub fn triangle(
         return;
     }
 
-    if !draw_settings.is_drawing_area_valid() {
-        return;
-    }
-
     let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
     let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
 
@@ -325,7 +321,6 @@ pub fn triangle(
     let v = v.map(|vertex| Vertex { x: vertex.x + x_offset, y: vertex.y + y_offset });
 
     log::trace!("Triangle vertices: {v:?}");
-    log::trace!("Bounding box: ({draw_min_x}, {draw_min_y}) to ({draw_max_x}, {draw_max_y}");
 
     // Compute bounding box, clamped to display area
     let min_x =
@@ -337,8 +332,13 @@ pub fn triangle(
     let max_y =
         cmp::max(v[0].y, cmp::max(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
 
-    // Operate in floating-point from here on
-    let v = v.map(Vertex::to_float);
+    if min_x > max_x || min_y > max_y {
+        // Bounding box is empty, which can happen if the natural bounding box is entirely outside
+        // of the drawing area
+        return;
+    }
+
+    log::trace!("Bounding box: ({min_x}, {min_y}) to ({max_x}, {max_y})");
 
     // Iterate over every pixel in the bounding box to determine which ones to rasterize
     for py in min_y..=max_y {
@@ -406,7 +406,7 @@ fn triangle_swapped_vertices(
 }
 
 struct RasterizePixelArgs<'a> {
-    v: [VertexFloat; 3],
+    v: [Vertex; 3],
     shading: PolygonShading,
     semi_transparent: bool,
     global_semi_transparency_mode: SemiTransparencyMode,
@@ -441,21 +441,21 @@ fn rasterize_pixel(
         return;
     }
 
-    let p = VertexFloat { x: px.into(), y: py.into() };
+    let p = Vertex { x: px, y: py };
 
     // A given point is contained within the triangle if the Z component of the cross-product of
     // v0->p and v0->v1 is non-negative for each edge v0->v1 (assuming the vertices are ordered
     // clockwise)
     for edge in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
         let cpz = cross_product_z(edge.0, edge.1, p);
-        if cpz < 0.0 {
+        if cpz < 0 {
             return;
         }
 
         // If the cross product is 0, the point is collinear with these two vertices.
         // The PS1 GPU does not draw edges on the bottom of the triangle when this happens,
         // nor does it draw a vertical right edge
-        if cpz.abs() < 1e-3 {
+        if cpz == 0 {
             // Since the vertices are clockwise, increasing Y means this edge is on the
             // bottom or right of the triangle.
             if edge.1.y > edge.0.y {
@@ -463,24 +463,39 @@ fn rasterize_pixel(
             }
 
             // If the Y values are equal and X is decreasing, this is a horizontal bottom edge
-            if (edge.1.y - edge.0.y).abs() < 1e-3 && edge.1.x < edge.0.x {
+            if edge.1.y == edge.0.y && edge.1.x < edge.0.x {
                 return;
             }
         }
     }
 
+    let barycentric_coordinates = match (shading, texture_mode) {
+        (PolygonShading::Gouraud(..), _) | (_, TextureMode::Raw | TextureMode::Modulated) => {
+            compute_barycentric_coordinates(
+                p.to_float(),
+                v[0].to_float(),
+                v[1].to_float(),
+                v[2].to_float(),
+            )
+        }
+        _ => [0.0, 0.0, 0.0],
+    };
+
     let shading_color = match shading {
         PolygonShading::Flat(color) => color,
         PolygonShading::Gouraud(color0, color1, color2) => {
-            apply_gouraud_shading(p, v, [color0, color1, color2])
+            apply_gouraud_shading(barycentric_coordinates, [color0, color1, color2])
         }
     };
 
     let (textured_color, mask_bit) = match texture_mode {
         TextureMode::None => (shading_color, false),
         TextureMode::Raw | TextureMode::Modulated => {
-            let (tex_u, tex_v) =
-                interpolate_uv_coordinates(p, v, texture_params.u, texture_params.v);
+            let (tex_u, tex_v) = interpolate_uv_coordinates(
+                barycentric_coordinates,
+                texture_params.u,
+                texture_params.v,
+            );
 
             let texture_pixel = sample_texture(
                 vram,
@@ -555,7 +570,7 @@ fn modulate_color(texture_color: Color, shading_color: Color) -> Color {
     }
 }
 
-fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]) -> Color {
+fn apply_gouraud_shading([alpha, beta, gamma]: [f64; 3], colors: [Color; 3]) -> Color {
     if colors[0] == colors[1] && colors[1] == colors[2] {
         return colors[0];
     }
@@ -565,7 +580,6 @@ fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]
     let bf = colors.map(|color| f64::from(color.b));
 
     // Interpolate between the color of each vertex using Barycentric/affine coordinates
-    let (alpha, beta, gamma) = compute_affine_coordinates(p, v[0], v[1], v[2]);
     let r = alpha * rf[0] + beta * rf[1] + gamma * rf[2];
     let g = alpha * gf[0] + beta * gf[1] + gamma * gf[2];
     let b = alpha * bf[0] + beta * bf[1] + gamma * bf[2];
@@ -573,18 +587,9 @@ fn apply_gouraud_shading(p: VertexFloat, v: [VertexFloat; 3], colors: [Color; 3]
     Color { r: r.round() as u8, g: g.round() as u8, b: b.round() as u8 }
 }
 
-fn interpolate_uv_coordinates(
-    p: VertexFloat,
-    vertices: [VertexFloat; 3],
-    u: [u8; 3],
-    v: [u8; 3],
-) -> (u8, u8) {
+fn interpolate_uv_coordinates([alpha, beta, gamma]: [f64; 3], u: [u8; 3], v: [u8; 3]) -> (u8, u8) {
     let uf = u.map(f64::from);
     let vf = v.map(f64::from);
-
-    // Similar to Gouraud shading, interpolate the U/V coordinates between vertices by using
-    // Barycentric/affine coordinates
-    let (alpha, beta, gamma) = compute_affine_coordinates(p, vertices[0], vertices[1], vertices[2]);
 
     let u = alpha * uf[0] + beta * uf[1] + gamma * uf[2];
     let v = alpha * vf[0] + beta * vf[1] + gamma * vf[2];
@@ -596,28 +601,28 @@ fn interpolate_uv_coordinates(
 }
 
 // Z component of the cross product between v0->v1 and v0->v2
-fn cross_product_z(v0: VertexFloat, v1: VertexFloat, v2: VertexFloat) -> f64 {
+fn cross_product_z(v0: Vertex, v1: Vertex, v2: Vertex) -> i32 {
     (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
 }
 
-fn compute_affine_coordinates(
+fn compute_barycentric_coordinates(
     p: VertexFloat,
     v1: VertexFloat,
     v2: VertexFloat,
     v3: VertexFloat,
-) -> (f64, f64, f64) {
+) -> [f64; 3] {
     let determinant = (v1.x - v3.x) * (v2.y - v3.y) - (v2.x - v3.x) * (v1.y - v3.y);
     if determinant.abs() < 1e-6 {
         // TODO what to do when points are collinear?
         let one_third = 1.0 / 3.0;
-        return (one_third, one_third, one_third);
+        return [one_third, one_third, one_third];
     }
 
     let alpha = ((p.x - v3.x) * (v2.y - v3.y) - (p.y - v3.y) * (v2.x - v3.x)) / determinant;
     let beta = ((p.x - v3.x) * (v3.y - v1.y) - (p.y - v3.y) * (v3.x - v1.x)) / determinant;
     let gamma = 1.0 - alpha - beta;
 
-    (alpha, beta, gamma)
+    [alpha, beta, gamma]
 }
 
 fn sample_texture(
