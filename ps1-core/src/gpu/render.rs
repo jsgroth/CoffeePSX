@@ -387,14 +387,14 @@ fn populate_frame_buffer(
                     frame_buffer[frame_buffer_addr] = Color::rgb(r, g, b);
                 }
                 ColorDepthBits::TwentyFour => {
-                    let vram_x = frame_coords.frame_x
-                        + 3 * ((x + frame_coords.display_x_offset)
-                            .wrapping_sub(frame_coords.display_x_start))
-                            / 2;
+                    let effective_x = (x + frame_coords.display_x_offset)
+                        .wrapping_sub(frame_coords.display_x_start)
+                        & 0x3FF;
+                    let vram_x = frame_coords.frame_x + 3 * effective_x / 2;
                     let first_halfword = vram[vram_row_addr | (vram_x & 0x3FF) as usize];
                     let second_halfword = vram[vram_row_addr | ((vram_x + 1) & 0x3FF) as usize];
 
-                    let color = if x % 2 == 0 {
+                    let color = if effective_x % 2 == 0 {
                         Color::rgb(
                             first_halfword as u8,
                             (first_halfword >> 8) as u8,
