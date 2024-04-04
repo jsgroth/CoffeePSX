@@ -231,13 +231,13 @@ fn compute_frame_location(
     let y1 = registers.y_display_range.0 as i32;
     let y2 = cmp::min(screen_bottom, registers.y_display_range.1 as i32);
 
-    let mut display_width = (x2 - x1) / dot_clock_divider;
+    let mut display_width_clocks = x2 - x1;
     let mut display_height = (y2 - y1) * height_multipler;
 
     let mut display_x_offset = 0;
     if x1 < SCREEN_LEFT {
         display_x_offset = (SCREEN_LEFT - x1) / dot_clock_divider;
-        display_width -= (SCREEN_LEFT - x1) / dot_clock_divider;
+        display_width_clocks -= SCREEN_LEFT - x1;
     }
 
     let mut display_y_offset = 0;
@@ -246,6 +246,7 @@ fn compute_frame_location(
         display_height -= (screen_top - y1) * height_multipler;
     }
 
+    let mut display_width = display_width_clocks / dot_clock_divider;
     if display_width <= 0 || display_height <= 0 {
         return (None, frame_size);
     }
@@ -253,13 +254,12 @@ fn compute_frame_location(
     let display_x_start = cmp::max(0, (x1 - SCREEN_LEFT) / dot_clock_divider);
     let display_y_start = cmp::max(0, (y1 - screen_top) * height_multipler);
 
-    assert!(
-        display_x_start + display_width <= frame_width,
-        "{display_x_start} + {display_width} <= {frame_width}"
-    );
+    // Clamp display width in case of errors caused by dot clock division
+    display_width = cmp::min(display_width, frame_width - display_x_start);
+
     assert!(
         display_y_start + display_height <= frame_height,
-        "{display_y_start} + {display_height} <= {frame_height}"
+        "Vertical display range: {display_y_start} + {display_height} <= {frame_height}"
     );
 
     (
