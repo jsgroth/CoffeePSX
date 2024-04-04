@@ -184,7 +184,7 @@ pub struct WgpuRenderer {
 impl WgpuRenderer {
     /// # Safety
     ///
-    /// `window` must not outlive the returned `WgpuRenderer`.
+    /// The value referenced by `window` must live at least as long as the returned `WgpuRenderer`.
     pub async unsafe fn new<W>(window: &W, window_size: (u32, u32)) -> anyhow::Result<Self>
     where
         W: HasWindowHandle + HasDisplayHandle,
