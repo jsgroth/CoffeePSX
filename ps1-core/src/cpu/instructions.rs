@@ -275,7 +275,7 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.bus_read_u8(bus, address);
-        self.registers.write_gpr_delayed(parse_rt(opcode), byte);
+        self.registers.write_gpr_delayed(parse_rt(opcode), byte & 0xFF);
     }
 
     // LH: Load halfword
@@ -301,7 +301,7 @@ impl R3000 {
         }
 
         let halfword = self.bus_read_u16(bus, address);
-        self.registers.write_gpr_delayed(parse_rt(opcode), halfword);
+        self.registers.write_gpr_delayed(parse_rt(opcode), halfword & 0xFFFF);
 
         Ok(())
     }
