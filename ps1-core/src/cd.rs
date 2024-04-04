@@ -80,12 +80,24 @@ impl CdInterruptRegisters {
 
     fn write_enabled(&mut self, value: u8) {
         self.enabled = value & 0x1F;
+        if !self.pending() {
+            // Necessary to prevent a freeze if another interrupt is generated on the next clock
+            // cycle
+            self.prev_pending = false;
+        }
+
         log::debug!("Interrupts enabled write: {:02X}", self.enabled);
     }
 
     fn write_flags(&mut self, value: u8, parameter_fifo: &mut ParameterFifo) {
         // Bits 0-4 acknowledge interrupts if set
         self.flags &= !(value & 0x1F);
+        if !self.pending() {
+            // Necessary to prevent a freeze if another interrupt is generated on the next clock
+            // cycle
+            self.prev_pending = false;
+        }
+
         log::debug!("Acknowledged CD-ROM interrupts: {:02X}", value & 0x1F);
 
         // Bit 6 resets the parameter FIFO if set
@@ -617,7 +629,11 @@ impl CdController {
             0x1E => (Command::ReadToc, INIT_COMMAND_CYCLES),
             _ => todo!("Command byte {command_byte:02X}"),
         };
-        self.command_state = CommandState::ReceivingCommand { command, cycles_remaining: cycles };
+        self.command_state = if self.interrupts.int_queued() {
+            CommandState::CommandQueued { command, cycles }
+        } else {
+            CommandState::ReceivingCommand { command, cycles_remaining: cycles }
+        };
 
         log::debug!("Received command, new state: {:?}", self.command_state);
     }
