@@ -290,6 +290,10 @@ pub fn triangle(
     texture_window: TextureWindow,
     vram: &mut Vram,
 ) {
+    if !draw_settings.is_drawing_area_valid() {
+        return;
+    }
+
     if !vertices_valid(v[0], v[1]) || !vertices_valid(v[1], v[2]) || !vertices_valid(v[0], v[2]) {
         return;
     }
