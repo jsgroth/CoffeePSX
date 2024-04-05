@@ -158,11 +158,11 @@ impl Registers {
         let ready_to_receive_command =
             matches!(gp0_state.command_state, Gp0CommandState::WaitingForCommand);
         let ready_to_send_vram =
-            matches!(gp0_state.command_state, Gp0CommandState::SendingToCpu(..));
+            matches!(gp0_state.command_state, Gp0CommandState::SendingToCpu { .. });
         let ready_to_receive_dma = matches!(
             gp0_state.command_state,
             Gp0CommandState::WaitingForCommand
-                | Gp0CommandState::SendingToCpu(..)
+                | Gp0CommandState::SendingToCpu { .. }
                 | Gp0CommandState::ReceivingFromCpu(..)
         );
 

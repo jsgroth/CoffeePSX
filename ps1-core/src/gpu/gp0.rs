@@ -2,40 +2,15 @@
 //!
 //! GP0 commands are primarily related to drawing graphics
 
-mod rasterize;
-
-use crate::gpu::gp0::rasterize::{
-    DrawLineParameters, DrawPolygonParameters, DrawRectangleParameters, LineShading,
-    PolygonShading, PolygonTextureParameters, RectangleTextureParameters, TextureMode,
+use crate::gpu::rasterizer::{
+    Color, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading,
+    RasterizerInterface, RectangleTextureMapping, TextureMappingMode, TriangleShading,
+    TriangleTextureMapping, Vertex, VramVramBlitArgs,
 };
 use crate::gpu::Gpu;
 use crate::num::U32Ext;
 use bincode::{Decode, Encode};
 use std::array;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-struct Vertex {
-    x: i32,
-    y: i32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
-pub struct Color {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-impl Color {
-    fn truncate_to_15_bit(self) -> u16 {
-        let r: u16 = (self.r >> 3).into();
-        let g: u16 = (self.g >> 3).into();
-        let b: u16 = (self.b >> 3).into();
-
-        // TODO mask bit?
-        r | (g << 5) | (b << 10)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum PolygonVertices {
@@ -122,38 +97,7 @@ pub struct VramTransferFields {
     destination_y: u32,
     x_size: u32,
     y_size: u32,
-    row: u32,
-    col: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IncrementEffect {
-    None,
-    Finished,
-}
-
-impl VramTransferFields {
-    fn vram_addr(&self) -> u32 {
-        let vram_x = (self.destination_x + self.col) & 0x3FF;
-        let vram_y = (self.destination_y + self.row) & 0x1FF;
-
-        1024 * vram_y + vram_x
-    }
-
-    #[must_use]
-    fn increment(&mut self) -> IncrementEffect {
-        self.col += 1;
-        if self.col == self.x_size {
-            self.col = 0;
-
-            self.row += 1;
-            if self.row == self.y_size {
-                return IncrementEffect::Finished;
-            }
-        }
-
-        IncrementEffect::None
-    }
+    halfwords_remaining: u32,
 }
 
 #[derive(Debug, Clone, Copy, Encode, Decode)]
@@ -162,7 +106,7 @@ pub enum Gp0CommandState {
     WaitingForParameters { command: DrawCommand, index: u8, remaining: u8 },
     WaitingForPolyline(LineCommandParameters),
     ReceivingFromCpu(VramTransferFields),
-    SendingToCpu(VramTransferFields),
+    SendingToCpu { buffer_idx: u32, halfwords_remaining: u32 },
 }
 
 impl Default for Gp0CommandState {
@@ -363,20 +307,6 @@ pub struct DrawSettings {
     pub check_mask_bit: bool,
 }
 
-impl DrawSettings {
-    fn is_drawing_area_valid(&self) -> bool {
-        self.draw_area_top_left.0 <= self.draw_area_bottom_right.0
-            && self.draw_area_top_left.1 <= self.draw_area_bottom_right.1
-    }
-
-    fn drawing_area_contains_vertex(&self, vertex: Vertex) -> bool {
-        (self.draw_area_top_left.0 as i32..=self.draw_area_bottom_right.0 as i32)
-            .contains(&vertex.x)
-            && (self.draw_area_top_left.1 as i32..=self.draw_area_bottom_right.1 as i32)
-                .contains(&vertex.y)
-    }
-}
-
 const PARAMETERS_LEN: usize = 11;
 
 #[derive(Debug, Clone, Encode, Decode)]
@@ -386,6 +316,7 @@ pub struct Gp0State {
     pub global_texture_page: TexturePage,
     pub texture_window: TextureWindow,
     pub draw_settings: DrawSettings,
+    pub blit_buffer: Vec<u16>,
 }
 
 impl Gp0State {
@@ -396,19 +327,24 @@ impl Gp0State {
             global_texture_page: TexturePage::default(),
             texture_window: TextureWindow::default(),
             draw_settings: DrawSettings::default(),
+            blit_buffer: Vec::with_capacity(1024 * 512),
         }
     }
 }
 
 impl Gpu {
-    pub(super) fn read_vram_word_for_cpu(&mut self, mut fields: VramTransferFields) -> u32 {
+    pub(super) fn read_vram_word_for_cpu(
+        &mut self,
+        buffer_idx: u32,
+        mut halfwords_remaining: u32,
+    ) -> u32 {
         let mut word = 0_u32;
-        for shift in [0, 16] {
-            let vram_addr = fields.vram_addr() as usize;
-            let halfword = self.vram[vram_addr];
-            word |= u32::from(halfword) << shift;
+        for i in 0..2 {
+            let halfword = self.gp0.blit_buffer[(buffer_idx + i) as usize];
+            word |= u32::from(halfword) << (16 * i);
 
-            if fields.increment() == IncrementEffect::Finished {
+            halfwords_remaining -= 1;
+            if halfwords_remaining == 0 {
                 log::trace!("VRAM-to-CPU blit finished, sending word {word:08X} to CPU");
 
                 self.gp0.command_state = Gp0CommandState::WaitingForCommand;
@@ -418,7 +354,8 @@ impl Gpu {
 
         log::trace!("VRAM-to-CPU blit in progress, sending word {word:08X} to CPU");
 
-        self.gp0.command_state = Gp0CommandState::SendingToCpu(fields);
+        self.gp0.command_state =
+            Gp0CommandState::SendingToCpu { buffer_idx: buffer_idx + 2, halfwords_remaining };
         word
     }
 
@@ -498,7 +435,7 @@ impl Gpu {
             Gp0CommandState::ReceivingFromCpu(fields) => {
                 self.receive_vram_word_from_cpu(value, fields)
             }
-            Gp0CommandState::SendingToCpu(..) => {
+            Gp0CommandState::SendingToCpu { .. } => {
                 panic!("unexpected write to GP0 command buffer during VRAM-to-CPU blit")
             }
         };
@@ -533,27 +470,33 @@ impl Gpu {
                 let (destination_x, destination_y) = parse_vram_position(self.gp0.parameters[0]);
                 let (x_size, y_size) = parse_vram_size(self.gp0.parameters[1]);
 
+                self.gp0.blit_buffer.clear();
+
                 Gp0CommandState::ReceivingFromCpu(VramTransferFields {
                     destination_x,
                     destination_y,
                     x_size,
                     y_size,
-                    row: 0,
-                    col: 0,
+                    halfwords_remaining: x_size * y_size,
                 })
             }
             DrawCommand::VramToCpuBlit => {
-                let (destination_x, destination_y) = parse_vram_position(self.gp0.parameters[0]);
+                let (source_x, source_y) = parse_vram_position(self.gp0.parameters[0]);
                 let (x_size, y_size) = parse_vram_size(self.gp0.parameters[1]);
 
-                Gp0CommandState::SendingToCpu(VramTransferFields {
-                    destination_x,
-                    destination_y,
+                self.gp0.blit_buffer.clear();
+                self.rasterizer.vram_to_cpu_blit(
+                    source_x,
+                    source_y,
                     x_size,
                     y_size,
-                    row: 0,
-                    col: 0,
-                })
+                    &mut self.gp0.blit_buffer,
+                );
+
+                Gp0CommandState::SendingToCpu {
+                    buffer_idx: 0,
+                    halfwords_remaining: x_size * y_size,
+                }
             }
         }
     }
@@ -634,29 +577,28 @@ impl Gpu {
 
         log::debug!("Executing VRAM fill with X={x}, Y={y}, width={width}, height={height}");
 
-        rasterize::fill(x, y, width, height, color, &mut self.vram);
+        self.rasterizer.vram_fill(x, y, width, height, color);
     }
 
     fn draw_line(&mut self, command_parameters: LineCommandParameters) -> Gp0CommandState {
-        let parameters = parse_draw_line_parameters(command_parameters, &self.gp0.parameters);
-
-        log::debug!("Executing draw line command: {parameters:?}");
-
-        let v1 = parameters.vertices[1];
-        let shading = parameters.shading;
-
-        rasterize::line(
-            parameters,
-            &self.gp0.draw_settings,
-            self.gp0.global_texture_page,
-            &mut self.vram,
+        let line_args = parse_draw_line_parameters(
+            command_parameters,
+            &self.gp0.parameters,
+            self.gp0.global_texture_page.semi_transparency_mode,
         );
+
+        log::debug!("Executing draw line command: {line_args:?}");
+
+        let v1 = line_args.vertices[1];
+        let shading = line_args.shading;
+
+        self.rasterizer.draw_line(line_args, &self.gp0.draw_settings);
 
         if command_parameters.polyline {
             // Pretend that the previous second vertex/color is now the first vertex/color
             self.gp0.parameters[0] = ((v1.x & 0xFFFF) | (v1.y << 16)) as u32;
             let new_first_color = match shading {
-                LineShading::Flat(color) | LineShading::Gouraud(_, color) => color,
+                LineShading::Flat(color) | LineShading::Gouraud([_, color]) => color,
             };
             return Gp0CommandState::WaitingForPolyline(LineCommandParameters {
                 color: new_first_color,
@@ -668,78 +610,57 @@ impl Gpu {
     }
 
     fn draw_polygon(&mut self, command_parameters: PolygonCommandParameters) {
-        let (first_params, second_params) =
-            parse_draw_polygon_parameters(command_parameters, &self.gp0.parameters);
-
-        log::debug!("Drawing polygon with params {first_params:?}");
-
-        rasterize::triangle(
-            first_params,
-            &self.gp0.draw_settings,
-            &self.gp0.global_texture_page,
+        let (first_args, second_args) = parse_draw_polygon_parameters(
+            command_parameters,
+            &self.gp0.parameters,
+            self.gp0.global_texture_page.semi_transparency_mode,
             self.gp0.texture_window,
-            &mut self.vram,
         );
-        if let Some(second_params) = second_params {
-            log::debug!("Drawing second polygon with params {second_params:?}");
-            rasterize::triangle(
-                second_params,
-                &self.gp0.draw_settings,
-                &self.gp0.global_texture_page,
-                self.gp0.texture_window,
-                &mut self.vram,
-            );
+
+        log::debug!("Drawing polygon with params {first_args:?}");
+
+        self.rasterizer.draw_triangle(first_args, &self.gp0.draw_settings);
+        if let Some(second_args) = second_args {
+            log::debug!("Drawing second polygon with params {second_args:?}");
+            self.rasterizer.draw_triangle(second_args, &self.gp0.draw_settings);
         }
     }
 
     fn draw_rectangle(&mut self, command_parameters: RectangleCommandParameters) {
-        let parameters = parse_draw_rectangle_parameters(command_parameters, &self.gp0.parameters);
-
-        log::debug!("Drawing rectangle with parameters {parameters:?}");
-
-        rasterize::rectangle(
-            parameters,
-            &self.gp0.draw_settings,
+        let rectangle_args = parse_draw_rectangle_parameters(
+            command_parameters,
+            &self.gp0.parameters,
             self.gp0.global_texture_page,
             self.gp0.texture_window,
-            &mut self.vram,
         );
+
+        log::debug!("Drawing rectangle with parameters {rectangle_args:?}");
+
+        self.rasterizer.draw_rectangle(rectangle_args, &self.gp0.draw_settings);
     }
 
     fn execute_vram_copy(&mut self) {
-        let source_x_base = self.gp0.parameters[0] & 0x3FF;
-        let mut source_y = (self.gp0.parameters[0] >> 16) & 0x1FF;
-        let dest_x_base = self.gp0.parameters[1] & 0x3FF;
-        let mut dest_y = (self.gp0.parameters[1] >> 16) & 0x1FF;
+        let source_x = self.gp0.parameters[0] & 0x3FF;
+        let source_y = (self.gp0.parameters[0] >> 16) & 0x1FF;
+        let dest_x = self.gp0.parameters[1] & 0x3FF;
+        let dest_y = (self.gp0.parameters[1] >> 16) & 0x1FF;
         let width = (self.gp0.parameters[2].wrapping_sub(1) & 0x3FF) + 1;
         let height = ((self.gp0.parameters[2] >> 16).wrapping_sub(1) & 0x1FF) + 1;
 
         log::trace!(
-            "Executing VRAM copy from X={source_x_base} / Y={source_y} to X={dest_x_base} / Y={dest_y}, width={width} and height={height}"
+            "Executing VRAM copy from X={source_x} / Y={source_y} to X={dest_x} / Y={dest_y}, width={width} and height={height}"
         );
 
-        let forced_mask_bit = u16::from(self.gp0.draw_settings.force_mask_bit) << 15;
-        let check_mask_bit = self.gp0.draw_settings.check_mask_bit;
-
-        for _ in 0..height {
-            let mut source_x = source_x_base;
-            let mut dest_x = dest_x_base;
-
-            for _ in 0..width {
-                let source_addr = (1024 * source_y + source_x) as usize;
-                let dest_addr = (1024 * dest_y + dest_x) as usize;
-
-                if !check_mask_bit || self.vram[dest_addr] & 0x8000 == 0 {
-                    self.vram[dest_addr] = self.vram[source_addr] | forced_mask_bit;
-                }
-
-                source_x = source_x.wrapping_add(1) & 0x3FF;
-                dest_x = dest_x.wrapping_add(1) & 0x3FF;
-            }
-
-            source_y = source_y.wrapping_add(1) & 0x1FF;
-            dest_y = dest_y.wrapping_add(1) & 0x1FF;
-        }
+        self.rasterizer.vram_to_vram_blit(VramVramBlitArgs {
+            source_x,
+            source_y,
+            dest_x,
+            dest_y,
+            width,
+            height,
+            force_mask_bit: self.gp0.draw_settings.force_mask_bit,
+            check_mask_bit: self.gp0.draw_settings.check_mask_bit,
+        });
     }
 
     fn receive_vram_word_from_cpu(
@@ -747,16 +668,22 @@ impl Gpu {
         value: u32,
         mut fields: VramTransferFields,
     ) -> Gp0CommandState {
-        let forced_mask_bit = u16::from(self.gp0.draw_settings.force_mask_bit) << 15;
-
         for halfword in [value & 0xFFFF, value >> 16] {
-            let vram_addr = fields.vram_addr() as usize;
+            self.gp0.blit_buffer.push(halfword as u16);
 
-            if !self.gp0.draw_settings.check_mask_bit || self.vram[vram_addr] & 0x8000 == 0 {
-                self.vram[vram_addr] = (halfword as u16) | forced_mask_bit;
-            }
-
-            if fields.increment() == IncrementEffect::Finished {
+            fields.halfwords_remaining -= 1;
+            if fields.halfwords_remaining == 0 {
+                self.rasterizer.cpu_to_vram_blit(
+                    CpuVramBlitArgs {
+                        x: fields.destination_x,
+                        y: fields.destination_y,
+                        width: fields.x_size,
+                        height: fields.y_size,
+                        force_mask_bit: self.gp0.draw_settings.force_mask_bit,
+                        check_mask_bit: self.gp0.draw_settings.check_mask_bit,
+                    },
+                    &self.gp0.blit_buffer,
+                );
                 return Gp0CommandState::WaitingForCommand;
             }
         }
@@ -814,31 +741,35 @@ impl<'a> Gp0Parameters<'a> {
 fn parse_draw_line_parameters(
     command_parameters: LineCommandParameters,
     parameters: &[u32],
-) -> DrawLineParameters {
+    semi_transparency_mode: SemiTransparencyMode,
+) -> DrawLineArgs {
     let mut parameters = Gp0Parameters(parameters);
 
     let v0 = parse_vertex_coordinates(parameters.next());
 
     let shading = if command_parameters.gouraud_shading {
         let second_color = parse_command_color(parameters.next());
-        LineShading::Gouraud(command_parameters.color, second_color)
+        LineShading::Gouraud([command_parameters.color, second_color])
     } else {
         LineShading::Flat(command_parameters.color)
     };
 
     let v1 = parse_vertex_coordinates(parameters.next());
 
-    DrawLineParameters {
+    DrawLineArgs {
         vertices: [v0, v1],
         shading,
         semi_transparent: command_parameters.semi_transparent,
+        semi_transparency_mode,
     }
 }
 
 fn parse_draw_polygon_parameters(
     command_parameters: PolygonCommandParameters,
     parameters: &[u32],
-) -> (DrawPolygonParameters, Option<DrawPolygonParameters>) {
+    semi_transparency_mode: SemiTransparencyMode,
+    texture_window: TextureWindow,
+) -> (DrawTriangleArgs, Option<DrawTriangleArgs>) {
     let mut parameters = Gp0Parameters(parameters);
 
     let mut vertices = [Vertex::default(); 4];
@@ -875,45 +806,53 @@ fn parse_draw_polygon_parameters(
         }
     }
 
-    let texture_mode = TextureMode::from_polygon_params(command_parameters);
+    let texture_mode = if command_parameters.raw_texture {
+        TextureMappingMode::Raw
+    } else {
+        TextureMappingMode::Modulated
+    };
 
-    let first_parameters = DrawPolygonParameters {
+    let first_parameters = DrawTriangleArgs {
         vertices: [vertices[0], vertices[1], vertices[2]],
         shading: if command_parameters.gouraud_shading {
-            PolygonShading::Gouraud(colors[0], colors[1], colors[2])
+            TriangleShading::Gouraud([colors[0], colors[1], colors[2]])
         } else {
-            PolygonShading::Flat(colors[0])
+            TriangleShading::Flat(colors[0])
         },
         semi_transparent: command_parameters.semi_transparent,
-        texture_params: PolygonTextureParameters {
+        semi_transparency_mode,
+        texture_mapping: command_parameters.textured.then_some(TriangleTextureMapping {
+            mode: texture_mode,
             texpage,
+            window: texture_window,
             clut_x,
             clut_y,
             u: [u[0], u[1], u[2]],
             v: [v[0], v[1], v[2]],
-        },
-        texture_mode,
+        }),
     };
 
     match command_parameters.vertices {
         PolygonVertices::Three => (first_parameters, None),
         PolygonVertices::Four => {
-            let second_parameters = DrawPolygonParameters {
+            let second_parameters = DrawTriangleArgs {
                 vertices: [vertices[1], vertices[2], vertices[3]],
                 shading: if command_parameters.gouraud_shading {
-                    PolygonShading::Gouraud(colors[1], colors[2], colors[3])
+                    TriangleShading::Gouraud([colors[1], colors[2], colors[3]])
                 } else {
-                    PolygonShading::Flat(colors[0])
+                    TriangleShading::Flat(colors[0])
                 },
                 semi_transparent: command_parameters.semi_transparent,
-                texture_params: PolygonTextureParameters {
+                semi_transparency_mode,
+                texture_mapping: command_parameters.textured.then_some(TriangleTextureMapping {
+                    mode: texture_mode,
                     texpage,
+                    window: texture_window,
                     clut_x,
                     clut_y,
                     u: [u[1], u[2], u[3]],
                     v: [v[1], v[2], v[3]],
-                },
-                texture_mode,
+                }),
             };
 
             (first_parameters, Some(second_parameters))
@@ -924,22 +863,34 @@ fn parse_draw_polygon_parameters(
 fn parse_draw_rectangle_parameters(
     command_parameters: RectangleCommandParameters,
     parameters: &[u32],
-) -> DrawRectangleParameters {
+    global_texpage: TexturePage,
+    texture_window: TextureWindow,
+) -> DrawRectangleArgs {
     let mut parameters = Gp0Parameters(parameters);
 
     let position = parse_vertex_coordinates(parameters.next());
 
-    let mut texture_params = RectangleTextureParameters::default();
-    if command_parameters.textured {
+    let texture_mapping = command_parameters.textured.then(|| {
+        let texture_mode = if command_parameters.raw_texture {
+            TextureMappingMode::Raw
+        } else {
+            TextureMappingMode::Modulated
+        };
         let (clut_x, clut_y) = parse_clut_attribute(parameters.peek());
-        texture_params = RectangleTextureParameters {
+        let u = parameters.peek() as u8;
+        let v = (parameters.peek() >> 8) as u8;
+        parameters.next();
+
+        RectangleTextureMapping {
+            mode: texture_mode,
+            texpage: global_texpage,
+            window: texture_window,
             clut_x,
             clut_y,
-            u: parameters.peek() as u8,
-            v: (parameters.peek() >> 8) as u8,
-        };
-        parameters.next();
-    }
+            u: [u],
+            v: [v],
+        }
+    });
 
     let (width, height) = match command_parameters.size {
         RectangleSize::One => (1, 1),
@@ -952,14 +903,14 @@ fn parse_draw_rectangle_parameters(
         }
     };
 
-    DrawRectangleParameters {
-        position,
+    DrawRectangleArgs {
+        top_left: position,
         width,
         height,
         color: command_parameters.color,
         semi_transparent: command_parameters.semi_transparent,
-        texture_params,
-        texture_mode: TextureMode::from_rectangle_params(command_parameters),
+        semi_transparency_mode: global_texpage.semi_transparency_mode,
+        texture_mapping,
     }
 }
 

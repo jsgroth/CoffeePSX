@@ -9,31 +9,53 @@
 
 mod gp0;
 mod gp1;
+pub mod rasterizer;
 mod registers;
-mod render;
 
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
+use crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
 use crate::gpu::registers::{Registers, VerticalResolution};
-use crate::gpu::render::WgpuResources;
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
 use proc_macros::SaveState;
 use std::rc::Rc;
 
-pub use render::DisplayConfig;
+use crate::gpu::rasterizer::{Rasterizer, RasterizerInterface};
+
+pub use rasterizer::RasterizerState;
 
 const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
 
 type Vram = [u16; VRAM_LEN_HALFWORDS];
 
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayConfig {
+    pub crop_vertical_overscan: bool,
+    pub dump_vram: bool,
+}
+
+impl Default for DisplayConfig {
+    fn default() -> Self {
+        Self { crop_vertical_overscan: true, dump_vram: false }
+    }
+}
+
+#[derive(Debug)]
+pub struct WgpuResources {
+    pub device: Rc<wgpu::Device>,
+    pub queue: Rc<wgpu::Queue>,
+    pub display_config: DisplayConfig,
+}
+
 #[derive(Debug, SaveState)]
 pub struct Gpu {
-    vram: Box<Vram>,
     registers: Registers,
     gp0: Gp0State,
     gpu_read_buffer: u32,
     #[save_state(skip)]
     wgpu_resources: WgpuResources,
+    #[save_state(to = RasterizerState)]
+    rasterizer: Rasterizer,
 }
 
 impl Gpu {
@@ -42,20 +64,24 @@ impl Gpu {
         wgpu_queue: Rc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
-        let wgpu_resources = WgpuResources::new(wgpu_device, wgpu_queue, display_config);
+        let rasterizer = NaiveSoftwareRasterizer::new(&wgpu_device);
+        let wgpu_resources =
+            WgpuResources { device: wgpu_device, queue: wgpu_queue, display_config };
 
         Self {
-            vram: vec![0; VRAM_LEN_HALFWORDS].into_boxed_slice().try_into().unwrap(),
             registers: Registers::new(),
             gp0: Gp0State::new(),
             gpu_read_buffer: 0,
             wgpu_resources,
+            rasterizer: Rasterizer::NaiveSoftware(rasterizer),
         }
     }
 
     pub fn read_port(&mut self) -> u32 {
-        if let Gp0CommandState::SendingToCpu(fields) = self.gp0.command_state {
-            self.gpu_read_buffer = self.read_vram_word_for_cpu(fields);
+        if let Gp0CommandState::SendingToCpu { buffer_idx, halfwords_remaining } =
+            self.gp0.command_state
+        {
+            self.gpu_read_buffer = self.read_vram_word_for_cpu(buffer_idx, halfwords_remaining);
         }
 
         self.gpu_read_buffer
@@ -81,7 +107,7 @@ impl Gpu {
     }
 
     pub fn generate_frame_texture(&mut self) -> &wgpu::Texture {
-        self.write_frame_texture()
+        self.rasterizer.generate_frame_texture(&self.registers, &self.wgpu_resources)
     }
 
     pub fn pixel_aspect_ratio(&self) -> f64 {
@@ -118,12 +144,18 @@ impl Gpu {
         wgpu_queue: Rc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
+        let rasterizer = Rasterizer::from_state(state.rasterizer, &wgpu_device);
+
         Self {
-            vram: state.vram,
             registers: state.registers,
             gp0: state.gp0,
             gpu_read_buffer: state.gpu_read_buffer,
-            wgpu_resources: WgpuResources::new(wgpu_device, wgpu_queue, display_config),
+            wgpu_resources: WgpuResources {
+                device: wgpu_device,
+                queue: wgpu_queue,
+                display_config,
+            },
+            rasterizer,
         }
     }
 }

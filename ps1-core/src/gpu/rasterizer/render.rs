@@ -1,11 +1,10 @@
-use crate::api::ColorDepthBits;
+use crate::api::{ColorDepthBits, DisplayConfig};
 use crate::gpu;
 use crate::gpu::registers::{Registers, VerticalResolution};
-use crate::gpu::{Gpu, Vram};
+use crate::gpu::{Vram, WgpuResources};
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::rc::Rc;
 use std::{cmp, iter};
 
 const SCREEN_LEFT: i32 = 0x260;
@@ -43,59 +42,37 @@ impl Display for FrameSize {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
-struct Color {
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+struct RgbaColor {
     r: u8,
     g: u8,
     b: u8,
     a: u8,
 }
 
-impl Color {
-    const BLACK: Self = Self { r: 0, g: 0, b: 0, a: 255 };
+impl RgbaColor {
+    const BLACK: Self = Self::rgb(0, 0, 0);
 
-    fn rgb(r: u8, g: u8, b: u8) -> Self {
+    const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b, a: 255 }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct DisplayConfig {
-    pub crop_vertical_overscan: bool,
-    pub dump_vram: bool,
-}
-
-impl Default for DisplayConfig {
-    fn default() -> Self {
-        Self { crop_vertical_overscan: true, dump_vram: false }
-    }
-}
-
-type FrameBuffer = [Color; gpu::VRAM_LEN_HALFWORDS];
+type FrameBuffer = [RgbaColor; gpu::VRAM_LEN_HALFWORDS];
 
 #[derive(Debug)]
-pub struct WgpuResources {
-    pub device: Rc<wgpu::Device>,
-    pub queue: Rc<wgpu::Queue>,
-    pub display_config: DisplayConfig,
+pub struct SoftwareRenderer {
     frame_buffer: Box<FrameBuffer>,
     frame_textures: HashMap<FrameSize, wgpu::Texture>,
     clear_pipeline: wgpu::RenderPipeline,
 }
 
-impl WgpuResources {
-    pub fn new(
-        device: Rc<wgpu::Device>,
-        queue: Rc<wgpu::Queue>,
-        display_config: DisplayConfig,
-    ) -> Self {
-        let clear_pipeline = create_clear_pipeline(&device);
+impl SoftwareRenderer {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let clear_pipeline = create_clear_pipeline(device);
 
         Self {
-            device,
-            queue,
-            display_config,
-            frame_buffer: vec![Color::default(); gpu::VRAM_LEN_HALFWORDS]
+            frame_buffer: vec![RgbaColor::BLACK; gpu::VRAM_LEN_HALFWORDS]
                 .into_boxed_slice()
                 .try_into()
                 .unwrap(),
@@ -104,12 +81,62 @@ impl WgpuResources {
         }
     }
 
-    fn clear_frame(&mut self, frame_size: FrameSize) -> &wgpu::Texture {
-        let texture =
-            get_or_create_frame_texture(&self.device, frame_size, &mut self.frame_textures);
+    pub fn generate_frame_texture(
+        &mut self,
+        registers: &Registers,
+        wgpu_resources: &WgpuResources,
+        vram: &Vram,
+    ) -> &wgpu::Texture {
+        if wgpu_resources.display_config.dump_vram {
+            return self.write_frame(
+                &wgpu_resources.device,
+                &wgpu_resources.queue,
+                FrameSize { width: 1024, height: 512 },
+                FrameCoords {
+                    frame_x: 0,
+                    frame_y: 0,
+                    display_x_offset: 0,
+                    display_y_offset: 0,
+                    display_x_start: 0,
+                    display_y_start: 0,
+                    display_width: 1024,
+                    display_height: 512,
+                },
+                ColorDepthBits::Fifteen,
+                vram,
+            );
+        }
+
+        let (frame_coords, frame_size) =
+            compute_frame_location(registers, wgpu_resources.display_config);
+        let Some(frame_coords) = frame_coords else {
+            return self.clear_frame(&wgpu_resources.device, &wgpu_resources.queue, frame_size);
+        };
+
+        if !registers.display_enabled {
+            return self.clear_frame(&wgpu_resources.device, &wgpu_resources.queue, frame_size);
+        }
+
+        return self.write_frame(
+            &wgpu_resources.device,
+            &wgpu_resources.queue,
+            frame_size,
+            frame_coords,
+            registers.display_area_color_depth,
+            vram,
+        );
+    }
+
+    fn clear_frame(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame_size: FrameSize,
+    ) -> &wgpu::Texture {
+        let texture = get_or_create_frame_texture(device, frame_size, &mut self.frame_textures);
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: "clear_encoder".into(),
         });
 
@@ -134,13 +161,15 @@ impl WgpuResources {
             render_pass.draw(0..4, 0..1);
         }
 
-        self.queue.submit(iter::once(encoder.finish()));
+        queue.submit(iter::once(encoder.finish()));
 
         texture
     }
 
     fn write_frame(
         &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         frame_size: FrameSize,
         frame_coords: FrameCoords,
         color_depth: ColorDepthBits,
@@ -149,9 +178,9 @@ impl WgpuResources {
         populate_frame_buffer(frame_size, frame_coords, color_depth, vram, &mut self.frame_buffer);
 
         let frame_texture =
-            get_or_create_frame_texture(&self.device, frame_size, &mut self.frame_textures);
+            get_or_create_frame_texture(device, frame_size, &mut self.frame_textures);
 
-        self.queue.write_texture(
+        queue.write_texture(
             frame_texture.as_image_copy(),
             bytemuck::cast_slice(self.frame_buffer.as_ref()),
             wgpu::ImageDataLayout {
@@ -163,45 +192,6 @@ impl WgpuResources {
         );
 
         frame_texture
-    }
-}
-
-impl Gpu {
-    pub(super) fn write_frame_texture(&mut self) -> &wgpu::Texture {
-        if self.wgpu_resources.display_config.dump_vram {
-            return self.wgpu_resources.write_frame(
-                FrameSize { width: 1024, height: 512 },
-                FrameCoords {
-                    frame_x: 0,
-                    frame_y: 0,
-                    display_x_offset: 0,
-                    display_y_offset: 0,
-                    display_x_start: 0,
-                    display_y_start: 0,
-                    display_width: 1024,
-                    display_height: 512,
-                },
-                ColorDepthBits::Fifteen,
-                &self.vram,
-            );
-        }
-
-        let (frame_coords, frame_size) =
-            compute_frame_location(&self.registers, self.wgpu_resources.display_config);
-        let Some(frame_coords) = frame_coords else {
-            return self.wgpu_resources.clear_frame(frame_size);
-        };
-
-        if !self.registers.display_enabled {
-            return self.wgpu_resources.clear_frame(frame_size);
-        }
-
-        return self.wgpu_resources.write_frame(
-            frame_size,
-            frame_coords,
-            self.registers.display_area_color_depth,
-            &self.vram,
-        );
     }
 }
 
@@ -354,7 +344,7 @@ fn populate_frame_buffer(
 
     for y in 0..frame_size.height {
         if !y_range.contains(&y) {
-            frame_buffer[1024 * y as usize..1024 * (y + 1) as usize].fill(Color::BLACK);
+            frame_buffer[1024 * y as usize..1024 * (y + 1) as usize].fill(RgbaColor::BLACK);
             continue;
         }
 
@@ -364,11 +354,11 @@ fn populate_frame_buffer(
         let vram_row_addr = (1024 * vram_y) as usize;
 
         frame_buffer[vram_row_addr..vram_row_addr + frame_coords.display_x_start as usize]
-            .fill(Color::BLACK);
+            .fill(RgbaColor::BLACK);
         frame_buffer[vram_row_addr
             + (frame_coords.display_x_start + frame_coords.display_width) as usize
             ..vram_row_addr + 1024]
-            .fill(Color::BLACK);
+            .fill(RgbaColor::BLACK);
 
         for x in x_range.clone() {
             let frame_buffer_addr = (1024 * y + x) as usize;
@@ -384,7 +374,7 @@ fn populate_frame_buffer(
                     let r = RGB_5_TO_8[(vram_color & 0x1F) as usize];
                     let g = RGB_5_TO_8[((vram_color >> 5) & 0x1F) as usize];
                     let b = RGB_5_TO_8[((vram_color >> 10) & 0x1F) as usize];
-                    frame_buffer[frame_buffer_addr] = Color::rgb(r, g, b);
+                    frame_buffer[frame_buffer_addr] = RgbaColor::rgb(r, g, b);
                 }
                 ColorDepthBits::TwentyFour => {
                     let effective_x = (x + frame_coords.display_x_offset)
@@ -395,13 +385,13 @@ fn populate_frame_buffer(
                     let second_halfword = vram[vram_row_addr | ((vram_x + 1) & 0x3FF) as usize];
 
                     let color = if effective_x % 2 == 0 {
-                        Color::rgb(
+                        RgbaColor::rgb(
                             first_halfword as u8,
                             (first_halfword >> 8) as u8,
                             second_halfword as u8,
                         )
                     } else {
-                        Color::rgb(
+                        RgbaColor::rgb(
                             (first_halfword >> 8) as u8,
                             second_halfword as u8,
                             (second_halfword >> 8) as u8,
