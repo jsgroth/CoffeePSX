@@ -406,11 +406,7 @@ fn create_render_bind_group(
     frame: &Texture,
     sampler: &Sampler,
 ) -> BindGroup {
-    let frame_view = frame.create_view(&TextureViewDescriptor {
-        label: "render_frame_srgb_view".into(),
-        format: Some(TextureFormat::Rgba8UnormSrgb),
-        ..TextureViewDescriptor::default()
-    });
+    let frame_view = frame.create_view(&TextureViewDescriptor::default());
 
     device.create_bind_group(&BindGroupDescriptor {
         label: "render_bind_group".into(),
@@ -514,11 +510,7 @@ fn execute_prescale_pipeline(
     frame: &Texture,
     encoder: &mut CommandEncoder,
 ) {
-    let frame_view = frame.create_view(&TextureViewDescriptor {
-        label: "prescale_frame_view".into(),
-        format: Some(TextureFormat::Rgba8UnormSrgb),
-        ..TextureViewDescriptor::default()
-    });
+    let frame_view = frame.create_view(&TextureViewDescriptor::default());
 
     let bind_group = device.create_bind_group(&BindGroupDescriptor {
         label: "prescale_bind_group".into(),
