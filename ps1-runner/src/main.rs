@@ -172,7 +172,7 @@ fn handle_key_event<Stream: StreamTrait>(
                 if display_config.dump_vram {
                     let _ = window.request_inner_size(LogicalSize::new(1024, 512));
                 } else {
-                    let _ = window.request_inner_size(LogicalSize::new(585, 448));
+                    let _ = window.request_inner_size(LogicalSize::new(586, 448));
                 }
             }
             KeyCode::Period if pressed => {
@@ -284,7 +284,7 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     let window = WindowBuilder::new()
         .with_title(window_title)
-        .with_inner_size(LogicalSize::new(585, 448))
+        .with_inner_size(LogicalSize::new(586, 448))
         .build(&event_loop)?;
 
     // SAFETY: The renderer does not outlive the window

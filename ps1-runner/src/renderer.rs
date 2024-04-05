@@ -38,10 +38,13 @@ impl PrescalePipeline {
     ) -> Self {
         let viewport = determine_viewport(frame_size, window_size, pixel_aspect_ratio);
 
-        let width_scale =
-            cmp::max(1, (viewport.width / frame_size.width as f32 + 0.1).floor() as u32);
+        let width_scale = cmp::max(
+            1,
+            (viewport.width / frame_size.width as f32 / pixel_aspect_ratio as f32 + 0.01).floor()
+                as u32,
+        );
         let height_scale =
-            cmp::max(1, (viewport.height / frame_size.height as f32 + 0.1).floor() as u32);
+            cmp::max(1, (viewport.height / frame_size.height as f32 + 0.01).floor() as u32);
 
         let texture = device.create_texture(&TextureDescriptor {
             label: "scaled_texture".into(),
@@ -469,6 +472,7 @@ fn create_sampler(device: &Device, filter_mode: FilterMode) -> Sampler {
     })
 }
 
+#[derive(Debug)]
 struct Viewport {
     x: f32,
     y: f32,
