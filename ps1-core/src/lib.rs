@@ -13,3 +13,5 @@ mod scheduler;
 mod sio;
 mod spu;
 mod timers;
+
+pub use gpu::RasterizerType;

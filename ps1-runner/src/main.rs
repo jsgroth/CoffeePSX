@@ -12,6 +12,7 @@ use ps1_core::api::{
     TickEffect,
 };
 use ps1_core::input::Ps1Inputs;
+use ps1_core::RasterizerType;
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::fs;
@@ -38,6 +39,8 @@ struct Args {
     tty_enabled: bool,
     #[arg(long = "no-audio-sync", default_value_t = true, action = clap::ArgAction::SetFalse)]
     audio_sync: bool,
+    #[arg(long, default_value_t)]
+    simd: bool,
 }
 
 struct CpalAudioOutput {
@@ -179,6 +182,18 @@ fn handle_key_event<Stream: StreamTrait>(
                 display_config.crop_vertical_overscan = !display_config.crop_vertical_overscan;
                 emulator.update_display_config(*display_config);
             }
+            KeyCode::Minus if pressed => {
+                display_config.rasterizer_type = RasterizerType::SimdSoftware;
+                emulator.update_display_config(*display_config);
+
+                log::info!("Using AVX2 software rasterizer");
+            }
+            KeyCode::Equal if pressed => {
+                display_config.rasterizer_type = RasterizerType::NaiveSoftware;
+                emulator.update_display_config(*display_config);
+
+                log::info!("Using naive software rasterizer");
+            }
             _ => {}
         },
         PhysicalKey::Unidentified(_) => {}
@@ -292,10 +307,20 @@ fn main() -> anyhow::Result<()> {
         WgpuRenderer::new(&window, (window.inner_size().width, window.inner_size().height))
     })?;
 
+    let mut display_config = DisplayConfig {
+        rasterizer_type: if args.simd {
+            RasterizerType::SimdSoftware
+        } else {
+            RasterizerType::NaiveSoftware
+        },
+        ..DisplayConfig::default()
+    };
+
     let bios_rom = fs::read(&args.bios_path)?;
     let mut emulator_builder =
         Ps1EmulatorBuilder::new(bios_rom, renderer.device(), renderer.queue())
-            .tty_enabled(args.tty_enabled);
+            .tty_enabled(args.tty_enabled)
+            .with_display_config(display_config);
     if let Some(disc_path) = &args.disc_path {
         log::info!("Loading CD-ROM image from '{disc_path}'");
 
@@ -335,7 +360,6 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut display_config = DisplayConfig::default();
     let mut paused = false;
     let mut step_to_next_frame = false;
 

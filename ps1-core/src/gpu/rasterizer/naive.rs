@@ -2,17 +2,18 @@
 
 #![allow(clippy::many_single_char_names)]
 
+use crate::gpu;
 use crate::gpu::gp0::{
     DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
 };
-use crate::gpu::rasterizer::render::SoftwareRenderer;
+use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
-    Color, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading,
-    RasterizerInterface, RectangleTextureMapping, TextureMappingMode, TriangleShading,
-    TriangleTextureMapping, Vertex, VramVramBlitArgs,
+    cross_product_z, software, swap_vertices, vertices_valid, Color, CpuVramBlitArgs, DrawLineArgs,
+    DrawRectangleArgs, DrawTriangleArgs, LineShading, RasterizerInterface, RectangleTextureMapping,
+    TextureMappingMode, TriangleShading, TriangleTextureMapping, Vertex, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{Vram, WgpuResources, VRAM_LEN_HALFWORDS};
+use crate::gpu::{Vram, WgpuResources};
 use std::cmp;
 use wgpu::Texture;
 
@@ -25,14 +26,14 @@ const RGB_5_TO_8: &[u8; 32] = &[
 ];
 
 impl Color {
-    fn from_15_bit(color: u16) -> Self {
+    pub(super) fn from_15_bit(color: u16) -> Self {
         let r = RGB_5_TO_8[(color & 0x1F) as usize];
         let g = RGB_5_TO_8[((color >> 5) & 0x1F) as usize];
         let b = RGB_5_TO_8[((color >> 10) & 0x1F) as usize];
         Self::rgb(r, g, b)
     }
 
-    fn truncate_to_15_bit(self) -> u16 {
+    pub(super) fn truncate_to_15_bit(self) -> u16 {
         let r: u16 = (self.r >> 3).into();
         let g: u16 = (self.g >> 3).into();
         let b: u16 = (self.b >> 3).into();
@@ -41,7 +42,7 @@ impl Color {
         r | (g << 5) | (b << 10)
     }
 
-    fn dither(self, dither_value: i8) -> Self {
+    pub(super) fn dither(self, dither_value: i8) -> Self {
         Self {
             r: self.r.saturating_add_signed(dither_value),
             g: self.g.saturating_add_signed(dither_value),
@@ -76,20 +77,6 @@ where
     Color::rgb(op(back.r, front.r), op(back.g, front.g), op(back.b, front.b))
 }
 
-impl DrawSettings {
-    fn is_drawing_area_valid(&self) -> bool {
-        self.draw_area_top_left.0 <= self.draw_area_bottom_right.0
-            && self.draw_area_top_left.1 <= self.draw_area_bottom_right.1
-    }
-
-    fn drawing_area_contains_vertex(&self, vertex: Vertex) -> bool {
-        (self.draw_area_top_left.0 as i32..=self.draw_area_bottom_right.0 as i32)
-            .contains(&vertex.x)
-            && (self.draw_area_top_left.1 as i32..=self.draw_area_bottom_right.1 as i32)
-                .contains(&vertex.y)
-    }
-}
-
 struct VertexFloat {
     x: f64,
     y: f64,
@@ -109,10 +96,7 @@ pub struct NaiveSoftwareRasterizer {
 
 impl NaiveSoftwareRasterizer {
     pub fn new(device: &wgpu::Device) -> Self {
-        Self {
-            vram: vec![0; VRAM_LEN_HALFWORDS].into_boxed_slice().try_into().unwrap(),
-            renderer: SoftwareRenderer::new(device),
-        }
+        Self { vram: gpu::new_vram(), renderer: SoftwareRenderer::new(device) }
     }
 
     pub fn from_vram(device: &wgpu::Device, vram: Box<Vram>) -> Self {
@@ -359,91 +343,19 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
     }
 
     fn vram_fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Color) {
-        let fill_x = x & 0x3F0;
-        let fill_y = y & 0x1FF;
-        let width = ((width & 0x3FF) + 0xF) & !0xF;
-        let height = height & 0x1FF;
-
-        let color = color.truncate_to_15_bit();
-
-        for y_offset in 0..height {
-            for x_offset in 0..width {
-                let x = (fill_x + x_offset) & 0x3FF;
-                let y = (fill_y + y_offset) & 0x1FF;
-
-                let vram_addr = (1024 * y + x) as usize;
-                self.vram[vram_addr] = color;
-            }
-        }
+        software::vram_fill(&mut self.vram, x, y, width, height, color);
     }
 
-    fn cpu_to_vram_blit(
-        &mut self,
-        CpuVramBlitArgs { x, y, width, height, force_mask_bit, check_mask_bit }: CpuVramBlitArgs,
-        data: &[u16],
-    ) {
-        let forced_mask_bit = u16::from(force_mask_bit) << 15;
-
-        let mut row = 0;
-        let mut col = 0;
-
-        for &halfword in data {
-            let vram_x = (x + col) & 0x3FF;
-            let vram_y = (y + row) & 0x1FF;
-            let vram_addr = (1024 * vram_y + vram_x) as usize;
-
-            if !check_mask_bit || self.vram[vram_addr] & 0x8000 == 0 {
-                self.vram[vram_addr] = halfword | forced_mask_bit;
-            }
-
-            col += 1;
-            if col == width {
-                col = 0;
-                row += 1;
-
-                if row == height {
-                    return;
-                }
-            }
-        }
+    fn cpu_to_vram_blit(&mut self, args: CpuVramBlitArgs, data: &[u16]) {
+        software::cpu_to_vram_blit(&mut self.vram, args, data);
     }
 
     fn vram_to_cpu_blit(&mut self, x: u32, y: u32, width: u32, height: u32, out: &mut Vec<u16>) {
-        for row in 0..height {
-            let vram_y = (y + row) & 0x1FF;
-            for col in 0..width {
-                let vram_x = (x + col) & 0x3FF;
-                let vram_addr = (1024 * vram_y + vram_x) as usize;
-                out.push(self.vram[vram_addr]);
-            }
-        }
+        software::vram_to_cpu_blit(&self.vram, x, y, width, height, out);
     }
 
     fn vram_to_vram_blit(&mut self, args: VramVramBlitArgs) {
-        let forced_mask_bit = u16::from(args.force_mask_bit) << 15;
-
-        let mut source_y = args.source_y;
-        let mut dest_y = args.dest_y;
-
-        for _ in 0..args.height {
-            let mut source_x = args.source_x;
-            let mut dest_x = args.dest_x;
-
-            for _ in 0..args.width {
-                let source_addr = (1024 * source_y + source_x) as usize;
-                let dest_addr = (1024 * dest_y + dest_x) as usize;
-
-                if !args.check_mask_bit || self.vram[dest_addr] & 0x8000 == 0 {
-                    self.vram[dest_addr] = self.vram[source_addr] | forced_mask_bit;
-                }
-
-                source_x = source_x.wrapping_add(1) & 0x3FF;
-                dest_x = dest_x.wrapping_add(1) & 0x3FF;
-            }
-
-            source_y = source_y.wrapping_add(1) & 0x1FF;
-            dest_y = dest_y.wrapping_add(1) & 0x1FF;
-        }
+        software::vram_to_vram_blit(&mut self.vram, args);
     }
 
     fn generate_frame_texture(
@@ -452,29 +364,6 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
         wgpu_resources: &WgpuResources,
     ) -> &Texture {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
-    }
-}
-
-fn vertices_valid(v0: Vertex, v1: Vertex) -> bool {
-    // The GPU will not render any lines or polygons where the distance between any two vertices is
-    // larger than 1023 horizontally or 511 vertically
-    (v0.x - v1.x).abs() < 1024 && (v0.y - v1.y).abs() < 512
-}
-
-fn swap_vertices(
-    vertices: &mut [Vertex; 3],
-    shading: &mut TriangleShading,
-    texture_mapping: Option<&mut TriangleTextureMapping>,
-) {
-    vertices.swap(0, 1);
-
-    if let Some(texture_mapping) = texture_mapping {
-        texture_mapping.u.swap(0, 1);
-        texture_mapping.v.swap(0, 1);
-    }
-
-    if let TriangleShading::Gouraud(colors) = shading {
-        colors.swap(0, 1);
     }
 }
 
@@ -621,13 +510,13 @@ fn draw_triangle_pixel(
         dithered_color.truncate_to_15_bit() | (u16::from(mask_bit || force_mask_bit) << 15);
 }
 
-fn draw_line_pixel(
+pub(super) fn draw_line_pixel(
     v: Vertex,
     raw_color: Color,
     semi_transparency: bool,
     semi_transparency_mode: SemiTransparencyMode,
     draw_settings: &DrawSettings,
-    vram: &mut crate::gpu::Vram,
+    vram: &mut Vram,
 ) {
     if !draw_settings.drawing_area_contains_vertex(v) {
         return;
@@ -798,11 +687,6 @@ fn interpolate_uv_coordinates([alpha, beta, gamma]: [f64; 3], u: [u8; 3], v: [u8
     let v = v.round() as u8;
 
     (u, v)
-}
-
-// Z component of the cross product between v0->v1 and v0->v2
-fn cross_product_z(v0: Vertex, v1: Vertex, v2: Vertex) -> i32 {
-    (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x)
 }
 
 fn compute_barycentric_coordinates(

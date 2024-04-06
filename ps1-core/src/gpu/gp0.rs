@@ -767,7 +767,7 @@ fn parse_draw_line_parameters(
 fn parse_draw_polygon_parameters(
     command_parameters: PolygonCommandParameters,
     parameters: &[u32],
-    semi_transparency_mode: SemiTransparencyMode,
+    global_semi_transparency_mode: SemiTransparencyMode,
     texture_window: TextureWindow,
 ) -> (DrawTriangleArgs, Option<DrawTriangleArgs>) {
     let mut parameters = Gp0Parameters(parameters);
@@ -810,6 +810,12 @@ fn parse_draw_polygon_parameters(
         TextureMappingMode::Raw
     } else {
         TextureMappingMode::Modulated
+    };
+
+    let semi_transparency_mode = if command_parameters.textured {
+        texpage.semi_transparency_mode
+    } else {
+        global_semi_transparency_mode
     };
 
     let first_parameters = DrawTriangleArgs {

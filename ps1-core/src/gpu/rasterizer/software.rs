@@ -1,5 +1,6 @@
 use crate::api::{ColorDepthBits, DisplayConfig};
 use crate::gpu;
+use crate::gpu::rasterizer::{Color, CpuVramBlitArgs, VramVramBlitArgs};
 use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::gpu::{Vram, WgpuResources};
 use bytemuck::{Pod, Zeroable};
@@ -401,5 +402,93 @@ fn populate_frame_buffer(
                 }
             }
         }
+    }
+}
+
+pub fn vram_fill(vram: &mut Vram, x: u32, y: u32, width: u32, height: u32, color: Color) {
+    let fill_x = x & 0x3F0;
+    let fill_y = y & 0x1FF;
+    let width = ((width & 0x3FF) + 0xF) & !0xF;
+    let height = height & 0x1FF;
+
+    let color = color.truncate_to_15_bit();
+
+    for y_offset in 0..height {
+        for x_offset in 0..width {
+            let x = (fill_x + x_offset) & 0x3FF;
+            let y = (fill_y + y_offset) & 0x1FF;
+
+            let vram_addr = (1024 * y + x) as usize;
+            vram[vram_addr] = color;
+        }
+    }
+}
+
+pub fn cpu_to_vram_blit(
+    vram: &mut Vram,
+    CpuVramBlitArgs { x, y, width, height, force_mask_bit, check_mask_bit }: CpuVramBlitArgs,
+    data: &[u16],
+) {
+    let forced_mask_bit = u16::from(force_mask_bit) << 15;
+
+    let mut row = 0;
+    let mut col = 0;
+
+    for &halfword in data {
+        let vram_x = (x + col) & 0x3FF;
+        let vram_y = (y + row) & 0x1FF;
+        let vram_addr = (1024 * vram_y + vram_x) as usize;
+
+        if !check_mask_bit || vram[vram_addr] & 0x8000 == 0 {
+            vram[vram_addr] = halfword | forced_mask_bit;
+        }
+
+        col += 1;
+        if col == width {
+            col = 0;
+            row += 1;
+
+            if row == height {
+                return;
+            }
+        }
+    }
+}
+
+pub fn vram_to_cpu_blit(vram: &Vram, x: u32, y: u32, width: u32, height: u32, out: &mut Vec<u16>) {
+    for row in 0..height {
+        let vram_y = (y + row) & 0x1FF;
+        for col in 0..width {
+            let vram_x = (x + col) & 0x3FF;
+            let vram_addr = (1024 * vram_y + vram_x) as usize;
+            out.push(vram[vram_addr]);
+        }
+    }
+}
+
+pub fn vram_to_vram_blit(vram: &mut Vram, args: VramVramBlitArgs) {
+    let forced_mask_bit = u16::from(args.force_mask_bit) << 15;
+
+    let mut source_y = args.source_y;
+    let mut dest_y = args.dest_y;
+
+    for _ in 0..args.height {
+        let mut source_x = args.source_x;
+        let mut dest_x = args.dest_x;
+
+        for _ in 0..args.width {
+            let source_addr = (1024 * source_y + source_x) as usize;
+            let dest_addr = (1024 * dest_y + dest_x) as usize;
+
+            if !args.check_mask_bit || vram[dest_addr] & 0x8000 == 0 {
+                vram[dest_addr] = vram[source_addr] | forced_mask_bit;
+            }
+
+            source_x = source_x.wrapping_add(1) & 0x3FF;
+            dest_x = dest_x.wrapping_add(1) & 0x3FF;
+        }
+
+        source_y = source_y.wrapping_add(1) & 0x1FF;
+        dest_y = dest_y.wrapping_add(1) & 0x1FF;
     }
 }

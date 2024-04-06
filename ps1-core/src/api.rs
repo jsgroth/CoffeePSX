@@ -176,8 +176,8 @@ impl Ps1EmulatorBuilder {
     }
 
     #[must_use]
-    pub fn with_crop_vertical_overscan(mut self, crop_vertical_overscan: bool) -> Self {
-        self.display_config.crop_vertical_overscan = crop_vertical_overscan;
+    pub fn with_display_config(mut self, display_config: DisplayConfig) -> Self {
+        self.display_config = display_config;
         self
     }
 

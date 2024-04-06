@@ -22,7 +22,8 @@ use std::rc::Rc;
 
 use crate::gpu::rasterizer::{Rasterizer, RasterizerInterface};
 
-pub use rasterizer::RasterizerState;
+use crate::gpu::rasterizer::simd::SimdSoftwareRasterizer;
+pub use rasterizer::{RasterizerState, RasterizerType};
 
 const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
 
@@ -32,11 +33,16 @@ type Vram = [u16; VRAM_LEN_HALFWORDS];
 pub struct DisplayConfig {
     pub crop_vertical_overscan: bool,
     pub dump_vram: bool,
+    pub rasterizer_type: RasterizerType,
 }
 
 impl Default for DisplayConfig {
     fn default() -> Self {
-        Self { crop_vertical_overscan: true, dump_vram: false }
+        Self {
+            crop_vertical_overscan: true,
+            dump_vram: false,
+            rasterizer_type: RasterizerType::default(),
+        }
     }
 }
 
@@ -64,7 +70,15 @@ impl Gpu {
         wgpu_queue: Rc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
-        let rasterizer = NaiveSoftwareRasterizer::new(&wgpu_device);
+        let rasterizer = match display_config.rasterizer_type {
+            RasterizerType::NaiveSoftware => {
+                Rasterizer::NaiveSoftware(NaiveSoftwareRasterizer::new(&wgpu_device))
+            }
+            RasterizerType::SimdSoftware => {
+                Rasterizer::SimdSoftware(SimdSoftwareRasterizer::new(&wgpu_device))
+            }
+        };
+
         let wgpu_resources =
             WgpuResources { device: wgpu_device, queue: wgpu_queue, display_config };
 
@@ -73,7 +87,7 @@ impl Gpu {
             gp0: Gp0State::new(),
             gpu_read_buffer: 0,
             wgpu_resources,
-            rasterizer: Rasterizer::NaiveSoftware(rasterizer),
+            rasterizer,
         }
     }
 
@@ -127,7 +141,20 @@ impl Gpu {
     }
 
     pub fn update_display_config(&mut self, display_config: DisplayConfig) {
+        let prev_rasterizer_type = self.wgpu_resources.display_config.rasterizer_type;
         self.wgpu_resources.display_config = display_config;
+
+        if prev_rasterizer_type != display_config.rasterizer_type {
+            let vram = self.rasterizer.clone_vram();
+            self.rasterizer = match display_config.rasterizer_type {
+                RasterizerType::NaiveSoftware => Rasterizer::NaiveSoftware(
+                    NaiveSoftwareRasterizer::from_vram(&self.wgpu_resources.device, vram),
+                ),
+                RasterizerType::SimdSoftware => Rasterizer::SimdSoftware(
+                    SimdSoftwareRasterizer::from_vram(&self.wgpu_resources.device, &vram),
+                ),
+            };
+        }
     }
 
     pub fn get_wgpu_resources(&self) -> (Rc<wgpu::Device>, Rc<wgpu::Queue>, DisplayConfig) {
@@ -144,7 +171,8 @@ impl Gpu {
         wgpu_queue: Rc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
-        let rasterizer = Rasterizer::from_state(state.rasterizer, &wgpu_device);
+        let rasterizer =
+            Rasterizer::from_state(state.rasterizer, &wgpu_device, display_config.rasterizer_type);
 
         Self {
             registers: state.registers,
@@ -158,4 +186,8 @@ impl Gpu {
             rasterizer,
         }
     }
+}
+
+fn new_vram() -> Box<Vram> {
+    vec![0; VRAM_LEN_HALFWORDS].into_boxed_slice().try_into().unwrap()
 }

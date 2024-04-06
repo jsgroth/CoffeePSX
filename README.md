@@ -81,6 +81,8 @@ Hotkeys:
 * Load state: F6 key
 * Pause: P key
 * Step to Next Frame: N key
+* Use experimental AVX2 software rasterizer: - key (Minus)
+* Use naive slow software rasterizer: = key (Equals)
 * Toggle Auto-Prescaling: / key (Forward Slash)
 * Toggle Bilinear Interpolation: ; key (Semicolon)
 * Toggle VRAM view: ' key (Quote)
