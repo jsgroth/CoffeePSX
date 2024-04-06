@@ -537,20 +537,17 @@ fn draw_triangle_pixel(
         }
     }
 
-    let barycentric_coordinates = if matches!(shading, TriangleShading::Gouraud(..))
-        || texture_mapping
-            .as_ref()
-            .is_some_and(|mapping| mapping.mode == TextureMappingMode::Modulated)
-    {
-        compute_barycentric_coordinates(
-            p.to_float(),
-            v[0].to_float(),
-            v[1].to_float(),
-            v[2].to_float(),
-        )
-    } else {
-        [0.0, 0.0, 0.0]
-    };
+    let barycentric_coordinates =
+        if matches!(shading, TriangleShading::Gouraud(..)) || texture_mapping.is_some() {
+            compute_barycentric_coordinates(
+                p.to_float(),
+                v[0].to_float(),
+                v[1].to_float(),
+                v[2].to_float(),
+            )
+        } else {
+            [0.0, 0.0, 0.0]
+        };
 
     let shading_color = match shading {
         TriangleShading::Flat(color) => color,
@@ -829,7 +826,7 @@ fn compute_barycentric_coordinates(
 }
 
 fn sample_texture(
-    vram: &crate::gpu::Vram,
+    vram: &Vram,
     texpage: &TexturePage,
     texture_window: &TextureWindow,
     clut_x: u32,
