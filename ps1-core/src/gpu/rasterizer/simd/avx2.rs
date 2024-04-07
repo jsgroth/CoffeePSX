@@ -990,16 +990,16 @@ unsafe fn rasterize_line_h_oriented(
     let min_y = cmp::max(drawing_area_y.0, cmp::min(v[0].y, v[1].y));
     let max_y = cmp::min(drawing_area_y.1, cmp::max(v[0].y, v[1].y));
 
-    let x_interval = f64::from(v[1].x - v[0].x);
+    let x_interval = v[1].x - v[0].x;
 
-    let y_step = f64::from(v[1].y - v[0].y) / x_interval;
+    let y_step = ((v[1].y - v[0].y) << 16) / x_interval;
 
     let (r_step, g_step, b_step) = match shading {
         LineShading::Flat(_) => (0.0, 0.0, 0.0),
-        LineShading::Gouraud(colors) => gouraud_color_steps(colors, x_interval),
+        LineShading::Gouraud(colors) => gouraud_color_steps(colors, x_interval.into()),
     };
 
-    let y_step_v = _mm256_set1_pd(4.0 * y_step);
+    let y_step_v = _mm_set1_epi32(4 * y_step);
     let r_step_v = _mm256_set1_pd(4.0 * r_step);
     let g_step_v = _mm256_set1_pd(4.0 * g_step);
     let b_step_v = _mm256_set1_pd(4.0 * b_step);
@@ -1008,14 +1008,16 @@ unsafe fn rasterize_line_h_oriented(
         LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
     };
 
-    let mut y = first_step_vector(v[0].y.into(), y_step);
+    let first_y = (v[0].y << 16) | (1 << 15);
+    let mut y =
+        _mm_setr_epi32(first_y, first_y + y_step, first_y + 2 * y_step, first_y + 3 * y_step);
     let mut r = first_step_vector(first_color.r.into(), r_step);
     let mut g = first_step_vector(first_color.g.into(), g_step);
     let mut b = first_step_vector(first_color.b.into(), b_step);
 
     for x in (v[0].x..=v[1].x).step_by(4) {
         let xr = _mm_setr_epi32(x, x + 1, x + 2, x + 3);
-        let yr = round_pd_to_epi32(y);
+        let yr = _mm_srai_epi32::<16>(y);
 
         let write_mask = _mm_and_si128(
             _mm_and_si128(
@@ -1048,7 +1050,7 @@ unsafe fn rasterize_line_h_oriented(
             );
         }
 
-        y = _mm256_add_pd(y, y_step_v);
+        y = _mm_add_epi32(y, y_step_v);
         r = _mm256_add_pd(r, r_step_v);
         g = _mm256_add_pd(g, g_step_v);
         b = _mm256_add_pd(b, b_step_v);
@@ -1084,16 +1086,16 @@ unsafe fn rasterize_line_v_oriented(
         return;
     }
 
-    let y_interval = f64::from(v[1].y - v[0].y);
+    let y_interval = v[1].y - v[0].y;
 
-    let x_step = f64::from(v[1].x - v[0].x) / y_interval;
+    let x_step = ((v[1].x - v[0].x) << 16) / y_interval;
 
     let (r_step, g_step, b_step) = match shading {
         LineShading::Flat(_) => (0.0, 0.0, 0.0),
-        LineShading::Gouraud(colors) => gouraud_color_steps(colors, y_interval),
+        LineShading::Gouraud(colors) => gouraud_color_steps(colors, y_interval.into()),
     };
 
-    let x_step_v = _mm256_set1_pd(4.0 * x_step);
+    let x_step_v = _mm_set1_epi32(4 * x_step);
     let r_step_v = _mm256_set1_pd(4.0 * r_step);
     let g_step_v = _mm256_set1_pd(4.0 * g_step);
     let b_step_v = _mm256_set1_pd(4.0 * b_step);
@@ -1102,13 +1104,15 @@ unsafe fn rasterize_line_v_oriented(
         LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
     };
 
-    let mut x = first_step_vector(v[0].x.into(), x_step);
+    let first_x = (v[0].x << 16) | (1 << 15);
+    let mut x =
+        _mm_setr_epi32(first_x, first_x + x_step, first_x + 2 * x_step, first_x + 3 * x_step);
     let mut r = first_step_vector(first_color.r.into(), r_step);
     let mut g = first_step_vector(first_color.g.into(), g_step);
     let mut b = first_step_vector(first_color.b.into(), b_step);
 
     for y in (v[0].y..=v[1].y).step_by(4) {
-        let xr = _mm256_cvtpd_epi32(x);
+        let xr = _mm_srai_epi32::<16>(x);
         let yr = _mm_setr_epi32(y, y + 1, y + 2, y + 3);
 
         let write_mask = _mm_and_si128(
@@ -1142,7 +1146,7 @@ unsafe fn rasterize_line_v_oriented(
             );
         }
 
-        x = _mm256_add_pd(x, x_step_v);
+        x = _mm_add_epi32(x, x_step_v);
         r = _mm256_add_pd(r, r_step_v);
         g = _mm256_add_pd(g, g_step_v);
         b = _mm256_add_pd(b, b_step_v);
@@ -1151,11 +1155,7 @@ unsafe fn rasterize_line_v_oriented(
 
 #[target_feature(enable = "avx2", enable = "fma")]
 unsafe fn round_pd_to_epi32(pd: __m256d) -> __m128i {
-    // TODO remove the +0.01, fudge to fix rounding errors
-    _mm256_cvtpd_epi32(_mm256_round_pd::<_MM_FROUND_TO_NEAREST_INT>(_mm256_add_pd(
-        pd,
-        _mm256_set1_pd(0.01),
-    )))
+    _mm256_cvtpd_epi32(_mm256_round_pd::<_MM_FROUND_TO_NEAREST_INT>(pd))
 }
 
 #[allow(clippy::too_many_arguments)]
