@@ -20,17 +20,12 @@ use wgpu::Texture;
 const DITHER_TABLE: &[[i8; 4]; 4] =
     &[[-4, 0, -3, 1], [2, -2, 3, -1], [-3, 1, -4, 0], [3, -1, 2, -2]];
 
-const RGB_5_TO_8: &[u8; 32] = &[
-    0, 8, 16, 25, 33, 41, 49, 58, 66, 74, 82, 90, 99, 107, 115, 123, 132, 140, 148, 156, 165, 173,
-    181, 189, 197, 206, 214, 222, 230, 239, 247, 255,
-];
-
 impl Color {
     pub(super) fn from_15_bit(color: u16) -> Self {
-        let r = RGB_5_TO_8[(color & 0x1F) as usize];
-        let g = RGB_5_TO_8[((color >> 5) & 0x1F) as usize];
-        let b = RGB_5_TO_8[((color >> 10) & 0x1F) as usize];
-        Self::rgb(r, g, b)
+        let r = (color & 0x1F) << 3;
+        let g = ((color >> 5) & 0x1F) << 3;
+        let b = ((color >> 10) & 0x1F) << 3;
+        Self::rgb(r as u8, g as u8, b as u8)
     }
 
     pub(super) fn truncate_to_15_bit(self) -> u16 {
