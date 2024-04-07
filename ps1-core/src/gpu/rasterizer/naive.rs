@@ -99,8 +99,11 @@ impl NaiveSoftwareRasterizer {
         Self { vram: gpu::new_vram(), renderer: SoftwareRenderer::new(device) }
     }
 
-    pub fn from_vram(device: &wgpu::Device, vram: Box<Vram>) -> Self {
-        Self { vram, renderer: SoftwareRenderer::new(device) }
+    pub fn from_vram(device: &wgpu::Device, vram: &Vram) -> Self {
+        Self {
+            vram: vram.to_vec().into_boxed_slice().try_into().unwrap(),
+            renderer: SoftwareRenderer::new(device),
+        }
     }
 
     pub fn clone_vram(&self) -> Box<Vram> {

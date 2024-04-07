@@ -64,12 +64,36 @@ pub struct Gpu {
     rasterizer: Rasterizer,
 }
 
+#[must_use]
+fn check_rasterizer_type(rasterizer_type: RasterizerType) -> RasterizerType {
+    if rasterizer_type != RasterizerType::SimdSoftware {
+        return rasterizer_type;
+    }
+
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+    if rasterizer_type == RasterizerType::SimdSoftware {
+        log::error!("Binary was not built with AVX2/FMA support; not using SIMD rasterizer");
+        return RasterizerType::NaiveSoftware;
+    }
+
+    if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+        log::error!(
+            "Current CPU does not support AVX2 and/or FMA instructions; SIMD rasterizer will not work"
+        );
+        return RasterizerType::NaiveSoftware;
+    }
+
+    rasterizer_type
+}
+
 impl Gpu {
     pub fn new(
         wgpu_device: Rc<wgpu::Device>,
         wgpu_queue: Rc<wgpu::Queue>,
-        display_config: DisplayConfig,
+        mut display_config: DisplayConfig,
     ) -> Self {
+        display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
+
         let rasterizer = match display_config.rasterizer_type {
             RasterizerType::NaiveSoftware => {
                 Rasterizer::NaiveSoftware(NaiveSoftwareRasterizer::new(&wgpu_device))
@@ -140,7 +164,9 @@ impl Gpu {
         }
     }
 
-    pub fn update_display_config(&mut self, display_config: DisplayConfig) {
+    pub fn update_display_config(&mut self, mut display_config: DisplayConfig) {
+        display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
+
         let prev_rasterizer_type = self.wgpu_resources.display_config.rasterizer_type;
         self.wgpu_resources.display_config = display_config;
 
@@ -148,7 +174,7 @@ impl Gpu {
             let vram = self.rasterizer.clone_vram();
             self.rasterizer = match display_config.rasterizer_type {
                 RasterizerType::NaiveSoftware => Rasterizer::NaiveSoftware(
-                    NaiveSoftwareRasterizer::from_vram(&self.wgpu_resources.device, vram),
+                    NaiveSoftwareRasterizer::from_vram(&self.wgpu_resources.device, &vram),
                 ),
                 RasterizerType::SimdSoftware => Rasterizer::SimdSoftware(
                     SimdSoftwareRasterizer::from_vram(&self.wgpu_resources.device, &vram),

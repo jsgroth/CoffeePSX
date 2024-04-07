@@ -13,6 +13,11 @@ pub mod naive;
 pub mod simd;
 mod software;
 
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+pub mod simd {
+    pub type SimdSoftwareRasterizer = crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Vertex {
     pub x: i32,
@@ -159,7 +164,7 @@ impl Rasterizer {
     ) -> Self {
         match rasterizer_type {
             RasterizerType::NaiveSoftware => Rasterizer::NaiveSoftware(
-                NaiveSoftwareRasterizer::from_vram(wgpu_device, state.vram),
+                NaiveSoftwareRasterizer::from_vram(wgpu_device, &state.vram),
             ),
             RasterizerType::SimdSoftware => Rasterizer::SimdSoftware(
                 SimdSoftwareRasterizer::from_vram(wgpu_device, &state.vram),
