@@ -9,11 +9,11 @@ use crate::gpu::registers::Registers;
 use crate::gpu::{Vram, WgpuResources};
 
 pub mod naive;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+#[cfg(target_arch = "x86_64")]
 pub mod simd;
 mod software;
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+#[cfg(not(target_arch = "x86_64"))]
 pub mod simd {
     pub type SimdSoftwareRasterizer = crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
 }

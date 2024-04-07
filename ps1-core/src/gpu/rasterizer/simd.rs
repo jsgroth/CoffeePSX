@@ -2,7 +2,7 @@
 
 #![allow(clippy::many_single_char_names)]
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+#[cfg(target_arch = "x86_64")]
 mod avx2;
 
 use crate::gpu;
@@ -73,7 +73,7 @@ macro_rules! cpu_supports_required_features {
 }
 
 impl RasterizerInterface for SimdSoftwareRasterizer {
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+    #[cfg(target_arch = "x86_64")]
     fn draw_triangle(
         &mut self,
         DrawTriangleArgs {
@@ -142,21 +142,23 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             }
         };
 
-        avx2::rasterize_triangle(
-            &mut self.vram,
-            (min_x, max_x),
-            (min_y, max_y),
-            v,
-            shading_avx2,
-            texture_mapping.map(avx2::TriangleTextureMappingAvx2::new),
-            semi_transparent.then_some(semi_transparency_mode),
-            draw_settings.dithering_enabled,
-            draw_settings.force_mask_bit,
-            draw_settings.check_mask_bit,
-        );
+        unsafe {
+            avx2::rasterize_triangle(
+                &mut self.vram,
+                (min_x, max_x),
+                (min_y, max_y),
+                v,
+                shading_avx2,
+                texture_mapping.map(avx2::TriangleTextureMappingAvx2::new),
+                semi_transparent.then_some(semi_transparency_mode),
+                draw_settings.dithering_enabled,
+                draw_settings.force_mask_bit,
+                draw_settings.check_mask_bit,
+            );
+        }
     }
 
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+    #[cfg(not(target_arch = "x86_64"))]
     fn draw_triangle(&mut self, _args: DrawTriangleArgs, _draw_settings: &DrawSettings) {}
 
     // TODO write an AVX2 implementation of this
@@ -261,7 +263,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma"))]
+    #[cfg(target_arch = "x86_64")]
     fn draw_rectangle(
         &mut self,
         DrawRectangleArgs {
@@ -297,23 +299,25 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             return;
         }
 
-        avx2::rasterize_rectangle(
-            &mut self.vram,
-            (min_x, max_x),
-            (min_y, max_y),
-            color,
-            texture_mapping.map(|mapping| RectangleTextureMapping {
-                u: [mapping.u[0].wrapping_add((min_x - position.x) as u8)],
-                v: [mapping.v[0].wrapping_add((min_y - position.y) as u8)],
-                ..mapping
-            }),
-            semi_transparent.then_some(semi_transparency_mode),
-            draw_settings.force_mask_bit,
-            draw_settings.check_mask_bit,
-        );
+        unsafe {
+            avx2::rasterize_rectangle(
+                &mut self.vram,
+                (min_x, max_x),
+                (min_y, max_y),
+                color,
+                texture_mapping.map(|mapping| RectangleTextureMapping {
+                    u: [mapping.u[0].wrapping_add((min_x - position.x) as u8)],
+                    v: [mapping.v[0].wrapping_add((min_y - position.y) as u8)],
+                    ..mapping
+                }),
+                semi_transparent.then_some(semi_transparency_mode),
+                draw_settings.force_mask_bit,
+                draw_settings.check_mask_bit,
+            );
+        }
     }
 
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
+    #[cfg(not(target_arch = "x86_64"))]
     fn draw_rectangle(&mut self, _args: DrawRectangleArgs, _draw_settings: &DrawSettings) {}
 
     fn vram_fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Color) {

@@ -70,12 +70,6 @@ fn check_rasterizer_type(rasterizer_type: RasterizerType) -> RasterizerType {
         return rasterizer_type;
     }
 
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
-    if rasterizer_type == RasterizerType::SimdSoftware {
-        log::error!("Binary was not built with AVX2/FMA support; not using SIMD rasterizer");
-        return RasterizerType::NaiveSoftware;
-    }
-
     if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
         log::error!(
             "Current CPU does not support AVX2 and/or FMA instructions; SIMD rasterizer will not work"
