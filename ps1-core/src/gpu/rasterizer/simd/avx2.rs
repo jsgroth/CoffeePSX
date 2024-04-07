@@ -3,11 +3,11 @@
 use crate::gpu::gp0::{SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow};
 use crate::gpu::rasterizer::simd::AlignedVram;
 use crate::gpu::rasterizer::{
-    Color, RectangleTextureMapping, TextureMappingMode, TriangleTextureMapping, Vertex,
+    Color, LineShading, RectangleTextureMapping, TextureMappingMode, TriangleTextureMapping, Vertex,
 };
 #[allow(clippy::wildcard_imports)]
 use std::arch::x86_64::*;
-use std::mem;
+use std::{cmp, mem};
 
 const DITHER_TABLE: &[[i16; 16]; 4] = &[
     [1, -3, 0, -4, 1, -3, 0, -4, 1, -3, 0, -4, 1, -3, 0, -4],
@@ -896,4 +896,365 @@ pub unsafe fn rasterize_rectangle(
             );
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[target_feature(enable = "avx2", enable = "fma")]
+pub unsafe fn rasterize_line(
+    vram: &mut AlignedVram,
+    vertices: [Vertex; 2],
+    drawing_area_x: (i32, i32),
+    drawing_area_y: (i32, i32),
+    shading: LineShading,
+    semi_transparency_mode: Option<SemiTransparencyMode>,
+    dithering_enabled: bool,
+    force_mask_bit: bool,
+    check_mask_bit: bool,
+) {
+    let x_diff = vertices[1].x - vertices[0].x;
+    let y_diff = vertices[1].y - vertices[0].y;
+
+    if x_diff == 0 && y_diff == 0 {
+        // Rasterize a single pixel
+        let color = match shading {
+            LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
+        };
+
+        rasterize_line_pixels(
+            vram,
+            _mm_set1_epi32(vertices[0].x),
+            _mm_set1_epi32(vertices[0].y),
+            _mm_set1_epi32(color.r.into()),
+            _mm_set1_epi32(color.g.into()),
+            _mm_set1_epi32(color.b.into()),
+            _mm_setr_epi32(!0, 0, 0, 0),
+            semi_transparency_mode,
+            dithering_enabled,
+            force_mask_bit,
+            check_mask_bit,
+        );
+
+        return;
+    }
+
+    if x_diff.abs() > y_diff.abs() {
+        rasterize_line_h_oriented(
+            vram,
+            vertices,
+            drawing_area_x,
+            drawing_area_y,
+            shading,
+            semi_transparency_mode,
+            dithering_enabled,
+            force_mask_bit,
+            check_mask_bit,
+        );
+    } else {
+        rasterize_line_v_oriented(
+            vram,
+            vertices,
+            drawing_area_x,
+            drawing_area_y,
+            shading,
+            semi_transparency_mode,
+            dithering_enabled,
+            force_mask_bit,
+            check_mask_bit,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn rasterize_line_h_oriented(
+    vram: &mut AlignedVram,
+    mut v: [Vertex; 2],
+    drawing_area_x: (i32, i32),
+    drawing_area_y: (i32, i32),
+    mut shading: LineShading,
+    semi_transparency_mode: Option<SemiTransparencyMode>,
+    dithering_enabled: bool,
+    force_mask_bit: bool,
+    check_mask_bit: bool,
+) {
+    if v[0].x > v[1].x {
+        v.swap(0, 1);
+
+        if let LineShading::Gouraud(colors) = &mut shading {
+            colors.swap(0, 1);
+        }
+    }
+
+    let min_x = cmp::max(v[0].x, drawing_area_x.0);
+    let max_x = cmp::min(v[1].x, drawing_area_x.1);
+    let min_y = cmp::max(drawing_area_y.0, cmp::min(v[0].y, v[1].y));
+    let max_y = cmp::min(drawing_area_y.1, cmp::max(v[0].y, v[1].y));
+
+    let x_interval = f64::from(v[1].x - v[0].x);
+
+    let y_step = f64::from(v[1].y - v[0].y) / x_interval;
+
+    let (r_step, g_step, b_step) = match shading {
+        LineShading::Flat(_) => (0.0, 0.0, 0.0),
+        LineShading::Gouraud(colors) => gouraud_color_steps(colors, x_interval),
+    };
+
+    let y_step_v = _mm256_set1_pd(4.0 * y_step);
+    let r_step_v = _mm256_set1_pd(4.0 * r_step);
+    let g_step_v = _mm256_set1_pd(4.0 * g_step);
+    let b_step_v = _mm256_set1_pd(4.0 * b_step);
+
+    let first_color = match shading {
+        LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
+    };
+
+    let mut y = first_step_vector(v[0].y.into(), y_step);
+    let mut r = first_step_vector(first_color.r.into(), r_step);
+    let mut g = first_step_vector(first_color.g.into(), g_step);
+    let mut b = first_step_vector(first_color.b.into(), b_step);
+
+    for x in (v[0].x..=v[1].x).step_by(4) {
+        let xr = _mm_setr_epi32(x, x + 1, x + 2, x + 3);
+        let yr = round_pd_to_epi32(y);
+
+        let write_mask = _mm_and_si128(
+            _mm_and_si128(
+                _mm_cmpgt_epi32(xr, _mm_set1_epi32(min_x - 1)),
+                _mm_cmplt_epi32(xr, _mm_set1_epi32(max_x + 1)),
+            ),
+            _mm_and_si128(
+                _mm_cmpgt_epi32(yr, _mm_set1_epi32(min_y - 1)),
+                _mm_cmplt_epi32(yr, _mm_set1_epi32(max_y + 1)),
+            ),
+        );
+
+        if _mm_testz_si128(write_mask, _mm_set1_epi32(-1)) == 0 {
+            let rr = round_pd_to_epi32(r);
+            let gr = round_pd_to_epi32(g);
+            let br = round_pd_to_epi32(b);
+
+            rasterize_line_pixels(
+                vram,
+                xr,
+                yr,
+                rr,
+                gr,
+                br,
+                write_mask,
+                semi_transparency_mode,
+                dithering_enabled,
+                force_mask_bit,
+                check_mask_bit,
+            );
+        }
+
+        y = _mm256_add_pd(y, y_step_v);
+        r = _mm256_add_pd(r, r_step_v);
+        g = _mm256_add_pd(g, g_step_v);
+        b = _mm256_add_pd(b, b_step_v);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn rasterize_line_v_oriented(
+    vram: &mut AlignedVram,
+    mut v: [Vertex; 2],
+    drawing_area_x: (i32, i32),
+    drawing_area_y: (i32, i32),
+    mut shading: LineShading,
+    semi_transparency_mode: Option<SemiTransparencyMode>,
+    dithering_enabled: bool,
+    force_mask_bit: bool,
+    check_mask_bit: bool,
+) {
+    if v[0].y > v[1].y {
+        v.swap(0, 1);
+
+        if let LineShading::Gouraud(colors) = &mut shading {
+            colors.swap(0, 1);
+        }
+    }
+
+    let min_x = cmp::max(drawing_area_x.0, cmp::min(v[0].x, v[1].x));
+    let max_x = cmp::min(drawing_area_x.1, cmp::max(v[0].x, v[1].x));
+    let min_y = cmp::max(v[0].y, drawing_area_y.0);
+    let max_y = cmp::min(v[1].y, drawing_area_y.1);
+    if min_x > max_x || min_y > max_y {
+        return;
+    }
+
+    let y_interval = f64::from(v[1].y - v[0].y);
+
+    let x_step = f64::from(v[1].x - v[0].x) / y_interval;
+
+    let (r_step, g_step, b_step) = match shading {
+        LineShading::Flat(_) => (0.0, 0.0, 0.0),
+        LineShading::Gouraud(colors) => gouraud_color_steps(colors, y_interval),
+    };
+
+    let x_step_v = _mm256_set1_pd(4.0 * x_step);
+    let r_step_v = _mm256_set1_pd(4.0 * r_step);
+    let g_step_v = _mm256_set1_pd(4.0 * g_step);
+    let b_step_v = _mm256_set1_pd(4.0 * b_step);
+
+    let first_color = match shading {
+        LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
+    };
+
+    let mut x = first_step_vector(v[0].x.into(), x_step);
+    let mut r = first_step_vector(first_color.r.into(), r_step);
+    let mut g = first_step_vector(first_color.g.into(), g_step);
+    let mut b = first_step_vector(first_color.b.into(), b_step);
+
+    for y in (v[0].y..=v[1].y).step_by(4) {
+        let xr = _mm256_cvtpd_epi32(x);
+        let yr = _mm_setr_epi32(y, y + 1, y + 2, y + 3);
+
+        let write_mask = _mm_and_si128(
+            _mm_and_si128(
+                _mm_cmpgt_epi32(xr, _mm_set1_epi32(min_x - 1)),
+                _mm_cmplt_epi32(xr, _mm_set1_epi32(max_x + 1)),
+            ),
+            _mm_and_si128(
+                _mm_cmpgt_epi32(yr, _mm_set1_epi32(min_y - 1)),
+                _mm_cmplt_epi32(yr, _mm_set1_epi32(max_y + 1)),
+            ),
+        );
+
+        if _mm_testz_si128(write_mask, _mm_set1_epi32(-1)) == 0 {
+            let rr = round_pd_to_epi32(r);
+            let gr = round_pd_to_epi32(g);
+            let br = round_pd_to_epi32(b);
+
+            rasterize_line_pixels(
+                vram,
+                xr,
+                yr,
+                rr,
+                gr,
+                br,
+                write_mask,
+                semi_transparency_mode,
+                dithering_enabled,
+                force_mask_bit,
+                check_mask_bit,
+            );
+        }
+
+        x = _mm256_add_pd(x, x_step_v);
+        r = _mm256_add_pd(r, r_step_v);
+        g = _mm256_add_pd(g, g_step_v);
+        b = _mm256_add_pd(b, b_step_v);
+    }
+}
+
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn round_pd_to_epi32(pd: __m256d) -> __m128i {
+    // TODO remove the +0.01, fudge to fix rounding errors
+    _mm256_cvtpd_epi32(_mm256_round_pd::<_MM_FROUND_TO_NEAREST_INT>(_mm256_add_pd(
+        pd,
+        _mm256_set1_pd(0.01),
+    )))
+}
+
+#[allow(clippy::too_many_arguments)]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn rasterize_line_pixels(
+    vram: &mut AlignedVram,
+    x: __m128i,
+    y: __m128i,
+    r: __m128i,
+    g: __m128i,
+    b: __m128i,
+    write_mask: __m128i,
+    semi_transparency_mode: Option<SemiTransparencyMode>,
+    dithering_enabled: bool,
+    force_mask_bit: bool,
+    check_mask_bit: bool,
+) {
+    let forced_mask_bit = u16::from(force_mask_bit) << 15;
+
+    let x_arr: [i32; 4] = mem::transmute(x);
+    let y_arr: [i32; 4] = mem::transmute(y);
+    let write_mask_arr: [i32; 4] = mem::transmute(write_mask);
+
+    let r_arr: [i32; 4] = mem::transmute(r);
+    let g_arr: [i32; 4] = mem::transmute(g);
+    let b_arr: [i32; 4] = mem::transmute(b);
+
+    for i in 0..4 {
+        if write_mask_arr[i] == 0 {
+            continue;
+        }
+
+        let vram_addr = (1024 * y_arr[i] + x_arr[i]) as usize;
+        if check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
+            continue;
+        }
+
+        let (r, g, b) = match semi_transparency_mode {
+            Some(mode) => {
+                let existing = vram[vram_addr];
+                let existing_r: i32 = ((existing & 0x1F) << 3).into();
+                let existing_g: i32 = (((existing >> 5) & 0x1F) << 3).into();
+                let existing_b: i32 = (((existing >> 10) & 0x1F) << 3).into();
+
+                match mode {
+                    SemiTransparencyMode::Average => (
+                        (existing_r + r_arr[i]) >> 1,
+                        (existing_g + g_arr[i]) >> 1,
+                        (existing_b + b_arr[i]) >> 1,
+                    ),
+                    SemiTransparencyMode::Add => (
+                        cmp::min(255, existing_r + r_arr[i]),
+                        cmp::min(255, existing_g + g_arr[i]),
+                        cmp::min(255, existing_b + b_arr[i]),
+                    ),
+                    SemiTransparencyMode::Subtract => (
+                        cmp::max(0, existing_r - r_arr[i]),
+                        cmp::max(0, existing_g - g_arr[i]),
+                        cmp::max(0, existing_b - b_arr[i]),
+                    ),
+                    SemiTransparencyMode::AddQuarter => (
+                        cmp::min(255, existing_r + (r_arr[i] >> 2)),
+                        cmp::min(255, existing_g + (g_arr[i] >> 2)),
+                        cmp::min(255, existing_b + (b_arr[i] >> 2)),
+                    ),
+                }
+            }
+            None => (r_arr[i], g_arr[i], b_arr[i]),
+        };
+
+        let (r, g, b) = if dithering_enabled {
+            let dither_value =
+                DITHER_TABLE[(y_arr[i] & 3) as usize][(3 - (x_arr[i] & 3)) as usize] as i8;
+
+            (
+                (r as u8).saturating_add_signed(dither_value),
+                (g as u8).saturating_add_signed(dither_value),
+                (b as u8).saturating_add_signed(dither_value),
+            )
+        } else {
+            (r as u8, g as u8, b as u8)
+        };
+
+        vram[vram_addr] = u16::from(r >> 3)
+            | (u16::from(g & 0xF8) << 2)
+            | (u16::from(b & 0xF8) << 7)
+            | forced_mask_bit;
+    }
+}
+
+fn gouraud_color_steps([c0, c1]: [Color; 2], interval: f64) -> (f64, f64, f64) {
+    (
+        (f64::from(c1.r) - f64::from(c0.r)) / interval,
+        (f64::from(c1.g) - f64::from(c0.g)) / interval,
+        (f64::from(c1.b) - f64::from(c0.b)) / interval,
+    )
+}
+
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn first_step_vector(first: f64, step: f64) -> __m256d {
+    _mm256_setr_pd(first, first + step, first + 2.0 * step, first + 3.0 * step)
 }

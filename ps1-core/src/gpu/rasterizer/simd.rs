@@ -10,7 +10,7 @@ use crate::gpu::gp0::DrawSettings;
 use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
     cross_product_z, software, swap_vertices, vertices_valid, Color, CpuVramBlitArgs, DrawLineArgs,
-    DrawRectangleArgs, DrawTriangleArgs, LineShading, RasterizerInterface, RectangleTextureMapping,
+    DrawRectangleArgs, DrawTriangleArgs, RasterizerInterface, RectangleTextureMapping,
     TriangleShading, Vertex, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
@@ -161,7 +161,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
     #[cfg(not(target_arch = "x86_64"))]
     fn draw_triangle(&mut self, _args: DrawTriangleArgs, _draw_settings: &DrawSettings) {}
 
-    // TODO write an AVX2 implementation of this
+    #[cfg(target_arch = "x86_64")]
     fn draw_line(
         &mut self,
         DrawLineArgs { vertices, shading, semi_transparent, semi_transparency_mode }: DrawLineArgs,
@@ -181,87 +181,29 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             y: vertex.y + draw_settings.draw_offset.1,
         });
 
-        let x_diff = vertices[1].x - vertices[0].x;
-        let y_diff = vertices[1].y - vertices[0].y;
-
-        if x_diff == 0 && y_diff == 0 {
-            // Draw a single pixel with the color of the first vertex (if it's inside the drawing area)
-            let color = match shading {
-                LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
-            };
-            crate::gpu::rasterizer::naive::draw_line_pixel(
-                vertices[0],
-                color,
-                semi_transparent,
-                semi_transparency_mode,
-                draw_settings,
+        unsafe {
+            avx2::rasterize_line(
                 &mut self.vram,
+                vertices,
+                (
+                    draw_settings.draw_area_top_left.0 as i32,
+                    draw_settings.draw_area_bottom_right.0 as i32,
+                ),
+                (
+                    draw_settings.draw_area_top_left.1 as i32,
+                    draw_settings.draw_area_bottom_right.1 as i32,
+                ),
+                shading,
+                semi_transparent.then_some(semi_transparency_mode),
+                draw_settings.dithering_enabled,
+                draw_settings.force_mask_bit,
+                draw_settings.check_mask_bit,
             );
-            return;
         }
-
-        let (r_diff, g_diff, b_diff) = match shading {
-            LineShading::Flat(_) => (0, 0, 0),
-            LineShading::Gouraud([color0, color1]) => (
-                i32::from(color1.r) - i32::from(color0.r),
-                i32::from(color1.g) - i32::from(color0.g),
-                i32::from(color1.b) - i32::from(color0.b),
-            ),
-        };
-
-        let (x_step, y_step, r_step, g_step, b_step) = if x_diff.abs() >= y_diff.abs() {
-            let y_step = f64::from(y_diff) / f64::from(x_diff.abs());
-            let r_step = f64::from(r_diff) / f64::from(x_diff.abs());
-            let g_step = f64::from(g_diff) / f64::from(x_diff.abs());
-            let b_step = f64::from(b_diff) / f64::from(x_diff.abs());
-            (f64::from(x_diff.signum()), y_step, r_step, g_step, b_step)
-        } else {
-            let x_step = f64::from(x_diff) / f64::from(y_diff.abs());
-            let r_step = f64::from(r_diff) / f64::from(y_diff.abs());
-            let g_step = f64::from(g_diff) / f64::from(y_diff.abs());
-            let b_step = f64::from(b_diff) / f64::from(y_diff.abs());
-            (x_step, f64::from(y_diff.signum()), r_step, g_step, b_step)
-        };
-
-        let first_color = match shading {
-            LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
-        };
-        let mut r = f64::from(first_color.r);
-        let mut g = f64::from(first_color.g);
-        let mut b = f64::from(first_color.b);
-
-        let mut x = f64::from(vertices[0].x);
-        let mut y = f64::from(vertices[0].y);
-        while x.round() as i32 != vertices[1].x || y.round() as i32 != vertices[1].y {
-            let vertex = Vertex { x: x.round() as i32, y: y.round() as i32 };
-            let color = Color::rgb(r.round() as u8, g.round() as u8, b.round() as u8);
-            crate::gpu::rasterizer::naive::draw_line_pixel(
-                vertex,
-                color,
-                semi_transparent,
-                semi_transparency_mode,
-                draw_settings,
-                &mut self.vram,
-            );
-
-            x += x_step;
-            y += y_step;
-            r += r_step;
-            g += g_step;
-            b += b_step;
-        }
-
-        // Draw the last pixel
-        let color = Color::rgb(r.round() as u8, g.round() as u8, b.round() as u8);
-        crate::gpu::rasterizer::naive::draw_line_pixel(
-            vertices[1],
-            color,
-            semi_transparent,
-            semi_transparency_mode,
-            draw_settings,
-            &mut self.vram,
-        );
     }
+
+    #[cfg(not_target_arch = "x86_64")]
+    fn draw_line(&mut self, _args: DrawLineArgs, _draw_settings: &DrawSettings) {}
 
     #[cfg(target_arch = "x86_64")]
     fn draw_rectangle(
