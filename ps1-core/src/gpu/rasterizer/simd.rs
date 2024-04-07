@@ -18,6 +18,7 @@ use crate::gpu::{Vram, WgpuResources};
 use std::cmp;
 use std::ops::{Deref, DerefMut};
 
+// AVX2 loads/stores must be aligned to a 32-byte boundary
 #[repr(align(32))]
 #[derive(Debug, Clone)]
 struct AlignedVram(Vram);
@@ -158,6 +159,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2", target_feature = "fma")))]
     fn draw_triangle(&mut self, _args: DrawTriangleArgs, _draw_settings: &DrawSettings) {}
 
+    // TODO write an AVX2 implementation of this
     fn draw_line(
         &mut self,
         DrawLineArgs { vertices, shading, semi_transparent, semi_transparency_mode }: DrawLineArgs,
