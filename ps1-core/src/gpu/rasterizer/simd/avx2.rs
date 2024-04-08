@@ -241,6 +241,7 @@ pub unsafe fn rasterize_triangle(
                 vertices,
                 px1,
                 py,
+                x_bounds,
                 zero,
                 v01_is_not_bottom_right,
                 v12_is_not_bottom_right,
@@ -252,6 +253,7 @@ pub unsafe fn rasterize_triangle(
                 vertices,
                 px2,
                 py,
+                x_bounds,
                 zero,
                 v01_is_not_bottom_right,
                 v12_is_not_bottom_right,
@@ -409,21 +411,29 @@ fn is_not_bottom_right_edge(v0: Vertex, v1: Vertex) -> i32 {
 // Determine which of the 8 points are inside the triangle.
 // Input vectors should be i32x8.
 // Return value is i32x8 where each lane is all 1s if inside the triangle and all 0s if outside.
+#[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "avx2")]
 unsafe fn compute_write_mask(
     vertices: [Vertex; 3],
     px: __m256i,
     py: __m256i,
+    x_bounds: (i32, i32),
     zero: __m256i,
     v01_is_not_bottom_right: i32,
     v12_is_not_bottom_right: i32,
     v20_is_not_bottom_right: i32,
 ) -> __m256i {
     _mm256_and_si256(
-        check_edge(vertices[0], vertices[1], px, py, zero, v01_is_not_bottom_right),
         _mm256_and_si256(
-            check_edge(vertices[1], vertices[2], px, py, zero, v12_is_not_bottom_right),
-            check_edge(vertices[2], vertices[0], px, py, zero, v20_is_not_bottom_right),
+            check_edge(vertices[0], vertices[1], px, py, zero, v01_is_not_bottom_right),
+            _mm256_and_si256(
+                check_edge(vertices[1], vertices[2], px, py, zero, v12_is_not_bottom_right),
+                check_edge(vertices[2], vertices[0], px, py, zero, v20_is_not_bottom_right),
+            ),
+        ),
+        _mm256_andnot_si256(
+            _mm256_cmpgt_epi32(_mm256_set1_epi32(x_bounds.0), px),
+            _mm256_cmpgt_epi32(_mm256_set1_epi32(x_bounds.1 + 1), px),
         ),
     )
 }
