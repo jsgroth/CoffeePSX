@@ -163,11 +163,13 @@ impl DmaInterruptRegister {
 
     fn write(&mut self, value: u32) {
         self.force_irq = value.bit(15);
-        self.channel_irq_enabled = ((value >> 16) as u8) & 0x7F;
+
+        let channel_irq_enabled = ((value >> 16) as u8) & 0x7F;
+        self.channel_irq_enabled = channel_irq_enabled;
         self.irq_enabled = value.bit(23);
 
         let irq_pending_mask = ((value >> 24) as u8) & 0x7F;
-        self.channel_irq_pending &= !irq_pending_mask;
+        self.channel_irq_pending &= !irq_pending_mask & channel_irq_enabled;
     }
 }
 
