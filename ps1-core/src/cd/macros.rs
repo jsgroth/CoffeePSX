@@ -39,6 +39,12 @@ macro_rules! int3 {
     }
 }
 
+macro_rules! int4 {
+    ($self:expr, [$($response:expr),* $(,)?]) => {
+        generate_response!($self, 4, $($response,)*);
+    }
+}
+
 macro_rules! int5 {
     ($self:expr, [$($response:expr),* $(,)?]) => {
         generate_response!($self, 5, $($response,)*);
@@ -58,6 +64,7 @@ pub(super) use generate_response;
 pub(super) use int1;
 pub(super) use int2;
 pub(super) use int3;
+pub(super) use int4;
 pub(super) use int5;
 pub(super) use push_fifo;
 pub(super) use stat;

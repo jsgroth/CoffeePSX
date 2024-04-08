@@ -348,7 +348,7 @@ impl CdController {
             }
             DriveState::Reading(state) => self.progress_read_state(state)?,
             DriveState::PreparingToPlay { time, cycles_remaining: 1 } => {
-                self.read_audio_sector(PlayState::new(time))?
+                self.read_audio_sector(PlayState::new(time), true)?
             }
             DriveState::PreparingToPlay { time, cycles_remaining } => {
                 DriveState::PreparingToPlay { time, cycles_remaining: cycles_remaining - 1 }

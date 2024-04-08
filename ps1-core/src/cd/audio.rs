@@ -9,18 +9,39 @@ use cdrom::cdtime::CdTime;
 use cdrom::CdRomResult;
 
 pub const CD_DA_SAMPLES_PER_SECTOR: u16 = 588;
-const SECTORS_BETWEEN_REPORTS: u8 = 10;
+const SECTORS_BETWEEN_REPORTS: u8 = 16;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub enum AudioReportType {
+    Absolute,
+    Relative,
+}
+
+impl AudioReportType {
+    fn toggle(self) -> Self {
+        match self {
+            Self::Absolute => Self::Relative,
+            Self::Relative => Self::Absolute,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub struct PlayState {
     pub time: CdTime,
     pub sample_idx: u16,
     pub sectors_till_report: u8,
+    pub next_report_type: AudioReportType,
 }
 
 impl PlayState {
     pub fn new(time: CdTime) -> Self {
-        Self { time, sample_idx: 0, sectors_till_report: SECTORS_BETWEEN_REPORTS }
+        Self {
+            time,
+            sample_idx: 0,
+            sectors_till_report: 1,
+            next_report_type: AudioReportType::Absolute,
+        }
     }
 }
 
@@ -85,10 +106,74 @@ impl CdController {
 
     pub(super) fn read_audio_sector(
         &mut self,
-        PlayState { time, sectors_till_report, .. }: PlayState,
+        PlayState { time, mut sectors_till_report, mut next_report_type, .. }: PlayState,
+        first_sector: bool,
     ) -> CdRomResult<DriveState> {
-        // TODO check if at end of track
-        // TODO generate audio report
+        let Some(disc) = &self.disc else {
+            // TODO generate error INT
+            panic!("Reading audio sector with no disc in the drive");
+        };
+
+        let num_tracks = disc.cue().last_track().number;
+        let track = disc.cue().find_track_by_time(time);
+        let Some(track) = track else {
+            // At end of disc
+            // If auto-pause is enabled, pause at the end of the last track; otherwise stop the drive
+            // In both cases, generate INT4
+            if num_tracks > 1 && self.drive_mode.auto_pause_audio {
+                self.drive_state =
+                    DriveState::Paused { time: time - CdTime::new(0, 0, 1), int2_queued: false };
+            } else {
+                self.drive_state = DriveState::Stopped;
+            };
+
+            int4!(self, [stat!(self)]);
+            return Ok(self.drive_state);
+        };
+
+        // If auto-pause is enabled and the drive moved to a new audio track, pause at the end of
+        // the previous track and generate INT4
+        if self.drive_mode.auto_pause_audio
+            && !first_sector
+            && track.number > 2
+            && time == track.start_time
+        {
+            self.drive_state =
+                DriveState::Paused { time: time - CdTime::new(0, 0, 1), int2_queued: false };
+            int4!(self, [stat!(self)]);
+            return Ok(self.drive_state);
+        }
+
+        if sectors_till_report == 1 {
+            if self.drive_mode.audio_report_interrupts {
+                // Generate audio report
+                //   Absolute report: INT1(stat, track, index, amm, ass, asect, peaklo, peakhi)
+                //   Relative report: INT1(stat, track, index, mm, ss | 0x80, sect, peaklo, peakhi)
+                let index = u8::from(time >= track.effective_start_time());
+                let report_time = match next_report_type {
+                    AudioReportType::Absolute => time,
+                    AudioReportType::Relative => time.saturating_sub(track.effective_start_time()),
+                };
+
+                let track_number = cd::binary_to_bcd(track.number);
+                let minutes = cd::binary_to_bcd(report_time.minutes);
+                let mut seconds = cd::binary_to_bcd(report_time.seconds);
+                let frames = cd::binary_to_bcd(report_time.frames);
+
+                if next_report_type == AudioReportType::Relative {
+                    seconds |= 0x80;
+                }
+
+                // TODO check if an interrupt is pending?
+                int1!(
+                    self,
+                    [stat!(self), track_number, index, minutes, seconds, frames, 0x00, 0x00]
+                );
+            }
+
+            sectors_till_report = SECTORS_BETWEEN_REPORTS;
+            next_report_type = next_report_type.toggle();
+        }
 
         self.read_sector_atime(time)?;
 
@@ -96,12 +181,13 @@ impl CdController {
             time: time + CdTime::new(0, 0, 1),
             sample_idx: 0,
             sectors_till_report: sectors_till_report - 1,
+            next_report_type,
         }))
     }
 
     pub(super) fn progress_play_state(
         &mut self,
-        PlayState { time, mut sample_idx, sectors_till_report }: PlayState,
+        PlayState { time, mut sample_idx, sectors_till_report, next_report_type }: PlayState,
     ) -> CdRomResult<DriveState> {
         if self.drive_mode.cd_da_enabled {
             let sample_addr = (sample_idx * 4) as usize;
@@ -119,9 +205,17 @@ impl CdController {
 
         sample_idx += 1;
         if sample_idx == CD_DA_SAMPLES_PER_SECTOR {
-            self.read_audio_sector(PlayState { time, sample_idx: 0, sectors_till_report })
+            self.read_audio_sector(
+                PlayState { time, sample_idx: 0, sectors_till_report, next_report_type },
+                false,
+            )
         } else {
-            Ok(DriveState::Playing(PlayState { time, sample_idx, sectors_till_report }))
+            Ok(DriveState::Playing(PlayState {
+                time,
+                sample_idx,
+                sectors_till_report,
+                next_report_type,
+            }))
         }
     }
 }

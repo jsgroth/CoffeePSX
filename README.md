@@ -24,7 +24,7 @@ Not yet implemented:
 * DMA timings and GPU draw timings; right now all DMAs and GPU commands finish instantly from software's perspective
 * PAL display and video timings; only NTSC is supported right now
 * SPU: Capture buffers, reverb FIR filter
-* Some CD-ROM functionality including infrequently used commands, audio report interrupts, and non-standard CD-XA audio modes
+* Some CD-ROM functionality including infrequently used commands and 8-bit CD-XA audio
 * MDEC 4bpp/8bpp modes
   * Even 15bpp/24bpp MDEC does not work properly in some games, possibly timing-related
 * Analog controllers and P2 inputs
