@@ -72,17 +72,6 @@ where
     Color::rgb(op(back.r, front.r), op(back.g, front.g), op(back.b, front.b))
 }
 
-struct VertexFloat {
-    x: f64,
-    y: f64,
-}
-
-impl Vertex {
-    fn to_float(self) -> VertexFloat {
-        VertexFloat { x: self.x.into(), y: self.y.into() }
-    }
-}
-
 #[derive(Debug)]
 pub struct NaiveSoftwareRasterizer {
     vram: Box<Vram>,
@@ -104,6 +93,169 @@ impl NaiveSoftwareRasterizer {
     pub fn clone_vram(&self) -> Box<Vram> {
         self.vram.clone()
     }
+}
+
+#[derive(Debug, Clone)]
+struct Interpolator {
+    base_vertex: Vertex,
+    base_color: Color,
+    base_tex_coords: (u8, u8),
+    color_x_steps: (i32, i32, i32),
+    color_y_steps: (i32, i32, i32),
+    tex_x_steps: (i32, i32),
+    tex_y_steps: (i32, i32),
+}
+
+impl Interpolator {
+    // PS1 GPU appears to use fixed-point decimal with 12 fractional bits
+    // U/V interpolation does not look correct otherwise
+    const SHIFT: u8 = 12;
+
+    fn new(
+        v: [Vertex; 3],
+        shading: TriangleShading,
+        texture_mapping: Option<&TriangleTextureMapping>,
+    ) -> Self {
+        // Interpolate from the "first" vertex, sorted by X then Y
+        let (base_vertex_idx, base_vertex) = v
+            .into_iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.x.cmp(&b.x).then(a.y.cmp(&b.y)))
+            .unwrap();
+
+        let denominator = cross_product_z(v[0], v[1], v[2]);
+        assert_ne!(denominator, 0);
+
+        let (base_color, color_x_steps, color_y_steps) = match shading {
+            TriangleShading::Flat(color) => (color, (0, 0, 0), (0, 0, 0)),
+            TriangleShading::Gouraud(colors) => {
+                let base_color = colors[base_vertex_idx];
+
+                let r = colors.map(|color| color.r);
+                let g = colors.map(|color| color.g);
+                let b = colors.map(|color| color.b);
+
+                let x_steps = (
+                    compute_x_step(v, r, denominator),
+                    compute_x_step(v, g, denominator),
+                    compute_x_step(v, b, denominator),
+                );
+                let y_steps = (
+                    compute_y_step(v, r, denominator),
+                    compute_y_step(v, g, denominator),
+                    compute_y_step(v, b, denominator),
+                );
+
+                (base_color, x_steps, y_steps)
+            }
+        };
+
+        let (base_tex_coords, tex_x_steps, tex_y_steps) = match texture_mapping {
+            Some(mapping) => {
+                let base_coords = (mapping.u[base_vertex_idx], mapping.v[base_vertex_idx]);
+
+                let x_steps = (
+                    compute_x_step(v, mapping.u, denominator),
+                    compute_x_step(v, mapping.v, denominator),
+                );
+                let y_steps = (
+                    compute_y_step(v, mapping.u, denominator),
+                    compute_y_step(v, mapping.v, denominator),
+                );
+
+                (base_coords, x_steps, y_steps)
+            }
+            None => ((0, 0), (0, 0), (0, 0)),
+        };
+
+        Self {
+            base_vertex,
+            base_color,
+            base_tex_coords,
+            color_x_steps,
+            color_y_steps,
+            tex_x_steps,
+            tex_y_steps,
+        }
+    }
+
+    fn interpolate_color(&self, p: Vertex) -> Color {
+        let r = interpolate_component(
+            p,
+            self.base_vertex,
+            self.base_color.r,
+            self.color_x_steps.0,
+            self.color_y_steps.0,
+        );
+        let g = interpolate_component(
+            p,
+            self.base_vertex,
+            self.base_color.g,
+            self.color_x_steps.1,
+            self.color_y_steps.1,
+        );
+        let b = interpolate_component(
+            p,
+            self.base_vertex,
+            self.base_color.b,
+            self.color_x_steps.2,
+            self.color_y_steps.2,
+        );
+
+        Color { r, g, b }
+    }
+
+    fn interpolate_uv(&self, p: Vertex) -> (u8, u8) {
+        let u = interpolate_component(
+            p,
+            self.base_vertex,
+            self.base_tex_coords.0,
+            self.tex_x_steps.0,
+            self.tex_y_steps.0,
+        );
+        let v = interpolate_component(
+            p,
+            self.base_vertex,
+            self.base_tex_coords.1,
+            self.tex_x_steps.1,
+            self.tex_y_steps.1,
+        );
+
+        (u, v)
+    }
+}
+
+fn compute_x_step(v: [Vertex; 3], component: [u8; 3], denominator: i32) -> i32 {
+    let component = component.map(i32::from);
+    let raw = component[0] * (v[1].y - v[2].y)
+        + component[1] * (v[2].y - v[0].y)
+        + component[2] * (v[0].y - v[1].y);
+    (raw << Interpolator::SHIFT) / denominator
+}
+
+fn compute_y_step(v: [Vertex; 3], component: [u8; 3], denominator: i32) -> i32 {
+    let component = component.map(i32::from);
+    let raw = component[0] * (v[2].x - v[1].x)
+        + component[1] * (v[0].x - v[2].x)
+        + component[2] * (v[1].x - v[0].x);
+    (raw << Interpolator::SHIFT) / denominator
+}
+
+fn interpolate_component(
+    p: Vertex,
+    base_vertex: Vertex,
+    base_component: u8,
+    x_step: i32,
+    y_step: i32,
+) -> u8 {
+    let dx = p.x - base_vertex.x;
+    let dy = p.y - base_vertex.y;
+
+    let base_component = i32::from(base_component) << Interpolator::SHIFT;
+    let shifted_value = base_component + x_step * dx + y_step * dy;
+    let value = (shifted_value + (1 << (Interpolator::SHIFT - 1))) >> Interpolator::SHIFT;
+
+    value as u8
 }
 
 impl RasterizerInterface for NaiveSoftwareRasterizer {
@@ -128,8 +280,14 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
         }
 
         // Determine if the vertices are in clockwise order; if not, swap the first 2
-        if cross_product_z(v[0], v[1], v[2]) < 0 {
+        let double_area = cross_product_z(v[0], v[1], v[2]);
+        if double_area < 0 {
             swap_vertices(&mut v, &mut shading, texture_mapping.as_mut());
+        }
+
+        // If vertices are collinear, draw nothing
+        if double_area == 0 {
+            return;
         }
 
         let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
@@ -160,12 +318,15 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
 
         log::trace!("Bounding box: ({min_x}, {min_y}) to ({max_x}, {max_y})");
 
+        let interpolator = Interpolator::new(v, shading, texture_mapping.as_ref());
+
         // Iterate over every pixel in the bounding box to determine which ones to rasterize
         for py in min_y..=max_y {
             for px in min_x..=max_x {
                 draw_triangle_pixel(
                     px,
                     py,
+                    &interpolator,
                     &mut self.vram,
                     DrawTrianglePixelArgs {
                         v,
@@ -379,6 +540,7 @@ struct DrawTrianglePixelArgs {
 fn draw_triangle_pixel(
     px: i32,
     py: i32,
+    interpolator: &Interpolator,
     vram: &mut Vram,
     DrawTrianglePixelArgs {
         v,
@@ -424,31 +586,12 @@ fn draw_triangle_pixel(
         }
     }
 
-    let barycentric_coordinates =
-        if matches!(shading, TriangleShading::Gouraud(..)) || texture_mapping.is_some() {
-            compute_barycentric_coordinates(
-                p.to_float(),
-                v[0].to_float(),
-                v[1].to_float(),
-                v[2].to_float(),
-            )
-        } else {
-            [0.0, 0.0, 0.0]
-        };
-
-    let shading_color = match shading {
-        TriangleShading::Flat(color) => color,
-        TriangleShading::Gouraud(colors) => apply_gouraud_shading(barycentric_coordinates, colors),
-    };
+    let shading_color = interpolator.interpolate_color(p);
 
     let (textured_color, mask_bit) = match &texture_mapping {
         None => (shading_color, false),
         Some(texture_mapping) => {
-            let (tex_u, tex_v) = interpolate_uv_coordinates(
-                barycentric_coordinates,
-                texture_mapping.u,
-                texture_mapping.v,
-            );
+            let (tex_u, tex_v) = interpolator.interpolate_uv(p);
 
             let texture_pixel = sample_texture(
                 vram,
@@ -655,56 +798,6 @@ fn modulate_color(texture_color: Color, shading_color: Color) -> Color {
         g: modulate(texture_color.g, shading_color.g),
         b: modulate(texture_color.b, shading_color.b),
     }
-}
-
-fn apply_gouraud_shading([alpha, beta, gamma]: [f64; 3], colors: [Color; 3]) -> Color {
-    if colors[0] == colors[1] && colors[1] == colors[2] {
-        return colors[0];
-    }
-
-    let rf = colors.map(|color| f64::from(color.r));
-    let gf = colors.map(|color| f64::from(color.g));
-    let bf = colors.map(|color| f64::from(color.b));
-
-    // Interpolate between the color of each vertex using Barycentric/affine coordinates
-    let r = alpha * rf[0] + beta * rf[1] + gamma * rf[2];
-    let g = alpha * gf[0] + beta * gf[1] + gamma * gf[2];
-    let b = alpha * bf[0] + beta * bf[1] + gamma * bf[2];
-
-    Color::rgb(r.round() as u8, g.round() as u8, b.round() as u8)
-}
-
-fn interpolate_uv_coordinates([alpha, beta, gamma]: [f64; 3], u: [u8; 3], v: [u8; 3]) -> (u8, u8) {
-    let uf = u.map(f64::from);
-    let vf = v.map(f64::from);
-
-    let u = alpha * uf[0] + beta * uf[1] + gamma * uf[2];
-    let v = alpha * vf[0] + beta * vf[1] + gamma * vf[2];
-
-    let u = u.round() as u8;
-    let v = v.round() as u8;
-
-    (u, v)
-}
-
-fn compute_barycentric_coordinates(
-    p: VertexFloat,
-    v1: VertexFloat,
-    v2: VertexFloat,
-    v3: VertexFloat,
-) -> [f64; 3] {
-    let determinant = (v1.x - v3.x) * (v2.y - v3.y) - (v2.x - v3.x) * (v1.y - v3.y);
-    if determinant.abs() < 1e-6 {
-        // TODO what to do when points are collinear?
-        let one_third = 1.0 / 3.0;
-        return [one_third, one_third, one_third];
-    }
-
-    let alpha = ((p.x - v3.x) * (v2.y - v3.y) - (p.y - v3.y) * (v2.x - v3.x)) / determinant;
-    let beta = ((p.x - v3.x) * (v3.y - v1.y) - (p.y - v3.y) * (v3.x - v1.x)) / determinant;
-    let gamma = 1.0 - alpha - beta;
-
-    [alpha, beta, gamma]
 }
 
 fn sample_texture(
