@@ -307,6 +307,8 @@ impl Ps1Emulator {
         audio_output: &mut A,
         save_writer: &mut S,
     ) -> Result<TickEffect, TickError<R::Err, A::Err, S::Err>> {
+        self.sio0.set_inputs(inputs);
+
         let cpu_cycles = self.cpu.execute_instruction(&mut Bus {
             gpu: &mut self.gpu,
             spu: &mut self.spu,
@@ -327,11 +329,6 @@ impl Ps1Emulator {
         }
 
         self.scheduler.increment_cpu_cycles(cpu_cycles.into());
-
-        // TODO use scheduler instead of advancing SIO0 every CPU tick
-        self.sio0.set_inputs(inputs);
-        self.sio0.tick(cpu_cycles, &mut self.interrupt_registers);
-        self.sio1.tick(cpu_cycles, &mut self.interrupt_registers);
 
         let tick_effect = if self.scheduler.is_event_ready() {
             self.process_scheduler_events(renderer, audio_output, save_writer)?
@@ -394,6 +391,9 @@ impl Ps1Emulator {
                     self.interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
                     self.timers.schedule_next_vblank(&mut self.scheduler);
 
+                    self.sio0.catch_up(&mut self.scheduler, &mut self.interrupt_registers);
+                    self.sio1.catch_up(&mut self.scheduler, &mut self.interrupt_registers);
+
                     self.render_frame(renderer, audio_output, save_writer)?;
 
                     tick_effect = TickEffect::FrameRendered;
@@ -427,6 +427,12 @@ impl Ps1Emulator {
                     // Trigger rate depends on Timer 2 configuration
                     self.interrupt_registers.set_interrupt_flag(InterruptType::Timer2);
                     self.timers.schedule_next_timer_2_irq(&mut self.scheduler);
+                }
+                SchedulerEventType::Sio0Irq | SchedulerEventType::Sio0Tx => {
+                    self.sio0.catch_up(&mut self.scheduler, &mut self.interrupt_registers);
+                }
+                SchedulerEventType::Sio1Irq | SchedulerEventType::Sio1Tx => {
+                    self.sio1.catch_up(&mut self.scheduler, &mut self.interrupt_registers);
                 }
             }
         }

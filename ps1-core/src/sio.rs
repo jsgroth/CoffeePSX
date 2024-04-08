@@ -11,6 +11,7 @@ mod rxfifo;
 use crate::input::{Ps1Inputs, Ps1JoypadState};
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
+use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
 use crate::sio::controllers::DigitalController;
 use crate::sio::memcard::{ConnectedMemoryCard, MemoryCard};
 use crate::sio::rxfifo::RxFifo;
@@ -103,6 +104,7 @@ enum PortState {
 }
 
 const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
+const IRQ_DELAY_CYCLES: u64 = 100;
 
 #[derive(Debug, Clone, Encode, Decode)]
 enum SerialDevice<Device> {
@@ -199,6 +201,9 @@ impl SerialDevices for Sio1Devices {
 pub struct SerialPort<Devices: SerialDevices> {
     devices: Devices,
     active_device: Option<SerialDevice<Devices::Device>>,
+    irq_event_type: SchedulerEventType,
+    tx_event_type: SchedulerEventType,
+    last_update_cycles: u64,
     tx_fifo: TxFifoState,
     rx_fifo: RxFifo,
     tx_enabled: bool,
@@ -219,7 +224,11 @@ pub type SerialPort1 = SerialPort<Sio1Devices>;
 
 impl SerialPort0 {
     pub fn new_sio0(memory_card_1: Option<Vec<u8>>) -> Self {
-        Self::new(Sio0Devices::new(memory_card_1))
+        Self::new(
+            Sio0Devices::new(memory_card_1),
+            SchedulerEventType::Sio0Irq,
+            SchedulerEventType::Sio0Tx,
+        )
     }
 
     pub fn set_inputs(&mut self, inputs: Ps1Inputs) {
@@ -233,15 +242,22 @@ impl SerialPort0 {
 
 impl SerialPort1 {
     pub fn new_sio1() -> Self {
-        Self::new(Sio1Devices)
+        Self::new(Sio1Devices, SchedulerEventType::Sio1Irq, SchedulerEventType::Sio1Tx)
     }
 }
 
 impl<Devices: SerialDevices> SerialPort<Devices> {
-    fn new(devices: Devices) -> Self {
+    fn new(
+        devices: Devices,
+        irq_event_type: SchedulerEventType,
+        tx_event_type: SchedulerEventType,
+    ) -> Self {
         Self {
             devices,
             active_device: None,
+            irq_event_type,
+            tx_event_type,
+            last_update_cycles: 0,
             tx_fifo: TxFifoState::Empty,
             rx_fifo: RxFifo::new(),
             tx_enabled: false,
@@ -258,13 +274,24 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
         }
     }
 
-    pub fn tick(&mut self, cpu_cycles: u32, interrupt_registers: &mut InterruptRegisters) {
-        self.baudrate_timer.tick(cpu_cycles);
+    pub fn catch_up(
+        &mut self,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
+        let cycles_elapsed = (scheduler.cpu_cycle_counter() - self.last_update_cycles) as u32;
+        if cycles_elapsed == 0 {
+            return;
+        }
+        self.last_update_cycles = scheduler.cpu_cycle_counter();
+
+        self.baudrate_timer.tick(cycles_elapsed);
 
         if self.irq_delay_cycles != 0 {
-            self.irq_delay_cycles = self.irq_delay_cycles.saturating_sub(cpu_cycles as u16);
+            self.irq_delay_cycles =
+                u32::from(self.irq_delay_cycles).saturating_sub(cycles_elapsed) as u16;
             if self.irq_delay_cycles == 0 {
-                interrupt_registers.set_interrupt_flag(InterruptType::Sio0);
+                interrupt_registers.set_interrupt_flag(InterruptType::Sio);
             }
         }
 
@@ -277,18 +304,32 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
                         cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
                         next: None,
                     };
+                    scheduler.update_or_push_event(SchedulerEvent {
+                        event_type: self.tx_event_type,
+                        cpu_cycles: scheduler.cpu_cycle_counter()
+                            + u64::from(CONTROLLER_TRANSFER_CYCLES),
+                    });
                 }
             }
             TxFifoState::Transferring { value, cycles_remaining, next } => {
-                let cycles_remaining = cycles_remaining.saturating_sub(cpu_cycles);
+                let cycles_remaining = cycles_remaining.saturating_sub(cycles_elapsed);
                 if cycles_remaining == 0 {
-                    self.process_tx_write(value);
+                    self.process_tx_write(value, scheduler);
+
                     self.tx_fifo = match (next, self.tx_enabled) {
-                        (Some(next_value), true) => TxFifoState::Transferring {
-                            value: next_value,
-                            cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
-                            next: None,
-                        },
+                        (Some(next_value), true) => {
+                            scheduler.update_or_push_event(SchedulerEvent {
+                                event_type: self.tx_event_type,
+                                cpu_cycles: scheduler.cpu_cycle_counter()
+                                    + u64::from(CONTROLLER_TRANSFER_CYCLES),
+                            });
+
+                            TxFifoState::Transferring {
+                                value: next_value,
+                                cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
+                                next: None,
+                            }
+                        }
                         (Some(next_value), false) => TxFifoState::Queued(next_value),
                         (None, _) => TxFifoState::Empty,
                     };
@@ -299,7 +340,7 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
         }
     }
 
-    fn process_tx_write(&mut self, value: u8) {
+    fn process_tx_write(&mut self, value: u8, scheduler: &mut Scheduler) {
         log::debug!("Processing SIO0 TX_DATA write {value:02X}");
 
         self.active_device = match self.active_device.take() {
@@ -326,18 +367,41 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
             }
         };
 
-        if self.dsr_interrupt_enabled && !self.irq && self.active_device.is_some() {
+        if self.dsr_interrupt_enabled
+            && !self.irq
+            && self.active_device.as_ref().is_some_and(|device| {
+                !matches!(device, SerialDevice::NoDevice | SerialDevice::Disconnected)
+            })
+        {
             self.irq = true;
-            self.irq_delay_cycles = 100;
+            self.irq_delay_cycles = IRQ_DELAY_CYCLES as u16;
+
+            scheduler.update_or_push_event(SchedulerEvent {
+                event_type: self.irq_event_type,
+                cpu_cycles: scheduler.cpu_cycle_counter() + IRQ_DELAY_CYCLES,
+            });
         }
     }
 
-    pub fn write_tx_data(&mut self, tx_data: u32) {
+    pub fn write_tx_data(
+        &mut self,
+        tx_data: u32,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
+        self.catch_up(scheduler, interrupt_registers);
+
         let tx_data = tx_data as u8;
 
         self.tx_fifo = match self.tx_fifo {
             TxFifoState::Empty | TxFifoState::Queued(_) => {
                 if self.tx_enabled {
+                    scheduler.update_or_push_event(SchedulerEvent {
+                        event_type: self.tx_event_type,
+                        cpu_cycles: scheduler.cpu_cycle_counter()
+                            + u64::from(CONTROLLER_TRANSFER_CYCLES),
+                    });
+
                     TxFifoState::Transferring {
                         value: tx_data,
                         cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
@@ -348,6 +412,11 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
                 }
             }
             TxFifoState::Transferring { value, cycles_remaining, .. } => {
+                scheduler.update_or_push_event(SchedulerEvent {
+                    event_type: self.tx_event_type,
+                    cpu_cycles: scheduler.cpu_cycle_counter() + u64::from(cycles_remaining),
+                });
+
                 TxFifoState::Transferring { value, cycles_remaining, next: Some(tx_data) }
             }
         };
@@ -362,9 +431,17 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
     }
 
     // $1F801044: SIO0_STAT
-    pub fn read_status(&self) -> u32 {
-        // TODO Bit 7: DSR input level (/ACK)
-        let ack_high = matches!(self.active_device, None | Some(SerialDevice::Disconnected));
+    pub fn read_status(
+        &mut self,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) -> u32 {
+        self.catch_up(scheduler, interrupt_registers);
+
+        let ack_high = matches!(
+            self.active_device,
+            None | Some(SerialDevice::NoDevice | SerialDevice::Disconnected)
+        );
 
         let value = u32::from(self.tx_fifo.ready_for_new_byte())
             | (u32::from(!self.rx_fifo.empty()) << 1)
@@ -378,7 +455,14 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
     }
 
     // $1F801048: SIO0_MODE
-    pub fn write_mode(&mut self, value: u32) {
+    pub fn write_mode(
+        &mut self,
+        value: u32,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
+        self.catch_up(scheduler, interrupt_registers);
+
         self.baudrate_timer.update_reload_factor(value);
 
         if value & 0xC != 0xC {
@@ -418,12 +502,19 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
     }
 
     // $1F80104A: SIO0_CTRL
-    pub fn write_control(&mut self, value: u32) {
+    pub fn write_control(
+        &mut self,
+        value: u32,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
+        self.catch_up(scheduler, interrupt_registers);
+
         if value.bit(6) {
             // Reset bit
             log::debug!("SIO0 reset");
-            self.write_mode(0xC);
-            self.write_control(0);
+            self.write_mode(0xC, scheduler, interrupt_registers);
+            self.write_control(0, scheduler, interrupt_registers);
             self.rx_fifo.clear();
             return;
         }
@@ -446,6 +537,21 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
             self.active_device = None;
         }
 
+        if self.tx_enabled {
+            if let TxFifoState::Queued(tx) = self.tx_fifo {
+                self.tx_fifo = TxFifoState::Transferring {
+                    value: tx,
+                    cycles_remaining: CONTROLLER_TRANSFER_CYCLES,
+                    next: None,
+                };
+                scheduler.update_or_push_event(SchedulerEvent {
+                    event_type: self.tx_event_type,
+                    cpu_cycles: scheduler.cpu_cycle_counter()
+                        + u64::from(CONTROLLER_TRANSFER_CYCLES),
+                });
+            }
+        }
+
         log::debug!("SIO0_CTRL write: {value:04X}");
         log::debug!("  TX enabled: {}", self.tx_enabled);
         log::debug!("  DTR output on: {}", self.dtr_on);
@@ -458,7 +564,14 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
     }
 
     // $1F80104E: SIO0_BAUD (Baudrate timer reload value)
-    pub fn write_baudrate_reload(&mut self, value: u32) {
+    pub fn write_baudrate_reload(
+        &mut self,
+        value: u32,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
+        self.catch_up(scheduler, interrupt_registers);
+
         self.baudrate_timer.update_reload_value(value);
 
         log::debug!("SIO0 Baudrate timer reload value: {value:04X}");

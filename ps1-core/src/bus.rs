@@ -137,11 +137,11 @@ impl<'a> Bus<'a> {
         match address & 0xFFFF {
             0x1000..=0x1020 => self.memory_control.read_register(address),
             0x1040 => self.sio0.read_rx_data(),
-            0x1044 => self.sio0.read_status(),
+            0x1044 => self.sio0.read_status(self.scheduler, self.interrupt_registers),
             0x104A => self.sio0.read_control(),
             0x104E => self.sio0.read_baudrate_reload(),
             0x1050 => self.sio1.read_rx_data(),
-            0x1054 => self.sio1.read_status(),
+            0x1054 => self.sio1.read_status(self.scheduler, self.interrupt_registers),
             0x105A => self.sio1.read_control(),
             0x105E => self.sio1.read_baudrate_reload(),
             0x1060 => self.memory_control.read_ram_size(),
@@ -170,14 +170,18 @@ impl<'a> Bus<'a> {
         // TODO figure out how to properly handle 8-bit/16-bit writes to I/O registers
         match address & 0xFFFF {
             0x1000..=0x1020 => self.memory_control.write_register(address, value),
-            0x1040 => self.sio0.write_tx_data(value),
-            0x1048 => self.sio0.write_mode(value),
-            0x104A => self.sio0.write_control(value),
-            0x104E => self.sio0.write_baudrate_reload(value),
-            0x1050 => self.sio1.write_tx_data(value),
-            0x1058 => self.sio1.write_mode(value),
-            0x105A => self.sio1.write_control(value),
-            0x105E => self.sio1.write_baudrate_reload(value),
+            0x1040 => self.sio0.write_tx_data(value, self.scheduler, self.interrupt_registers),
+            0x1048 => self.sio0.write_mode(value, self.scheduler, self.interrupt_registers),
+            0x104A => self.sio0.write_control(value, self.scheduler, self.interrupt_registers),
+            0x104E => {
+                self.sio0.write_baudrate_reload(value, self.scheduler, self.interrupt_registers);
+            }
+            0x1050 => self.sio1.write_tx_data(value, self.scheduler, self.interrupt_registers),
+            0x1058 => self.sio1.write_mode(value, self.scheduler, self.interrupt_registers),
+            0x105A => self.sio1.write_control(value, self.scheduler, self.interrupt_registers),
+            0x105E => {
+                self.sio1.write_baudrate_reload(value, self.scheduler, self.interrupt_registers);
+            }
             0x1060 => self.memory_control.write_ram_size(value),
             0x1070 => self.interrupt_registers.write_interrupt_status(value),
             0x1074 => self.interrupt_registers.write_interrupt_mask(value),

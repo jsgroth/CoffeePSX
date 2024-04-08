@@ -11,6 +11,10 @@ pub enum SchedulerEventType {
     Timer0Irq,
     Timer1Irq,
     Timer2Irq,
+    Sio0Irq,
+    Sio0Tx,
+    Sio1Irq,
+    Sio1Tx,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
@@ -73,6 +77,13 @@ impl Scheduler {
     }
 
     pub fn update_or_push_event(&mut self, event: SchedulerEvent) {
+        log::debug!(
+            "Scheduled event of type {:?} at cycles {}, current {}",
+            event.event_type,
+            event.cpu_cycles,
+            self.cpu_cycle_counter
+        );
+
         self.heap
             .update_or_push(event, |existing_event| event.event_type == existing_event.event_type);
     }
