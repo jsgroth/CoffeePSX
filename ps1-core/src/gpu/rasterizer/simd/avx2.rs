@@ -936,19 +936,23 @@ pub unsafe fn rasterize_line(
             LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
         };
 
-        rasterize_line_pixels(
-            vram,
-            _mm_set1_epi32(vertices[0].x),
-            _mm_set1_epi32(vertices[0].y),
-            _mm_set1_epi32(color.r.into()),
-            _mm_set1_epi32(color.g.into()),
-            _mm_set1_epi32(color.b.into()),
-            _mm_setr_epi32(!0, 0, 0, 0),
-            semi_transparency_mode,
-            dithering_enabled,
-            force_mask_bit,
-            check_mask_bit,
-        );
+        if (drawing_area_x.0..=drawing_area_x.1).contains(&vertices[0].x)
+            && (drawing_area_y.0..=drawing_area_y.1).contains(&vertices[0].y)
+        {
+            rasterize_line_pixels(
+                vram,
+                _mm_set1_epi32(vertices[0].x),
+                _mm_set1_epi32(vertices[0].y),
+                _mm_set1_epi32(color.r.into()),
+                _mm_set1_epi32(color.g.into()),
+                _mm_set1_epi32(color.b.into()),
+                _mm_setr_epi32(!0, 0, 0, 0),
+                semi_transparency_mode,
+                dithering_enabled,
+                force_mask_bit,
+                check_mask_bit,
+            );
+        }
 
         return;
     }
