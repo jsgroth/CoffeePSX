@@ -1,16 +1,20 @@
-//! PS1 serial I/O port 0 (SIO0), used to communicate with controllers and memory cards
+//! PS1 serial I/O ports (SIO0 / SIO1)
+//!
+//! SIO0 is used to communicate with controllers and memory cards
+//!
+//! SIO1 is mostly unused, but some games used it for link cable functionality (not emulated)
 
 mod controllers;
 pub mod memcard;
 mod rxfifo;
 
-use crate::input::Ps1Inputs;
+use crate::input::{Ps1Inputs, Ps1JoypadState};
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
 use crate::sio::controllers::DigitalController;
 use crate::sio::memcard::{ConnectedMemoryCard, MemoryCard};
 use crate::sio::rxfifo::RxFifo;
-use bincode::{Decode, Encode};
+use bincode::{BorrowDecode, Decode, Encode};
 use std::cmp;
 
 #[derive(Debug, Clone, Copy, Encode, Decode)]
@@ -62,7 +66,7 @@ impl BaudrateTimer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
-enum Port {
+pub enum Port {
     #[default]
     One = 0,
     Two = 1,
@@ -101,17 +105,100 @@ enum PortState {
 const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
 
 #[derive(Debug, Clone, Encode, Decode)]
-enum SerialDevice {
+enum SerialDevice<Device> {
     NoDevice,
     Disconnected,
+    Connected(Device),
+}
+
+pub trait SerialDevices {
+    type Device: Encode + Decode + for<'de> BorrowDecode<'de>;
+
+    fn connect(&self, tx: u8, port: Port) -> Option<Self::Device>;
+
+    fn process_tx_write(
+        &mut self,
+        device: Self::Device,
+        tx: u8,
+        rx: &mut RxFifo,
+    ) -> Option<Self::Device>;
+}
+
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct Sio0Devices {
+    p1_joypad_state: Ps1JoypadState,
+    memory_card_1: MemoryCard,
+}
+
+impl Sio0Devices {
+    fn new(memory_card_1: Option<Vec<u8>>) -> Self {
+        Self {
+            p1_joypad_state: Ps1JoypadState::default(),
+            memory_card_1: MemoryCard::new(memory_card_1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Encode, Decode)]
+pub enum Sio0Device {
     DigitalController(DigitalController),
     MemoryCard(ConnectedMemoryCard),
 }
 
+impl SerialDevices for Sio0Devices {
+    type Device = Sio0Device;
+
+    fn connect(&self, tx: u8, port: Port) -> Option<Self::Device> {
+        match (tx, port) {
+            (0x01, Port::One) => Some(Sio0Device::DigitalController(DigitalController::initial(
+                self.p1_joypad_state,
+            ))),
+            (0x81, Port::One) => Some(Sio0Device::MemoryCard(ConnectedMemoryCard::initial())),
+            _ => None,
+        }
+    }
+
+    fn process_tx_write(
+        &mut self,
+        device: Self::Device,
+        tx: u8,
+        rx: &mut RxFifo,
+    ) -> Option<Self::Device> {
+        match device {
+            Sio0Device::DigitalController(controller) => {
+                controller.process(tx, rx).map(Sio0Device::DigitalController)
+            }
+            Sio0Device::MemoryCard(connected_memory_card) => connected_memory_card
+                .process(tx, rx, &mut self.memory_card_1)
+                .map(Sio0Device::MemoryCard),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Encode, Decode)]
-pub struct SerialPort {
-    active_device: Option<SerialDevice>,
-    memory_card_1: MemoryCard,
+pub struct Sio1Devices;
+
+impl SerialDevices for Sio1Devices {
+    type Device = ();
+
+    fn connect(&self, _tx: u8, _port: Port) -> Option<Self::Device> {
+        None
+    }
+
+    fn process_tx_write(
+        &mut self,
+        _device: Self::Device,
+        _tx: u8,
+        _rx: &mut RxFifo,
+    ) -> Option<Self::Device> {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct SerialPort<Devices: SerialDevices> {
+    devices: Devices,
+    active_device: Option<SerialDevice<Devices::Device>>,
     tx_fifo: TxFifoState,
     rx_fifo: RxFifo,
     tx_enabled: bool,
@@ -127,11 +214,34 @@ pub struct SerialPort {
     irq_delay_cycles: u16,
 }
 
-impl SerialPort {
-    pub fn new(memory_card_1: Option<Vec<u8>>) -> Self {
+pub type SerialPort0 = SerialPort<Sio0Devices>;
+pub type SerialPort1 = SerialPort<Sio1Devices>;
+
+impl SerialPort0 {
+    pub fn new_sio0(memory_card_1: Option<Vec<u8>>) -> Self {
+        Self::new(Sio0Devices::new(memory_card_1))
+    }
+
+    pub fn set_inputs(&mut self, inputs: Ps1Inputs) {
+        self.devices.p1_joypad_state = inputs.p1;
+    }
+
+    pub fn memory_card_1(&mut self) -> &mut MemoryCard {
+        &mut self.devices.memory_card_1
+    }
+}
+
+impl SerialPort1 {
+    pub fn new_sio1() -> Self {
+        Self::new(Sio1Devices)
+    }
+}
+
+impl<Devices: SerialDevices> SerialPort<Devices> {
+    fn new(devices: Devices) -> Self {
         Self {
+            devices,
             active_device: None,
-            memory_card_1: MemoryCard::new(memory_card_1),
             tx_fifo: TxFifoState::Empty,
             rx_fifo: RxFifo::new(),
             tx_enabled: false,
@@ -148,12 +258,7 @@ impl SerialPort {
         }
     }
 
-    pub fn tick(
-        &mut self,
-        cpu_cycles: u32,
-        inputs: Ps1Inputs,
-        interrupt_registers: &mut InterruptRegisters,
-    ) {
+    pub fn tick(&mut self, cpu_cycles: u32, interrupt_registers: &mut InterruptRegisters) {
         self.baudrate_timer.tick(cpu_cycles);
 
         if self.irq_delay_cycles != 0 {
@@ -177,7 +282,7 @@ impl SerialPort {
             TxFifoState::Transferring { value, cycles_remaining, next } => {
                 let cycles_remaining = cycles_remaining.saturating_sub(cpu_cycles);
                 if cycles_remaining == 0 {
-                    self.process_tx_write(value, inputs);
+                    self.process_tx_write(value);
                     self.tx_fifo = match (next, self.tx_enabled) {
                         (Some(next_value), true) => TxFifoState::Transferring {
                             value: next_value,
@@ -194,7 +299,7 @@ impl SerialPort {
         }
     }
 
-    fn process_tx_write(&mut self, value: u8, inputs: Ps1Inputs) {
+    fn process_tx_write(&mut self, value: u8) {
         log::debug!("Processing SIO0 TX_DATA write {value:02X}");
 
         self.active_device = match self.active_device.take() {
@@ -205,35 +310,19 @@ impl SerialPort {
                 Some(SerialDevice::NoDevice)
             }
             Some(SerialDevice::Disconnected) => Some(SerialDevice::Disconnected),
-            Some(SerialDevice::DigitalController(controller)) => {
-                log::debug!("SIO0 connected to digital controller in port 1");
-
-                controller.process(value, &mut self.rx_fifo).map(SerialDevice::DigitalController)
-            }
-            Some(SerialDevice::MemoryCard(memory_card)) => {
-                log::debug!("SIO0 connected to memory card in port 1");
-
-                memory_card
-                    .process(value, &mut self.rx_fifo, &mut self.memory_card_1)
-                    .map(SerialDevice::MemoryCard)
-            }
-            None if value == 0x01 && self.selected_port == Port::One => {
-                self.rx_fifo.push(0);
-
-                // Connect controller 1
-                Some(SerialDevice::DigitalController(DigitalController::initial(inputs.p1)))
-            }
-            None if value == 0x81 && self.selected_port == Port::One => {
-                self.rx_fifo.push(0);
-
-                // Connect memory card 1
-                Some(SerialDevice::MemoryCard(ConnectedMemoryCard::initial()))
-            }
+            Some(SerialDevice::Connected(device)) => Some(
+                self.devices
+                    .process_tx_write(device, value, &mut self.rx_fifo)
+                    .map_or(SerialDevice::Disconnected, SerialDevice::Connected),
+            ),
             None => {
                 self.rx_fifo.push(0);
 
-                // Pretend device is not connected
-                Some(SerialDevice::NoDevice)
+                Some(
+                    self.devices
+                        .connect(value, self.selected_port)
+                        .map_or(SerialDevice::NoDevice, SerialDevice::Connected),
+                )
             }
         };
 
@@ -377,9 +466,5 @@ impl SerialPort {
 
     pub fn read_baudrate_reload(&self) -> u32 {
         self.baudrate_timer.raw_reload_value
-    }
-
-    pub fn memory_card_1(&mut self) -> &mut MemoryCard {
-        &mut self.memory_card_1
     }
 }

@@ -8,7 +8,7 @@ use crate::interrupts::InterruptRegisters;
 use crate::mdec::MacroblockDecoder;
 use crate::memory::{Memory, MemoryControl};
 use crate::scheduler::Scheduler;
-use crate::sio::SerialPort;
+use crate::sio::{SerialPort0, SerialPort1};
 use crate::spu::Spu;
 use crate::timers::Timers;
 
@@ -21,7 +21,8 @@ pub struct Bus<'a> {
     pub memory_control: &'a mut MemoryControl,
     pub dma_controller: &'a mut DmaController,
     pub interrupt_registers: &'a mut InterruptRegisters,
-    pub sio0: &'a mut SerialPort,
+    pub sio0: &'a mut SerialPort0,
+    pub sio1: &'a mut SerialPort1,
     pub timers: &'a mut Timers,
     pub scheduler: &'a mut Scheduler,
 }
@@ -139,6 +140,10 @@ impl<'a> Bus<'a> {
             0x1044 => self.sio0.read_status(),
             0x104A => self.sio0.read_control(),
             0x104E => self.sio0.read_baudrate_reload(),
+            0x1050 => self.sio1.read_rx_data(),
+            0x1054 => self.sio1.read_status(),
+            0x105A => self.sio1.read_control(),
+            0x105E => self.sio1.read_baudrate_reload(),
             0x1060 => self.memory_control.read_ram_size(),
             0x1070 => self.interrupt_registers.read_interrupt_status(),
             0x1074 => self.interrupt_registers.read_interrupt_mask(),
@@ -169,6 +174,10 @@ impl<'a> Bus<'a> {
             0x1048 => self.sio0.write_mode(value),
             0x104A => self.sio0.write_control(value),
             0x104E => self.sio0.write_baudrate_reload(value),
+            0x1050 => self.sio1.write_tx_data(value),
+            0x1058 => self.sio1.write_mode(value),
+            0x105A => self.sio1.write_control(value),
+            0x105E => self.sio1.write_baudrate_reload(value),
             0x1060 => self.memory_control.write_ram_size(value),
             0x1070 => self.interrupt_registers.write_interrupt_status(value),
             0x1074 => self.interrupt_registers.write_interrupt_mask(value),

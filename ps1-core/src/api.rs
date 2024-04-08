@@ -11,7 +11,7 @@ use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::mdec::MacroblockDecoder;
 use crate::memory::{Memory, MemoryControl};
 use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
-use crate::sio::SerialPort;
+use crate::sio::{SerialPort0, SerialPort1};
 use crate::spu::Spu;
 use crate::timers::Timers;
 use bincode::{Decode, Encode};
@@ -120,7 +120,8 @@ pub struct Ps1Emulator {
     memory_control: MemoryControl,
     dma_controller: DmaController,
     interrupt_registers: InterruptRegisters,
-    sio0: SerialPort,
+    sio0: SerialPort0,
+    sio1: SerialPort1,
     timers: Timers,
     scheduler: Scheduler,
     last_render_cycles: u64,
@@ -233,7 +234,8 @@ impl Ps1Emulator {
             memory_control: MemoryControl::new(),
             dma_controller: DmaController::new(),
             interrupt_registers: InterruptRegisters::new(),
-            sio0: SerialPort::new(memory_card_1),
+            sio0: SerialPort0::new_sio0(memory_card_1),
+            sio1: SerialPort1::new_sio1(),
             timers: Timers::new(),
             scheduler: Scheduler::new(),
             last_render_cycles: 0,
@@ -315,6 +317,7 @@ impl Ps1Emulator {
             dma_controller: &mut self.dma_controller,
             interrupt_registers: &mut self.interrupt_registers,
             sio0: &mut self.sio0,
+            sio1: &mut self.sio1,
             timers: &mut self.timers,
             scheduler: &mut self.scheduler,
         });
@@ -326,7 +329,9 @@ impl Ps1Emulator {
         self.scheduler.increment_cpu_cycles(cpu_cycles.into());
 
         // TODO use scheduler instead of advancing SIO0 every CPU tick
-        self.sio0.tick(cpu_cycles, inputs, &mut self.interrupt_registers);
+        self.sio0.set_inputs(inputs);
+        self.sio0.tick(cpu_cycles, &mut self.interrupt_registers);
+        self.sio1.tick(cpu_cycles, &mut self.interrupt_registers);
 
         let tick_effect = if self.scheduler.is_event_ready() {
             self.process_scheduler_events(renderer, audio_output, save_writer)?
@@ -483,6 +488,7 @@ impl Ps1Emulator {
             dma_controller: state.dma_controller,
             interrupt_registers: state.interrupt_registers,
             sio0: state.sio0,
+            sio1: state.sio1,
             timers: state.timers,
             scheduler: state.scheduler,
             last_render_cycles: state.last_render_cycles,
