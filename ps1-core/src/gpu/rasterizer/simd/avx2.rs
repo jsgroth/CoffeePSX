@@ -569,29 +569,31 @@ unsafe fn read_4bpp_texture(
     v: __m256i,
 ) -> __m256i {
     let vram_y = _mm256_add_epi32(v, _mm256_set1_epi32(texpage.y_base as i32));
-    let vram_x = _mm256_add_epi32(
-        _mm256_srli_epi32::<2>(u),
-        _mm256_set1_epi32((64 * texpage.x_base) as i32),
+    let vram_x_words = _mm256_add_epi32(
+        _mm256_srli_epi32::<3>(u),
+        _mm256_set1_epi32((32 * texpage.x_base) as i32),
     );
 
-    let vram_addr = _mm256_or_si256(_mm256_slli_epi32::<10>(vram_y), vram_x);
-    let vram_shift = _mm256_slli_epi32::<2>(_mm256_and_si256(u, _mm256_set1_epi32(3)));
+    let vram_addr = _mm256_or_si256(_mm256_slli_epi32::<9>(vram_y), vram_x_words);
+    let vram_shift = _mm256_slli_epi32::<2>(_mm256_and_si256(u, _mm256_set1_epi32(0x07)));
 
-    let vram_addr_scalar: [i32; 8] = mem::transmute(vram_addr);
-    let vram_shift_scalar: [i32; 8] = mem::transmute(vram_shift);
+    let vram_words = _mm256_i32gather_epi32::<4>(vram.cast::<i32>(), vram_addr);
+    let clut_indices =
+        _mm256_and_si256(_mm256_srlv_epi32(vram_words, vram_shift), _mm256_set1_epi32(0xF));
 
     let clut_offset = ((1024 * clut_y) | (16 * clut_x)) as usize;
-    let clut_base_addr = vram.add(clut_offset);
+    let clut = vram.add(clut_offset);
 
-    let mut texels = [0_u32; 8];
-    for i in 0..8 {
-        let vram_halfword = *vram.add(vram_addr_scalar[i] as usize);
-        let clut_index = (vram_halfword >> vram_shift_scalar[i]) & 0xF;
+    read_clut(clut, clut_indices)
+}
 
-        texels[i] = (*clut_base_addr.add(clut_index as usize)).into();
-    }
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn read_clut(clut: *mut u16, clut_indices: __m256i) -> __m256i {
+    let addrs = _mm256_srli_epi32::<1>(clut_indices);
+    let shifts = _mm256_slli_epi32::<4>(_mm256_and_si256(clut_indices, _mm256_set1_epi32(1)));
 
-    mem::transmute(texels)
+    let colors = _mm256_i32gather_epi32::<4>(clut.cast::<i32>(), addrs);
+    _mm256_and_si256(_mm256_srlv_epi32(colors, shifts), _mm256_set1_epi32(0xFFFF))
 }
 
 // Read a row of 8 texels from an 8bpp texture.
@@ -607,35 +609,25 @@ unsafe fn read_8bpp_texture(
     v: __m256i,
 ) -> __m256i {
     let vram_y = _mm256_add_epi32(v, _mm256_set1_epi32(texpage.y_base as i32));
-    let vram_x = _mm256_and_si256(
+    let vram_x_words = _mm256_and_si256(
         _mm256_add_epi32(
-            _mm256_srli_epi32::<1>(u),
-            _mm256_set1_epi32((64 * texpage.x_base) as i32),
+            _mm256_srli_epi32::<2>(u),
+            _mm256_set1_epi32((32 * texpage.x_base) as i32),
         ),
-        _mm256_set1_epi32(0x3FF),
+        _mm256_set1_epi32(0x1FF),
     );
 
-    let vram_addr = _mm256_or_si256(_mm256_slli_epi32::<10>(vram_y), vram_x);
-    let vram_shift = _mm256_slli_epi32::<3>(_mm256_and_si256(u, _mm256_set1_epi32(1)));
+    let vram_addr = _mm256_or_si256(_mm256_slli_epi32::<9>(vram_y), vram_x_words);
+    let vram_shift = _mm256_slli_epi32::<3>(_mm256_and_si256(u, _mm256_set1_epi32(3)));
 
-    let vram_addr_scalar: [i32; 8] = mem::transmute(vram_addr);
-    let vram_shift_scalar: [i32; 8] = mem::transmute(vram_shift);
+    let vram_words = _mm256_i32gather_epi32::<4>(vram.cast::<i32>(), vram_addr);
+    let clut_indices =
+        _mm256_and_si256(_mm256_srlv_epi32(vram_words, vram_shift), _mm256_set1_epi32(0xFF));
 
-    let clut_row_addr = (1024 * clut_y) as usize;
-    let clut_row = vram.add(clut_row_addr);
+    let clut_offset = ((1024 * clut_y) | (16 * clut_x)) as usize;
+    let clut = vram.add(clut_offset);
 
-    let clut_row_offset = (16 * clut_x) as u16;
-
-    let mut texels = [0_u32; 8];
-    for i in 0..8 {
-        let vram_halfword = *vram.add(vram_addr_scalar[i] as usize);
-        let clut_index = (vram_halfword >> vram_shift_scalar[i]) & 0xFF;
-
-        let color_addr = ((clut_row_offset + clut_index) & 0x3FF) as usize;
-        texels[i] = (*clut_row.add(color_addr)).into();
-    }
-
-    mem::transmute(texels)
+    read_clut(clut, clut_indices)
 }
 
 // Read a row of 8 texels from a 15bpp texture.
@@ -649,20 +641,20 @@ unsafe fn read_15bpp_texture(
     v: __m256i,
 ) -> __m256i {
     let vram_y = _mm256_add_epi32(v, _mm256_set1_epi32(texpage.y_base as i32));
-    let vram_x = _mm256_and_si256(
-        _mm256_add_epi32(u, _mm256_set1_epi32((64 * texpage.x_base) as i32)),
-        _mm256_set1_epi32(0x3FF),
+    let vram_x_words = _mm256_and_si256(
+        _mm256_add_epi32(
+            _mm256_srli_epi32::<1>(u),
+            _mm256_set1_epi32((32 * texpage.x_base) as i32),
+        ),
+        _mm256_set1_epi32(0x1FF),
     );
 
-    let vram_addr = _mm256_or_si256(_mm256_slli_epi32::<10>(vram_y), vram_x);
-    let vram_addr_scalar: [i32; 8] = mem::transmute(vram_addr);
+    let vram_addr = _mm256_or_si256(_mm256_slli_epi32::<9>(vram_y), vram_x_words);
+    let vram_shift = _mm256_slli_epi32::<4>(_mm256_and_si256(u, _mm256_set1_epi32(1)));
 
-    let mut texels = [0_u32; 8];
-    for i in 0..8 {
-        texels[i] = (*vram.add(vram_addr_scalar[i] as usize)).into();
-    }
+    let vram_words = _mm256_i32gather_epi32::<4>(vram.cast::<i32>(), vram_addr);
 
-    mem::transmute(texels)
+    _mm256_and_si256(_mm256_srlv_epi32(vram_words, vram_shift), _mm256_set1_epi32(0xFFFF))
 }
 
 // Apply texture color modulation to a single color component.
