@@ -1,9 +1,11 @@
 #![allow(clippy::many_single_char_names)]
 
 use crate::gpu::gp0::{SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow};
+use crate::gpu::rasterizer;
 use crate::gpu::rasterizer::simd::AlignedVram;
 use crate::gpu::rasterizer::{
-    Color, LineShading, RectangleTextureMapping, TextureMappingMode, TriangleTextureMapping, Vertex,
+    Color, LineShading, RectangleTextureMapping, Shading, TextureMappingMode, TriangleShading,
+    TriangleTextureMapping, Vertex,
 };
 #[allow(clippy::wildcard_imports)]
 use std::arch::x86_64::*;
@@ -16,50 +18,176 @@ const DITHER_TABLE: &[[i16; 16]; 4] = &[
     [3, -1, 2, -2, 3, -1, 2, -2, 3, -1, 2, -2, 3, -1, 2, -2],
 ];
 
-pub enum TriangleShadingAvx2 {
-    Flat(Color),
-    Gouraud { r: [f32; 3], g: [f32; 3], b: [f32; 3] },
+#[derive(Debug, Clone, Copy)]
+struct Step {
+    x: i32,
+    y: i32,
 }
 
-impl TriangleShadingAvx2 {
-    // Determine the color for the given normalized Barycentric coordinates. Return values are
-    // 8-bit RGB color components.
-    // (f32x8, f32x8, f32x8) -> (i32x8, i32x8, i32x8)
-    #[target_feature(enable = "avx2", enable = "fma")]
-    unsafe fn shade(&self, barycentric: (__m256, __m256, __m256)) -> (__m256i, __m256i, __m256i) {
-        match *self {
-            Self::Flat(color) => (
-                _mm256_set1_epi32(color.r.into()),
-                _mm256_set1_epi32(color.g.into()),
-                _mm256_set1_epi32(color.b.into()),
-            ),
-            Self::Gouraud { r, g, b } => gouraud_shade(barycentric, r, g, b),
-        }
-    }
-}
+impl Step {
+    const ZERO: Self = Self { x: 0, y: 0 };
 
-pub struct TriangleTextureMappingAvx2 {
-    mode: TextureMappingMode,
-    texpage: TexturePage,
-    window: TextureWindow,
-    clut_x: u32,
-    clut_y: u32,
-    u: [f32; 3],
-    v: [f32; 3],
-}
-
-impl TriangleTextureMappingAvx2 {
-    pub fn new(mapping: TriangleTextureMapping) -> Self {
+    fn new(v: [Vertex; 3], component: [u8; 3], denominator: i32) -> Self {
         Self {
-            mode: mapping.mode,
-            texpage: mapping.texpage,
-            window: mapping.window,
-            clut_x: mapping.clut_x.into(),
-            clut_y: mapping.clut_y.into(),
-            u: mapping.u.map(f32::from),
-            v: mapping.v.map(f32::from),
+            x: compute_x_step(v, component, denominator),
+            y: compute_y_step(v, component, denominator),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct Interpolator {
+    base_x: i32,
+    base_y: i32,
+    base_r: i32,
+    base_g: i32,
+    base_b: i32,
+    base_u: i32,
+    base_v: i32,
+    r_step: Step,
+    g_step: Step,
+    b_step: Step,
+    u_step: Step,
+    v_step: Step,
+}
+
+impl Interpolator {
+    // PS1 GPU appears to use fixed-point decimal with 12 fractional bits
+    // U/V interpolation does not look correct otherwise
+    const SHIFT: u8 = 12;
+
+    #[target_feature(enable = "avx2", enable = "fma")]
+    unsafe fn new(
+        v: [Vertex; 3],
+        denominator: i32,
+        shading: TriangleShading,
+        texture_mapping: Option<&TriangleTextureMapping>,
+    ) -> Self {
+        let (base_vertex_idx, base_vertex) = v
+            .into_iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.x.cmp(&b.x).then(a.y.cmp(&b.y)))
+            .unwrap();
+
+        let base_color = match shading {
+            Shading::Flat(color) => color,
+            Shading::Gouraud(colors) => colors[base_vertex_idx],
+        };
+
+        let (r_step, g_step, b_step) = match shading {
+            Shading::Flat(_) => (Step::ZERO, Step::ZERO, Step::ZERO),
+            Shading::Gouraud(colors) => {
+                let r = colors.map(|color| color.r);
+                let g = colors.map(|color| color.g);
+                let b = colors.map(|color| color.b);
+
+                (
+                    Step::new(v, r, denominator),
+                    Step::new(v, g, denominator),
+                    Step::new(v, b, denominator),
+                )
+            }
+        };
+
+        let (base_tex_coords, u_step, v_step) = match texture_mapping {
+            Some(mapping) => {
+                let base_tex_coords = (mapping.u[base_vertex_idx], mapping.v[base_vertex_idx]);
+
+                (
+                    base_tex_coords,
+                    Step::new(v, mapping.u, denominator),
+                    Step::new(v, mapping.v, denominator),
+                )
+            }
+            None => ((0, 0), Step::ZERO, Step::ZERO),
+        };
+
+        Self {
+            base_x: base_vertex.x,
+            base_y: base_vertex.y,
+            base_r: shift_base_component(base_color.r),
+            base_g: shift_base_component(base_color.g),
+            base_b: shift_base_component(base_color.b),
+            base_u: shift_base_component(base_tex_coords.0),
+            base_v: shift_base_component(base_tex_coords.1),
+            r_step,
+            g_step,
+            b_step,
+            u_step,
+            v_step,
+        }
+    }
+
+    // Compute the interpolated colors for the given points.
+    // Input vectors should be i32x8.
+    // Return values are R/G/B color components as i32x8 vectors.
+    #[target_feature(enable = "avx2", enable = "fma")]
+    unsafe fn interpolate_color(&self, px: __m256i, py: __m256i) -> (__m256i, __m256i, __m256i) {
+        let r = interpolate_component(px, py, self.base_x, self.base_y, self.base_r, self.r_step);
+        let g = interpolate_component(px, py, self.base_x, self.base_y, self.base_g, self.g_step);
+        let b = interpolate_component(px, py, self.base_x, self.base_y, self.base_b, self.b_step);
+
+        (r, g, b)
+    }
+
+    // Compute the interpolated U/V coordinates for the given points.
+    // Input vectors should be i32x8.
+    // Return values are U/V coordinates as i32x8 vectors.
+    #[target_feature(enable = "avx2", enable = "fma")]
+    unsafe fn interpolate_uv(&self, px: __m256i, py: __m256i) -> (__m256i, __m256i) {
+        let u = interpolate_component(px, py, self.base_x, self.base_y, self.base_u, self.u_step);
+        let v = interpolate_component(px, py, self.base_x, self.base_y, self.base_v, self.v_step);
+
+        (u, v)
+    }
+}
+
+fn shift_base_component(component: u8) -> i32 {
+    (i32::from(component) << Interpolator::SHIFT) | (1 << (Interpolator::SHIFT - 1))
+}
+
+fn compute_x_step(v: [Vertex; 3], component: [u8; 3], denominator: i32) -> i32 {
+    let component = component.map(i32::from);
+    let raw = component[0] * (v[1].y - v[2].y)
+        + component[1] * (v[2].y - v[0].y)
+        + component[2] * (v[0].y - v[1].y);
+    (raw << Interpolator::SHIFT) / denominator
+}
+
+fn compute_y_step(v: [Vertex; 3], component: [u8; 3], denominator: i32) -> i32 {
+    let component = component.map(i32::from);
+    let raw = component[0] * (v[2].x - v[1].x)
+        + component[1] * (v[0].x - v[2].x)
+        + component[2] * (v[1].x - v[0].x);
+    (raw << Interpolator::SHIFT) / denominator
+}
+
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn interpolate_component(
+    px: __m256i,
+    py: __m256i,
+    base_x: i32,
+    base_y: i32,
+    base_component: i32,
+    step: Step,
+) -> __m256i {
+    let dx = _mm256_sub_epi32(px, _mm256_set1_epi32(base_x));
+    let dy = _mm256_sub_epi32(py, _mm256_set1_epi32(base_y));
+
+    let value_fixedpoint = _mm256_add_epi32(
+        _mm256_set1_epi32(base_component),
+        _mm256_add_epi32(
+            _mm256_mullo_epi32(dx, _mm256_set1_epi32(step.x)),
+            _mm256_mullo_epi32(dy, _mm256_set1_epi32(step.y)),
+        ),
+    );
+
+    mask_epi32_to_u8(_mm256_srli_epi32::<{ Interpolator::SHIFT as i32 }>(value_fixedpoint))
+}
+
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn mask_epi32_to_u8(v: __m256i) -> __m256i {
+    _mm256_and_si256(v, _mm256_set1_epi32(0xFF))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -69,8 +197,8 @@ pub unsafe fn rasterize_triangle(
     x_bounds: (i32, i32),
     y_bounds: (i32, i32),
     vertices: [Vertex; 3],
-    shading: TriangleShadingAvx2,
-    texture_mapping: Option<TriangleTextureMappingAvx2>,
+    shading: TriangleShading,
+    texture_mapping: Option<TriangleTextureMapping>,
     semi_transparency_mode: Option<SemiTransparencyMode>,
     dithering_enabled: bool,
     force_mask_bit: bool,
@@ -78,7 +206,6 @@ pub unsafe fn rasterize_triangle(
 ) {
     let vram_ptr = vram.as_mut_ptr();
 
-    let inverse_barycentric_determinant = compute_inverse_barycentric_determinant(vertices);
     let forced_mask_bit = i16::from(force_mask_bit) << 15;
 
     let v01_is_not_bottom_right = is_not_bottom_right_edge(vertices[0], vertices[1]);
@@ -91,6 +218,16 @@ pub unsafe fn rasterize_triangle(
 
     let zero = _mm256_setzero_si256();
     let negative_one = _mm256_set1_epi32(-1);
+
+    let interpolation_denominator =
+        rasterizer::cross_product_z(vertices[0], vertices[1], vertices[2]);
+    if interpolation_denominator == 0 {
+        // Points are collinear, do nothing
+        return;
+    }
+
+    let interpolator =
+        Interpolator::new(vertices, interpolation_denominator, shading, texture_mapping.as_ref());
 
     for y in y_bounds.0..=y_bounds.1 {
         let py = _mm256_set1_epi32(y);
@@ -128,38 +265,23 @@ pub unsafe fn rasterize_triangle(
                 continue;
             }
 
-            // Compute normalized Barycentric coordinates if they will be needed
-            let (barycentric1, barycentric2) =
-                if matches!(shading, TriangleShadingAvx2::Gouraud { .. })
-                    || texture_mapping.is_some()
-                {
-                    (
-                        compute_barycentric_coordinates(
-                            px1,
-                            py,
-                            vertices,
-                            inverse_barycentric_determinant,
-                        ),
-                        compute_barycentric_coordinates(
-                            px2,
-                            py,
-                            vertices,
-                            inverse_barycentric_determinant,
-                        ),
-                    )
-                } else {
-                    let zero_f = _mm256_setzero_ps();
-                    ((zero_f, zero_f, zero_f), (zero_f, zero_f, zero_f))
-                };
-
             // Apply shading to determine initial color
-            let (r1, g1, b1) = shading.shade(barycentric1);
-            let (r2, g2, b2) = shading.shade(barycentric2);
-            let (mut r, mut g, mut b) = (
-                _mm256_packs_epi32(r1, r2),
-                _mm256_packs_epi32(g1, g2),
-                _mm256_packs_epi32(b1, b2),
-            );
+            let (mut r, mut g, mut b) = match shading {
+                TriangleShading::Flat(color) => (
+                    _mm256_set1_epi16(color.r.into()),
+                    _mm256_set1_epi16(color.g.into()),
+                    _mm256_set1_epi16(color.b.into()),
+                ),
+                TriangleShading::Gouraud(..) => {
+                    let (r1, g1, b1) = interpolator.interpolate_color(px1, py);
+                    let (r2, g2, b2) = interpolator.interpolate_color(px2, py);
+                    (
+                        _mm256_packs_epi32(r1, r2),
+                        _mm256_packs_epi32(g1, g2),
+                        _mm256_packs_epi32(b1, b2),
+                    )
+                }
+            };
 
             // Default to values for an untextured triangle: bit 15 is set only if the force
             // mask bit setting is on, and all pixels are semi-transparent
@@ -169,8 +291,8 @@ pub unsafe fn rasterize_triangle(
             // Apply texture mapping if present
             if let Some(texture_mapping) = &texture_mapping {
                 // Interpolate U/V coordinates
-                let (u1, v1) = interpolate_uv(barycentric1, texture_mapping.u, texture_mapping.v);
-                let (u2, v2) = interpolate_uv(barycentric2, texture_mapping.u, texture_mapping.v);
+                let (u1, v1) = interpolator.interpolate_uv(px1, py);
+                let (u2, v2) = interpolator.interpolate_uv(px2, py);
                 let (u, v) = (_mm256_packus_epi32(u1, u2), _mm256_packus_epi32(v1, v2));
 
                 // Read 16 texels from the texture
@@ -178,8 +300,8 @@ pub unsafe fn rasterize_triangle(
                     vram_ptr,
                     &texture_mapping.texpage,
                     &texture_mapping.window,
-                    texture_mapping.clut_x,
-                    texture_mapping.clut_y,
+                    texture_mapping.clut_x.into(),
+                    texture_mapping.clut_y.into(),
                     u,
                     v,
                 );
@@ -242,7 +364,7 @@ pub unsafe fn rasterize_triangle(
             // If dithering is enabled, apply dithering before truncating to RGB555.
             // Dithering is applied only if Gouraud shading or texture color modulation is enabled
             if dithering_enabled
-                && (matches!(shading, TriangleShadingAvx2::Gouraud { .. })
+                && (matches!(shading, TriangleShading::Gouraud { .. })
                     || texture_mapping
                         .as_ref()
                         .is_some_and(|mapping| mapping.mode == TextureMappingMode::Modulated))
@@ -341,87 +463,6 @@ unsafe fn cross_product_z(v0: Vertex, v1: Vertex, px: __m256i, py: __m256i) -> _
     )
 }
 
-// Compute 1/det(T) where T is the transformation matrix used to compute Barycentric coordinates.
-fn compute_inverse_barycentric_determinant([v0, v1, v2]: [Vertex; 3]) -> f32 {
-    let determinant = (v0.x - v2.x) * (v1.y - v2.y) - (v1.x - v2.x) * (v0.y - v2.y);
-    if determinant == 0 {
-        // TODO what to do here? the points are collinear
-        0.0
-    } else {
-        (1.0 / f64::from(determinant)) as f32
-    }
-}
-
-// Compute the normalized Barycentric coordinates for the given points.
-// Input vectors should be i32x8.
-// Return values are f32x8, one vector for each coordinate.
-#[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn compute_barycentric_coordinates(
-    px: __m256i,
-    py: __m256i,
-    [v0, v1, v2]: [Vertex; 3],
-    inverse_determinant: f32,
-) -> (__m256, __m256, __m256) {
-    if inverse_determinant.abs() < 1e-6 {
-        let one_third = _mm256_set1_ps(1.0 / 3.0);
-        return (one_third, one_third, one_third);
-    }
-
-    let x_sub = _mm256_sub_epi32(px, _mm256_set1_epi32(v2.x));
-    let y_sub = _mm256_sub_epi32(py, _mm256_set1_epi32(v2.y));
-    let inverse_determinant = _mm256_set1_ps(inverse_determinant);
-
-    let lambda1_numerator = _mm256_sub_epi32(
-        _mm256_mullo_epi32(x_sub, _mm256_set1_epi32(v1.y - v2.y)),
-        _mm256_mullo_epi32(y_sub, _mm256_set1_epi32(v1.x - v2.x)),
-    );
-    let lambda1 = _mm256_mul_ps(_mm256_cvtepi32_ps(lambda1_numerator), inverse_determinant);
-
-    let lambda2_numerator = _mm256_sub_epi32(
-        _mm256_mullo_epi32(x_sub, _mm256_set1_epi32(v2.y - v0.y)),
-        _mm256_mullo_epi32(y_sub, _mm256_set1_epi32(v2.x - v0.x)),
-    );
-    let lambda2 = _mm256_mul_ps(_mm256_cvtepi32_ps(lambda2_numerator), inverse_determinant);
-
-    let lambda3 = _mm256_sub_ps(_mm256_set1_ps(1.0), _mm256_add_ps(lambda1, lambda2));
-
-    (lambda1, lambda2, lambda3)
-}
-
-// Apply Gouraud shading.
-// Input Barycentric coordinates should be f32x8.
-// Return values are RGB color components in i32x8 vectors, with each component clamped to [0, 255].
-#[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn gouraud_shade(
-    lambda: (__m256, __m256, __m256),
-    r_in: [f32; 3],
-    g_in: [f32; 3],
-    b_in: [f32; 3],
-) -> (__m256i, __m256i, __m256i) {
-    let zero = _mm256_setzero_si256();
-    let u8_max = _mm256_set1_epi32(255);
-
-    let mut r = _mm256_mul_ps(lambda.0, _mm256_set1_ps(r_in[0]));
-    r = _mm256_fmadd_ps(lambda.1, _mm256_set1_ps(r_in[1]), r);
-    r = _mm256_fmadd_ps(lambda.2, _mm256_set1_ps(r_in[2]), r);
-    let r = _mm256_cvtps_epi32(_mm256_round_ps::<_MM_FROUND_TO_NEAREST_INT>(r));
-    let r = _mm256_max_epi32(zero, _mm256_min_epi32(r, u8_max));
-
-    let mut g = _mm256_mul_ps(lambda.0, _mm256_set1_ps(g_in[0]));
-    g = _mm256_fmadd_ps(lambda.1, _mm256_set1_ps(g_in[1]), g);
-    g = _mm256_fmadd_ps(lambda.2, _mm256_set1_ps(g_in[2]), g);
-    let g = _mm256_cvtps_epi32(_mm256_round_ps::<_MM_FROUND_TO_NEAREST_INT>(g));
-    let g = _mm256_max_epi32(zero, _mm256_min_epi32(g, u8_max));
-
-    let mut b = _mm256_mul_ps(lambda.0, _mm256_set1_ps(b_in[0]));
-    b = _mm256_fmadd_ps(lambda.1, _mm256_set1_ps(b_in[1]), b);
-    b = _mm256_fmadd_ps(lambda.2, _mm256_set1_ps(b_in[2]), b);
-    let b = _mm256_cvtps_epi32(_mm256_round_ps::<_MM_FROUND_TO_NEAREST_INT>(b));
-    let b = _mm256_max_epi32(zero, _mm256_min_epi32(b, u8_max));
-
-    (r, g, b)
-}
-
 // Apply semi-transparency blending.
 // Input color vectors should be i16x16.
 // Return values are i16x16, with all color components clamped to [0, 255].
@@ -467,33 +508,6 @@ unsafe fn apply_semi_transparency(
     );
 
     (r, g, b)
-}
-
-// Interpolate U/V coordinates using normalized Barycentric coordinates.
-// Barycentric coordinates should be f32x8.
-// Return values are i32x8, with both U and V clamped to [0, 255].
-#[target_feature(enable = "avx2", enable = "fma")]
-unsafe fn interpolate_uv(
-    lambda: (__m256, __m256, __m256),
-    u_in: [f32; 3],
-    v_in: [f32; 3],
-) -> (__m256i, __m256i) {
-    let zero = _mm256_setzero_si256();
-    let u8_max = _mm256_set1_epi32(255);
-
-    let mut u = _mm256_mul_ps(lambda.0, _mm256_set1_ps(u_in[0]));
-    u = _mm256_fmadd_ps(lambda.1, _mm256_set1_ps(u_in[1]), u);
-    u = _mm256_fmadd_ps(lambda.2, _mm256_set1_ps(u_in[2]), u);
-    let u = _mm256_cvtps_epi32(_mm256_round_ps::<_MM_FROUND_TO_NEAREST_INT>(u));
-    let u = _mm256_max_epi32(zero, _mm256_min_epi32(u, u8_max));
-
-    let mut v = _mm256_mul_ps(lambda.0, _mm256_set1_ps(v_in[0]));
-    v = _mm256_fmadd_ps(lambda.1, _mm256_set1_ps(v_in[1]), v);
-    v = _mm256_fmadd_ps(lambda.2, _mm256_set1_ps(v_in[2]), v);
-    let v = _mm256_cvtps_epi32(_mm256_round_ps::<_MM_FROUND_TO_NEAREST_INT>(v));
-    let v = _mm256_max_epi32(zero, _mm256_min_epi32(v, u8_max));
-
-    (u, v)
 }
 
 // Read a row of 16 texels from a texture in VRAM.

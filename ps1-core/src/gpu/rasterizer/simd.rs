@@ -10,8 +10,8 @@ use crate::gpu::gp0::DrawSettings;
 use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
     cross_product_z, software, swap_vertices, vertices_valid, Color, CpuVramBlitArgs, DrawLineArgs,
-    DrawRectangleArgs, DrawTriangleArgs, RasterizerInterface, RectangleTextureMapping,
-    TriangleShading, Vertex, VramVramBlitArgs,
+    DrawRectangleArgs, DrawTriangleArgs, RasterizerInterface, RectangleTextureMapping, Vertex,
+    VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{Vram, WgpuResources};
@@ -132,24 +132,14 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
 
         log::trace!("Bounding box: ({min_x}, {min_y}) to ({max_x}, {max_y})");
 
-        let shading_avx2 = match shading {
-            TriangleShading::Flat(color) => avx2::TriangleShadingAvx2::Flat(color),
-            TriangleShading::Gouraud(colors) => {
-                let r = colors.map(|color| f32::from(color.r));
-                let g = colors.map(|color| f32::from(color.g));
-                let b = colors.map(|color| f32::from(color.b));
-                avx2::TriangleShadingAvx2::Gouraud { r, g, b }
-            }
-        };
-
         unsafe {
             avx2::rasterize_triangle(
                 &mut self.vram,
                 (min_x, max_x),
                 (min_y, max_y),
                 v,
-                shading_avx2,
-                texture_mapping.map(avx2::TriangleTextureMappingAvx2::new),
+                shading,
+                texture_mapping,
                 semi_transparent.then_some(semi_transparency_mode),
                 draw_settings.dithering_enabled,
                 draw_settings.force_mask_bit,
