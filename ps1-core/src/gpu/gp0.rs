@@ -4,8 +4,8 @@
 
 use crate::gpu::rasterizer::{
     Color, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading,
-    RasterizerInterface, RectangleTextureMapping, TextureMappingMode, TriangleShading,
-    TriangleTextureMapping, Vertex, VramVramBlitArgs,
+    RectangleTextureMapping, TextureMappingMode, TriangleShading, TriangleTextureMapping, Vertex,
+    VramVramBlitArgs,
 };
 use crate::gpu::Gpu;
 use crate::num::U32Ext;

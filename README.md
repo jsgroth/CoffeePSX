@@ -1,6 +1,6 @@
 # ps1-emu
 
-Work-in-progress attempt at a PlayStation emulator. Some games boot, but many do not boot, and performance in 3D games is quite poor. Currently CLI-only, no GUI.
+Work-in-progress attempt at a PlayStation emulator. Some games are fully playable, but many do not boot or have major issues. Currently CLI-only, no GUI.
 
 Currently standalone rather than being an additional backend in [jgenesis](https://github.com/jsgroth/jgenesis) in order to enable easier experimentation for rendering and parallelism, since this is the first console I've emulated that supports 3D graphics (and a double-digit MHz main CPU).
 
@@ -11,7 +11,7 @@ The `cdrom` crate is a fork of the `cdrom` crate that [jgenesis](https://github.
 Implemented:
 * The R3000-compatible CPU
 * The GTE
-* The GPU, with a (very very slow) software rasterizer
+* The GPU, with a software rasterizer
 * Most of the SPU
 * Most of the CD-ROM controller
 * Partial MDEC functionality (15bpp/24bpp only, assumes output is always read via DMA1)
@@ -30,6 +30,10 @@ Not yet implemented:
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
 * Interrupts and synchronization modes for dot clock and HBlank timers
+
+## AVX2 Dependency
+
+The rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (4th gen i3/i5/i7) and AMD CPUs since Zen (Ryzen 1000 series). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
 
 ## Build Dependencies (Linux)
 
@@ -81,7 +85,7 @@ Hotkeys:
 * Load state: F6 key
 * Pause: P key
 * Step to Next Frame: N key
-* Use experimental AVX2 software rasterizer: - key (Minus)
+* Use AVX2 software rasterizer: - key (Minus)
 * Use naive slow software rasterizer: = key (Equals)
 * Toggle Auto-Prescaling: / key (Forward Slash)
 * Toggle Bilinear Interpolation: ; key (Semicolon)

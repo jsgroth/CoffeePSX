@@ -89,10 +89,6 @@ impl NaiveSoftwareRasterizer {
             renderer: SoftwareRenderer::new(device),
         }
     }
-
-    pub fn clone_vram(&self) -> Box<Vram> {
-        self.vram.clone()
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -523,6 +519,10 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
         wgpu_resources: &WgpuResources,
     ) -> &Texture {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
+    }
+
+    fn clone_vram(&self) -> Box<Vram> {
+        self.vram.clone()
     }
 }
 

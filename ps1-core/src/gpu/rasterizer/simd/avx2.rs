@@ -56,7 +56,7 @@ impl Interpolator {
     // U/V interpolation does not look correct otherwise
     const SHIFT: u8 = 12;
 
-    #[target_feature(enable = "avx2", enable = "fma")]
+    #[target_feature(enable = "avx2")]
     unsafe fn new(
         v: [Vertex; 3],
         denominator: i32,
@@ -121,7 +121,7 @@ impl Interpolator {
     // Compute the interpolated colors for the given points.
     // Input vectors should be i32x8.
     // Return values are R/G/B color components as i32x8 vectors.
-    #[target_feature(enable = "avx2", enable = "fma")]
+    #[target_feature(enable = "avx2")]
     unsafe fn interpolate_color(&self, px: __m256i, py: __m256i) -> (__m256i, __m256i, __m256i) {
         let r = interpolate_component(px, py, self.base_x, self.base_y, self.base_r, self.r_step);
         let g = interpolate_component(px, py, self.base_x, self.base_y, self.base_g, self.g_step);
@@ -133,7 +133,7 @@ impl Interpolator {
     // Compute the interpolated U/V coordinates for the given points.
     // Input vectors should be i32x8.
     // Return values are U/V coordinates as i32x8 vectors.
-    #[target_feature(enable = "avx2", enable = "fma")]
+    #[target_feature(enable = "avx2")]
     unsafe fn interpolate_uv(&self, px: __m256i, py: __m256i) -> (__m256i, __m256i) {
         let u = interpolate_component(px, py, self.base_x, self.base_y, self.base_u, self.u_step);
         let v = interpolate_component(px, py, self.base_x, self.base_y, self.base_v, self.v_step);
@@ -162,7 +162,7 @@ fn compute_y_step(v: [Vertex; 3], component: [u8; 3], denominator: i32) -> i32 {
     (raw << Interpolator::SHIFT) / denominator
 }
 
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn interpolate_component(
     px: __m256i,
     py: __m256i,
@@ -185,13 +185,13 @@ unsafe fn interpolate_component(
     mask_epi32_to_u8(_mm256_srli_epi32::<{ Interpolator::SHIFT as i32 }>(value_fixedpoint))
 }
 
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn mask_epi32_to_u8(v: __m256i) -> __m256i {
     _mm256_and_si256(v, _mm256_set1_epi32(0xFF))
 }
 
 #[allow(clippy::too_many_arguments)]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 pub unsafe fn rasterize_triangle(
     vram: &mut AlignedVram,
     x_bounds: (i32, i32),
@@ -409,7 +409,7 @@ fn is_not_bottom_right_edge(v0: Vertex, v1: Vertex) -> i32 {
 // Determine which of the 8 points are inside the triangle.
 // Input vectors should be i32x8.
 // Return value is i32x8 where each lane is all 1s if inside the triangle and all 0s if outside.
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn compute_write_mask(
     vertices: [Vertex; 3],
     px: __m256i,
@@ -431,7 +431,7 @@ unsafe fn compute_write_mask(
 // Determine which of the 8 points are inside a single triangle edge.
 // Input vectors should be i32x8.
 // Return value is i32x8 where each lane is all 1s if inside the edge and all 0s if outside.
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn check_edge(
     v0: Vertex,
     v1: Vertex,
@@ -449,7 +449,7 @@ unsafe fn check_edge(
 
 // Compute the Z component of the cross product (v1 - v0) x (P - v0) for each point P.
 // Input vectors should be i32x8 and return value is i32x8.
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn cross_product_z(v0: Vertex, v1: Vertex, px: __m256i, py: __m256i) -> __m256i {
     _mm256_sub_epi32(
         _mm256_mullo_epi32(
@@ -466,7 +466,7 @@ unsafe fn cross_product_z(v0: Vertex, v1: Vertex, px: __m256i, py: __m256i) -> _
 // Apply semi-transparency blending.
 // Input color vectors should be i16x16.
 // Return values are i16x16, with all color components clamped to [0, 255].
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn apply_semi_transparency(
     (existing_r, existing_g, existing_b): (__m256i, __m256i, __m256i),
     (r, g, b): (__m256i, __m256i, __m256i),
@@ -513,7 +513,7 @@ unsafe fn apply_semi_transparency(
 // Read a row of 16 texels from a texture in VRAM.
 // U and V vectors should be i16x16.
 // Return value is an i16x16 vector containing raw 16-bit texel values (RGB555 + semi-transparency bit).
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn read_texture(
     vram: *mut u16,
     texpage: &TexturePage,
@@ -559,7 +559,7 @@ unsafe fn read_texture(
 // Read a row of 8 texels from a 4bpp texture.
 // U and V vectors should be i32x8.
 // Return value is u16s stored in an i32x8 vector.
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn read_4bpp_texture(
     vram: *mut u16,
     texpage: &TexturePage,
@@ -587,7 +587,7 @@ unsafe fn read_4bpp_texture(
     read_clut(clut, clut_indices)
 }
 
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn read_clut(clut: *mut u16, clut_indices: __m256i) -> __m256i {
     let addrs = _mm256_srli_epi32::<1>(clut_indices);
     let shifts = _mm256_slli_epi32::<4>(_mm256_and_si256(clut_indices, _mm256_set1_epi32(1)));
@@ -599,7 +599,7 @@ unsafe fn read_clut(clut: *mut u16, clut_indices: __m256i) -> __m256i {
 // Read a row of 8 texels from an 8bpp texture.
 // U and V coordinates should be i32x8.
 // Return value is u16s stored in an i32x8 vector.
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn read_8bpp_texture(
     vram: *mut u16,
     texpage: &TexturePage,
@@ -633,7 +633,7 @@ unsafe fn read_8bpp_texture(
 // Read a row of 8 texels from a 15bpp texture.
 // U and V vectors should be i32x8.
 // Return value is u16s stored in an i32x8 vector.
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn read_15bpp_texture(
     vram: *mut u16,
     texpage: &TexturePage,
@@ -659,7 +659,7 @@ unsafe fn read_15bpp_texture(
 
 // Apply texture color modulation to a single color component.
 // Input vectors should be i16x16 and the return value is i16x16.
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn modulate_texture_color(tex_color: __m256i, shading_color: __m256i) -> __m256i {
     _mm256_min_epi16(
         _mm256_set1_epi16(255),
@@ -669,28 +669,28 @@ unsafe fn modulate_texture_color(tex_color: __m256i, shading_color: __m256i) -> 
 
 // Apply average blending: (B + F) / 2
 // Input vectors should be i16x16 and the return value is i16x16
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn blend_average(back: __m256i, front: __m256i) -> __m256i {
     _mm256_srli_epi16::<1>(_mm256_add_epi16(back, front))
 }
 
 // Apply additive blending: B + F
 // Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 255]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn blend_add(back: __m256i, front: __m256i) -> __m256i {
     _mm256_adds_epu8(back, front)
 }
 
 // Apply subtractive blending: B - F
 // Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 255]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn blend_subtract(back: __m256i, front: __m256i) -> __m256i {
     _mm256_subs_epu8(back, front)
 }
 
 // Apply partial additive blending: B + F/4
 // Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 255]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn blend_add_quarter(back: __m256i, front: __m256i) -> __m256i {
     _mm256_adds_epu8(back, _mm256_srli_epi16::<2>(front))
 }
@@ -707,7 +707,7 @@ const HIGH_SHUFFLE_MASK: &[u8; 32] = &[
 
 // Unpack an i16x16 vector into two i32x8 vectors such that the two vectors can later be repacked
 // using _mm256_packus_epi32 or _mm256_packs_epi32
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn unpack_epi16_vector(v: __m256i) -> (__m256i, __m256i) {
     let low = _mm256_shuffle_epi8(v, mem::transmute(*LOW_SHUFFLE_MASK));
     let high = _mm256_shuffle_epi8(v, mem::transmute(*HIGH_SHUFFLE_MASK));
@@ -717,7 +717,7 @@ unsafe fn unpack_epi16_vector(v: __m256i) -> (__m256i, __m256i) {
 
 // Convert a 24-bit color value to 15-bit colors by truncating the lowest 3 bits of each component
 // Input vectors should be i16x16 and the return value is i16x16
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn convert_24bit_to_15bit(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
     let mask = _mm256_set1_epi16(0xF8);
 
@@ -732,7 +732,7 @@ unsafe fn convert_24bit_to_15bit(r: __m256i, g: __m256i, b: __m256i) -> __m256i 
 
 // Convert a raw 15-bit color value from VRAM to individual 8-bit RGB color components
 // Input vector should be i16x16 and the return values are i16x16
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn convert_15bit_to_24bit(texels: __m256i) -> (__m256i, __m256i, __m256i) {
     let mask = _mm256_set1_epi16(0x00F8);
     let r = _mm256_and_si256(_mm256_slli_epi16::<3>(texels), mask);
@@ -743,7 +743,7 @@ unsafe fn convert_15bit_to_24bit(texels: __m256i) -> (__m256i, __m256i, __m256i)
 }
 
 #[allow(clippy::too_many_arguments)]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 pub unsafe fn rasterize_rectangle(
     vram: &mut AlignedVram,
     x_range: (i32, i32),
@@ -905,7 +905,7 @@ pub unsafe fn rasterize_rectangle(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 pub unsafe fn rasterize_line(
     vram: &mut AlignedVram,
     vertices: [Vertex; 2],
@@ -971,7 +971,7 @@ pub unsafe fn rasterize_line(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn rasterize_line_h_oriented(
     vram: &mut AlignedVram,
     mut v: [Vertex; 2],
@@ -1064,7 +1064,7 @@ unsafe fn rasterize_line_h_oriented(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn rasterize_line_v_oriented(
     vram: &mut AlignedVram,
     mut v: [Vertex; 2],
@@ -1159,13 +1159,13 @@ unsafe fn rasterize_line_v_oriented(
     }
 }
 
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn round_pd_to_epi32(pd: __m256d) -> __m128i {
     _mm256_cvtpd_epi32(_mm256_round_pd::<_MM_FROUND_TO_NEAREST_INT>(pd))
 }
 
 #[allow(clippy::too_many_arguments)]
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn rasterize_line_pixels(
     vram: &mut AlignedVram,
     x: __m128i,
@@ -1260,7 +1260,7 @@ fn gouraud_color_steps([c0, c1]: [Color; 2], interval: f64) -> (f64, f64, f64) {
     )
 }
 
-#[target_feature(enable = "avx2", enable = "fma")]
+#[target_feature(enable = "avx2")]
 unsafe fn first_step_vector(first: f64, step: f64) -> __m256d {
     _mm256_setr_pd(first, first + step, first + 2.0 * step, first + 3.0 * step)
 }

@@ -1,6 +1,7 @@
 //! Rasterizer interface and dispatch code
 
 use bincode::{Decode, Encode};
+use std::ops::{Deref, DerefMut};
 
 use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TexturePage, TextureWindow};
 use crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
@@ -136,22 +137,50 @@ pub trait RasterizerInterface {
         registers: &Registers,
         wgpu_resources: &WgpuResources,
     ) -> &wgpu::Texture;
+
+    fn clone_vram(&self) -> Box<Vram>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RasterizerType {
-    #[default]
     NaiveSoftware,
     SimdSoftware,
 }
 
-#[derive(Debug)]
-pub enum Rasterizer {
-    NaiveSoftware(NaiveSoftwareRasterizer),
-    SimdSoftware(SimdSoftwareRasterizer),
+impl Default for RasterizerType {
+    fn default() -> Self {
+        if is_x86_feature_detected!("avx2") { Self::SimdSoftware } else { Self::NaiveSoftware }
+    }
+}
+
+pub struct Rasterizer(pub Box<dyn RasterizerInterface>);
+
+impl Deref for Rasterizer {
+    type Target = Box<dyn RasterizerInterface>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Rasterizer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl Rasterizer {
+    pub fn new(wgpu_device: &wgpu::Device, rasterizer_type: RasterizerType) -> Self {
+        match rasterizer_type {
+            RasterizerType::NaiveSoftware => {
+                Self(Box::new(NaiveSoftwareRasterizer::new(wgpu_device)))
+            }
+            RasterizerType::SimdSoftware => {
+                Self(Box::new(SimdSoftwareRasterizer::new(wgpu_device)))
+            }
+        }
+    }
+
     pub fn to_state(&self) -> RasterizerState {
         let vram = self.clone_vram();
         RasterizerState { vram }
@@ -163,88 +192,11 @@ impl Rasterizer {
         rasterizer_type: RasterizerType,
     ) -> Self {
         match rasterizer_type {
-            RasterizerType::NaiveSoftware => Rasterizer::NaiveSoftware(
-                NaiveSoftwareRasterizer::from_vram(wgpu_device, &state.vram),
-            ),
-            RasterizerType::SimdSoftware => Rasterizer::SimdSoftware(
-                SimdSoftwareRasterizer::from_vram(wgpu_device, &state.vram),
-            ),
-        }
-    }
-
-    pub fn clone_vram(&self) -> Box<Vram> {
-        match self {
-            Self::NaiveSoftware(rasterizer) => rasterizer.clone_vram(),
-            Self::SimdSoftware(rasterizer) => rasterizer.clone_vram(),
-        }
-    }
-}
-
-impl RasterizerInterface for Rasterizer {
-    fn draw_triangle(&mut self, args: DrawTriangleArgs, draw_settings: &DrawSettings) {
-        match self {
-            Self::NaiveSoftware(rasterizer) => rasterizer.draw_triangle(args, draw_settings),
-            Self::SimdSoftware(rasterizer) => rasterizer.draw_triangle(args, draw_settings),
-        }
-    }
-
-    fn draw_line(&mut self, args: DrawLineArgs, draw_settings: &DrawSettings) {
-        match self {
-            Self::NaiveSoftware(rasterizer) => rasterizer.draw_line(args, draw_settings),
-            Self::SimdSoftware(rasterizer) => rasterizer.draw_line(args, draw_settings),
-        }
-    }
-
-    fn draw_rectangle(&mut self, args: DrawRectangleArgs, draw_settings: &DrawSettings) {
-        match self {
-            Self::NaiveSoftware(rasterizer) => rasterizer.draw_rectangle(args, draw_settings),
-            Self::SimdSoftware(rasterizer) => rasterizer.draw_rectangle(args, draw_settings),
-        }
-    }
-
-    fn vram_fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Color) {
-        match self {
-            Self::NaiveSoftware(rasterizer) => rasterizer.vram_fill(x, y, width, height, color),
-            Self::SimdSoftware(rasterizer) => rasterizer.vram_fill(x, y, width, height, color),
-        }
-    }
-
-    fn cpu_to_vram_blit(&mut self, args: CpuVramBlitArgs, data: &[u16]) {
-        match self {
-            Self::NaiveSoftware(rasterizer) => rasterizer.cpu_to_vram_blit(args, data),
-            Self::SimdSoftware(rasterizer) => rasterizer.cpu_to_vram_blit(args, data),
-        }
-    }
-
-    fn vram_to_cpu_blit(&mut self, x: u32, y: u32, width: u32, height: u32, out: &mut Vec<u16>) {
-        match self {
-            Self::NaiveSoftware(rasterizer) => {
-                rasterizer.vram_to_cpu_blit(x, y, width, height, out);
+            RasterizerType::NaiveSoftware => {
+                Self(Box::new(NaiveSoftwareRasterizer::from_vram(wgpu_device, &state.vram)))
             }
-            Self::SimdSoftware(rasterizer) => {
-                rasterizer.vram_to_cpu_blit(x, y, width, height, out);
-            }
-        }
-    }
-
-    fn vram_to_vram_blit(&mut self, args: VramVramBlitArgs) {
-        match self {
-            Self::NaiveSoftware(rasterizer) => rasterizer.vram_to_vram_blit(args),
-            Self::SimdSoftware(rasterizer) => rasterizer.vram_to_vram_blit(args),
-        }
-    }
-
-    fn generate_frame_texture(
-        &mut self,
-        registers: &Registers,
-        wgpu_resources: &WgpuResources,
-    ) -> &wgpu::Texture {
-        match self {
-            Self::NaiveSoftware(rasterizer) => {
-                rasterizer.generate_frame_texture(registers, wgpu_resources)
-            }
-            Self::SimdSoftware(rasterizer) => {
-                rasterizer.generate_frame_texture(registers, wgpu_resources)
+            RasterizerType::SimdSoftware => {
+                Self(Box::new(SimdSoftwareRasterizer::from_vram(wgpu_device, &state.vram)))
             }
         }
     }
@@ -252,7 +204,7 @@ impl RasterizerInterface for Rasterizer {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct RasterizerState {
-    vram: Box<Vram>,
+    pub vram: Box<Vram>,
 }
 
 impl DrawSettings {

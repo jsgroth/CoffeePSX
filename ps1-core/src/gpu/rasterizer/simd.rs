@@ -59,17 +59,6 @@ impl SimdSoftwareRasterizer {
 
         Self { vram: aligned_vram, renderer: SoftwareRenderer::new(device) }
     }
-
-    #[allow(clippy::large_stack_arrays)]
-    pub fn clone_vram(&self) -> Box<Vram> {
-        self.vram.0.to_vec().into_boxed_slice().try_into().unwrap()
-    }
-}
-
-macro_rules! cpu_supports_required_features {
-    () => {
-        is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma")
-    };
 }
 
 impl RasterizerInterface for SimdSoftwareRasterizer {
@@ -85,8 +74,8 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         }: DrawTriangleArgs,
         draw_settings: &DrawSettings,
     ) {
-        if !cpu_supports_required_features!() {
-            log::error!("CPU does not support AVX2 and/or FMA instructions");
+        if !is_x86_feature_detected!("avx2") {
+            log::error!("CPU does not support AVX2 instructions");
             return;
         }
 
@@ -157,6 +146,11 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         DrawLineArgs { vertices, shading, semi_transparent, semi_transparency_mode }: DrawLineArgs,
         draw_settings: &DrawSettings,
     ) {
+        if !is_x86_feature_detected!("avx2") {
+            log::error!("CPU does not support AVX2 instructions");
+            return;
+        }
+
         if !draw_settings.is_drawing_area_valid() {
             return;
         }
@@ -209,8 +203,8 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         }: DrawRectangleArgs,
         draw_settings: &DrawSettings,
     ) {
-        if !cpu_supports_required_features!() {
-            log::error!("CPU does not support AVX2 and/or FMA instructions");
+        if !is_x86_feature_detected!("avx2") {
+            log::error!("CPU does not support AVX2 instructions");
             return;
         }
 
@@ -274,5 +268,9 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         wgpu_resources: &WgpuResources,
     ) -> &wgpu::Texture {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
+    }
+
+    fn clone_vram(&self) -> Box<Vram> {
+        self.vram.0.to_vec().into_boxed_slice().try_into().unwrap()
     }
 }

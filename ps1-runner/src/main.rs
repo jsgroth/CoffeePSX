@@ -39,7 +39,7 @@ struct Args {
     tty_enabled: bool,
     #[arg(long = "no-audio-sync", default_value_t = true, action = clap::ArgAction::SetFalse)]
     audio_sync: bool,
-    #[arg(long, default_value_t)]
+    #[arg(long = "no-simd", default_value_t = true)]
     simd: bool,
 }
 
@@ -308,10 +308,10 @@ fn main() -> anyhow::Result<()> {
     })?;
 
     let mut display_config = DisplayConfig {
-        rasterizer_type: if args.simd {
-            RasterizerType::SimdSoftware
-        } else {
+        rasterizer_type: if !args.simd {
             RasterizerType::NaiveSoftware
+        } else {
+            RasterizerType::default()
         },
         ..DisplayConfig::default()
     };

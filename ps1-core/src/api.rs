@@ -106,7 +106,7 @@ pub struct UnserializedFields {
     display_config: DisplayConfig,
 }
 
-#[derive(Debug, SaveState)]
+#[derive(SaveState)]
 pub struct Ps1Emulator {
     cpu: R3000,
     #[save_state(to = GpuState)]

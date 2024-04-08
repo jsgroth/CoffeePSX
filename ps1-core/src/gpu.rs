@@ -13,16 +13,14 @@ pub mod rasterizer;
 mod registers;
 
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
-use crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
 use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
 use proc_macros::SaveState;
 use std::rc::Rc;
 
-use crate::gpu::rasterizer::{Rasterizer, RasterizerInterface};
+use crate::gpu::rasterizer::Rasterizer;
 
-use crate::gpu::rasterizer::simd::SimdSoftwareRasterizer;
 pub use rasterizer::{RasterizerState, RasterizerType};
 
 const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
@@ -53,7 +51,7 @@ pub struct WgpuResources {
     pub display_config: DisplayConfig,
 }
 
-#[derive(Debug, SaveState)]
+#[derive(SaveState)]
 pub struct Gpu {
     registers: Registers,
     gp0: Gp0State,
@@ -70,9 +68,9 @@ fn check_rasterizer_type(rasterizer_type: RasterizerType) -> RasterizerType {
         return rasterizer_type;
     }
 
-    if !is_x86_feature_detected!("avx2") || !is_x86_feature_detected!("fma") {
+    if !is_x86_feature_detected!("avx2") {
         log::error!(
-            "Current CPU does not support AVX2 and/or FMA instructions; SIMD rasterizer will not work"
+            "Current CPU does not support AVX2 instructions; SIMD rasterizer will not work, not using it"
         );
         return RasterizerType::NaiveSoftware;
     }
@@ -88,14 +86,7 @@ impl Gpu {
     ) -> Self {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
-        let rasterizer = match display_config.rasterizer_type {
-            RasterizerType::NaiveSoftware => {
-                Rasterizer::NaiveSoftware(NaiveSoftwareRasterizer::new(&wgpu_device))
-            }
-            RasterizerType::SimdSoftware => {
-                Rasterizer::SimdSoftware(SimdSoftwareRasterizer::new(&wgpu_device))
-            }
-        };
+        let rasterizer = Rasterizer::new(&wgpu_device, display_config.rasterizer_type);
 
         let wgpu_resources =
             WgpuResources { device: wgpu_device, queue: wgpu_queue, display_config };
@@ -166,14 +157,11 @@ impl Gpu {
 
         if prev_rasterizer_type != display_config.rasterizer_type {
             let vram = self.rasterizer.clone_vram();
-            self.rasterizer = match display_config.rasterizer_type {
-                RasterizerType::NaiveSoftware => Rasterizer::NaiveSoftware(
-                    NaiveSoftwareRasterizer::from_vram(&self.wgpu_resources.device, &vram),
-                ),
-                RasterizerType::SimdSoftware => Rasterizer::SimdSoftware(
-                    SimdSoftwareRasterizer::from_vram(&self.wgpu_resources.device, &vram),
-                ),
-            };
+            self.rasterizer = Rasterizer::from_state(
+                RasterizerState { vram },
+                &self.wgpu_resources.device,
+                display_config.rasterizer_type,
+            );
         }
     }
 
