@@ -642,7 +642,23 @@ fn run_spu_dma(config: &mut ChannelConfig, memory: &mut Memory, spu: &mut Spu) {
             config.start_address = address;
             config.num_blocks = 0;
         }
-        DmaDirection::ToRam => todo!("SPU DMA from SPU RAM to main RAM"),
+        DmaDirection::ToRam => {
+            let mut address = config.start_address & !3;
+            for _ in 0..config.block_size * config.num_blocks {
+                let low_halfword = spu.read_data_port();
+                let high_halfword = spu.read_data_port();
+                let word = u32::from(low_halfword) | (u32::from(high_halfword) << 16);
+                memory.write_main_ram_u32(address, word);
+
+                address = match config.step {
+                    Step::Forwards => address.wrapping_add(4),
+                    Step::Backwards => address.wrapping_sub(4),
+                };
+            }
+
+            config.start_address = address;
+            config.num_blocks = 0;
+        }
     }
 }
 

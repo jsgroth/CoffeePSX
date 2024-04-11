@@ -629,6 +629,16 @@ impl Spu {
     }
 
     // $1F801DA8: Sound RAM data transfer FIFO port
+    pub fn read_data_port(&mut self) -> u16 {
+        let addr = self.data_port.current_address as usize;
+        let halfword = u16::from_le_bytes([self.sound_ram[addr], self.sound_ram[addr + 1]]);
+
+        self.data_port.current_address = (self.data_port.current_address + 2) & SOUND_RAM_MASK;
+
+        halfword
+    }
+
+    // $1F801DA8: Sound RAM data transfer FIFO port
     pub fn write_data_port(&mut self, value: u16) {
         // TODO emulate the 32-halfword FIFO?
         // TODO check current state? (requires FIFO emulation, the BIOS writes while mode is off)
