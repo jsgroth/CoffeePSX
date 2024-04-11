@@ -163,7 +163,7 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::ShiftRight => inputs.p1.set_select(pressed),
             KeyCode::Escape if pressed => elwt.exit(),
             KeyCode::F5 if pressed => save_state(save_state_path, emulator)?,
-            KeyCode::F6 if pressed => load_state(save_state_path, emulator),
+            KeyCode::F6 if pressed => load_state(save_state_path, *display_config, emulator),
             KeyCode::Slash if pressed => renderer.toggle_prescaling(),
             KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
             KeyCode::KeyN if pressed => *step_to_next_frame = true,
@@ -221,7 +221,7 @@ fn save_state(path: &PathBuf, emulator: &Ps1Emulator) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn load_state(path: &PathBuf, emulator: &mut Ps1Emulator) {
+fn load_state(path: &PathBuf, display_config: DisplayConfig, emulator: &mut Ps1Emulator) {
     let file = match File::open(path) {
         Ok(file) => file,
         Err(err) => {
@@ -235,6 +235,7 @@ fn load_state(path: &PathBuf, emulator: &mut Ps1Emulator) {
         Ok(loaded_state) => {
             let unserialized = emulator.take_unserialized_fields();
             *emulator = Ps1Emulator::from_state(loaded_state, unserialized);
+            emulator.update_display_config(display_config);
 
             log::info!("Loaded state from '{}'", path.display());
         }
