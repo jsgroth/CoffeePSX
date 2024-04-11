@@ -57,6 +57,19 @@ impl<T: 'static + Copy + Default + Ord, const CAPACITY: usize> UpdateableMinHeap
         }
     }
 
+    pub fn min_or_push(&mut self, new_value: T, pred: impl Fn(T) -> bool) {
+        let Some(i) = self.heap[..self.len].iter().position(|&value| pred(value)) else {
+            self.push(new_value);
+            return;
+        };
+
+        let old_value = self.heap[i];
+        if new_value < old_value {
+            self.heap[i] = new_value;
+            self.reheapify_down(i);
+        }
+    }
+
     pub fn remove_one(&mut self, pred: impl Fn(T) -> bool) {
         let Some(i) = self.heap[..self.len].iter().position(|&value| pred(value)) else {
             return;

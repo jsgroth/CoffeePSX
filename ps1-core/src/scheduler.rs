@@ -93,6 +93,18 @@ impl Scheduler {
             .update_or_push(event, |existing_event| event.event_type == existing_event.event_type);
     }
 
+    pub fn min_or_push_event(&mut self, event: SchedulerEvent) {
+        log::debug!(
+            "Scheduled event of type {:?} at cycles {}, current {}",
+            event.event_type,
+            event.cpu_cycles,
+            self.cpu_cycle_counter
+        );
+
+        self.heap
+            .min_or_push(event, |existing_event| event.event_type == existing_event.event_type);
+    }
+
     pub fn remove_event(&mut self, event_type: SchedulerEventType) {
         self.heap.remove_one(|event| event.event_type == event_type);
     }

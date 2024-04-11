@@ -87,6 +87,7 @@ struct ChannelConfig {
     chopping_dma_window_size: u32,
     chopping_cpu_window_size: u32,
     transfer_active: bool,
+    next_active_cycles: u64,
 }
 
 impl ChannelConfig {
@@ -270,13 +271,13 @@ impl DmaController {
 
         let channel_config = &self.channel_configs[channel as usize];
 
-        // TODO bit 24 hardcoded to 0 (stopped/completed)
         (channel_config.direction as u32)
             | ((channel_config.step as u32) << 1)
             | (u32::from(channel_config.chopping_enabled) << 8)
             | ((channel_config.transfer_mode as u32) << 9)
             | (channel_config.chopping_dma_window_size << 16)
             | (channel_config.chopping_cpu_window_size << 20)
+            | (u32::from(channel_config.transfer_active) << 24)
     }
 
     pub fn write_channel_control(&mut self, address: u32, value: u32, scheduler: &mut Scheduler) {
@@ -315,8 +316,7 @@ impl DmaController {
         channel_config.transfer_active = start_transfer;
 
         if start_transfer {
-            scheduler
-                .update_or_push_event(SchedulerEvent::process_dma(scheduler.cpu_cycle_counter()));
+            scheduler.min_or_push_event(SchedulerEvent::process_dma(scheduler.cpu_cycle_counter()));
         }
     }
 
@@ -336,7 +336,9 @@ impl DmaController {
                 break;
             }
 
-            if !self.channel_configs[channel].transfer_active {
+            if !self.channel_configs[channel].transfer_active
+                || self.channel_configs[channel].next_active_cycles > scheduler.cpu_cycle_counter()
+            {
                 continue;
             }
 
@@ -346,19 +348,23 @@ impl DmaController {
                     // Always uses block DMA
                     // Takes roughly 17 cycles per 16 words
                     // TODO per-block timing
-                    let words =
-                        self.channel_configs[0].num_blocks * self.channel_configs[0].block_size;
-                    self.cpu_wait_cycles = words * 17 / 16;
-
                     log::debug!(
                         "Running MDEC In DMA; {} blocks of size {}",
                         self.channel_configs[0].num_blocks,
                         self.channel_configs[0].block_size
                     );
-                    run_mdec_in_dma(&mut self.channel_configs[0], mdec, memory);
 
-                    self.channel_configs[0].transfer_active = false;
-                    self.maybe_flag_dma_interrupt(0, interrupt_registers);
+                    self.cpu_wait_cycles = progress_mdec_in_dma(
+                        &mut self.channel_configs[0],
+                        mdec,
+                        memory,
+                        scheduler.cpu_cycle_counter(),
+                    );
+
+                    if !self.channel_configs[0].transfer_active {
+                        log::debug!("MDEC In DMA finished");
+                        self.maybe_flag_dma_interrupt(0, interrupt_registers);
+                    }
 
                     break;
                 }
@@ -367,19 +373,25 @@ impl DmaController {
                     // Always uses block DMA
                     // Takes roughly 17 cycles per 16 words, not including decompression timing
                     // TODO per-block timing and decompression timing
-                    let words =
-                        self.channel_configs[1].num_blocks * self.channel_configs[1].block_size;
-                    self.cpu_wait_cycles = words * 17 / 16;
-
                     log::debug!(
-                        "Running MDEC Out DMA; {} blocks of size {}",
+                        "Running MDEC Out DMA; {} blocks of size {}, addr {:X}",
                         self.channel_configs[1].num_blocks,
-                        self.channel_configs[1].block_size
+                        self.channel_configs[1].block_size,
+                        self.channel_configs[1].start_address
                     );
-                    run_mdec_out_dma(&mut self.channel_configs[1], mdec, memory);
 
-                    self.channel_configs[1].transfer_active = false;
-                    self.maybe_flag_dma_interrupt(1, interrupt_registers);
+                    let cpu_wait_cycles = progress_mdec_out_dma(
+                        &mut self.channel_configs[1],
+                        mdec,
+                        memory,
+                        scheduler.cpu_cycle_counter(),
+                    );
+                    self.cpu_wait_cycles = cpu_wait_cycles;
+
+                    if !self.channel_configs[1].transfer_active {
+                        log::debug!("MDEC Out DMA finished");
+                        self.maybe_flag_dma_interrupt(1, interrupt_registers);
+                    }
 
                     break;
                 }
@@ -389,14 +401,24 @@ impl DmaController {
                     // Takes roughly 17 cycles per 16 words, not including GPU draw timing
                     // TODO per-block/node timing and GPU draw timing
                     log::debug!(
-                        "Running GPU DMA in mode {:?}",
-                        self.channel_configs[2].transfer_mode
+                        "Running GPU DMA in mode {:?}, {} blocks of size {}, addr {:X}",
+                        self.channel_configs[2].transfer_mode,
+                        self.channel_configs[2].num_blocks,
+                        self.channel_configs[2].block_size,
+                        self.channel_configs[2].start_address
                     );
-                    let words = run_gpu_dma(&mut self.channel_configs[2], gpu, memory);
-                    self.cpu_wait_cycles = words * 17 / 16;
+                    let cpu_wait_cycles = progress_gpu_dma(
+                        &mut self.channel_configs[2],
+                        gpu,
+                        memory,
+                        scheduler.cpu_cycle_counter(),
+                    );
+                    self.cpu_wait_cycles = cpu_wait_cycles;
 
-                    self.channel_configs[2].transfer_active = false;
-                    self.maybe_flag_dma_interrupt(2, interrupt_registers);
+                    if !self.channel_configs[2].transfer_active {
+                        log::debug!("GPU DMA finished");
+                        self.maybe_flag_dma_interrupt(2, interrupt_registers);
+                    }
 
                     break;
                 }
@@ -457,11 +479,14 @@ impl DmaController {
             }
         }
 
-        if self.channel_configs.iter().any(|config| config.transfer_active) {
-            let wait_cycles: u64 = cmp::max(1, self.cpu_wait_cycles).into();
-            scheduler.update_or_push_event(SchedulerEvent::process_dma(
-                scheduler.cpu_cycle_counter() + wait_cycles,
-            ));
+        if let Some(next_active_cycles) = self
+            .channel_configs
+            .iter()
+            .filter_map(|config| config.transfer_active.then_some(config.next_active_cycles))
+            .min()
+        {
+            let schedule_cycles = cmp::max(scheduler.cpu_cycle_counter() + 2, next_active_cycles);
+            scheduler.min_or_push_event(SchedulerEvent::process_dma(schedule_cycles));
         }
     }
 
@@ -475,12 +500,16 @@ impl DmaController {
             return;
         }
 
+        log::debug!("Setting DMA interrupt flag for DMA{channel}");
+
         let prev_pending = self.interrupt.pending();
         self.interrupt.channel_irq_pending |= 1 << channel;
 
         if !prev_pending && self.interrupt.pending() {
             // IRQ2 is set when DMA interrupt pending goes from 0 to 1
             interrupt_registers.set_interrupt_flag(InterruptType::Dma);
+
+            log::debug!("Set IRQ2 bit in I_STAT");
         }
     }
 
@@ -493,9 +522,19 @@ impl DmaController {
     }
 }
 
-fn run_mdec_in_dma(config: &mut ChannelConfig, mdec: &mut MacroblockDecoder, memory: &Memory) {
+fn progress_mdec_in_dma(
+    config: &mut ChannelConfig,
+    mdec: &mut MacroblockDecoder,
+    memory: &Memory,
+    cpu_cycle_counter: u64,
+) -> u32 {
+    if config.num_blocks == 0 {
+        config.transfer_active = false;
+        return 0;
+    }
+
     let mut address = config.start_address & !3;
-    for _ in 0..config.block_size * config.num_blocks {
+    for _ in 0..config.block_size {
         let word = memory.read_main_ram_u32(address);
         mdec.write_command(word);
 
@@ -506,13 +545,29 @@ fn run_mdec_in_dma(config: &mut ChannelConfig, mdec: &mut MacroblockDecoder, mem
     }
 
     config.start_address = address;
-    config.num_blocks = 0;
+    config.num_blocks -= 1;
+
+    // TODO actual MDEC timing
+    let cpu_wait_cycles = config.block_size * 17 / 16;
+    config.next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles);
+
+    cpu_wait_cycles
 }
 
 // TODO reorder 8x8 blocks if MDEC is in 15bpp or 24bpp mode instead of assuming the MDEC code will do it
-fn run_mdec_out_dma(config: &mut ChannelConfig, mdec: &mut MacroblockDecoder, memory: &mut Memory) {
+fn progress_mdec_out_dma(
+    config: &mut ChannelConfig,
+    mdec: &mut MacroblockDecoder,
+    memory: &mut Memory,
+    cpu_cycle_counter: u64,
+) -> u32 {
+    if config.num_blocks == 0 {
+        config.transfer_active = false;
+        return 0;
+    }
+
     let mut address = config.start_address & !3;
-    for _ in 0..config.block_size * config.num_blocks {
+    for _ in 0..config.block_size {
         let word = mdec.read_data();
         memory.write_main_ram_u32(address, word);
 
@@ -523,24 +578,45 @@ fn run_mdec_out_dma(config: &mut ChannelConfig, mdec: &mut MacroblockDecoder, me
     }
 
     config.start_address = address;
-    config.num_blocks = 0;
+    config.num_blocks -= 1;
+
+    // TODO actual MDEC decompression time
+    let cpu_wait_cycles = config.block_size * 17 / 16;
+    config.next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles) + 128;
+
+    cpu_wait_cycles
 }
 
-fn run_gpu_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Memory) -> u32 {
+fn progress_gpu_dma(
+    config: &mut ChannelConfig,
+    gpu: &mut Gpu,
+    memory: &mut Memory,
+    cpu_cycle_counter: u64,
+) -> u32 {
     match config.transfer_mode {
-        TransferMode::Block => run_gpu_block_dma(config, gpu, memory),
-        TransferMode::LinkedList => run_gpu_linked_list_dma(config, gpu, memory),
-        TransferMode::Burst => todo!("sync mode 0 unexpected for GPU DMA"),
+        TransferMode::Block => progress_gpu_block_dma(config, gpu, memory, cpu_cycle_counter),
+        TransferMode::LinkedList => {
+            progress_gpu_linked_list_dma(config, gpu, memory, cpu_cycle_counter)
+        }
+        TransferMode::Burst => panic!("GPU DMA executed in Burst mode: {config:?}"),
     }
 }
 
-fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Memory) -> u32 {
-    let total_words = config.num_blocks * config.block_size;
+fn progress_gpu_block_dma(
+    config: &mut ChannelConfig,
+    gpu: &mut Gpu,
+    memory: &mut Memory,
+    cpu_cycle_counter: u64,
+) -> u32 {
+    if config.num_blocks == 0 {
+        config.transfer_active = false;
+        return 0;
+    }
 
     match config.direction {
         DmaDirection::FromRam => {
             let mut address = config.start_address & !3;
-            for _ in 0..config.block_size * config.num_blocks {
+            for _ in 0..config.block_size {
                 let word = memory.read_main_ram_u32(address);
                 gpu.write_gp0_command(word);
 
@@ -551,11 +627,10 @@ fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Mem
             }
 
             config.start_address = address;
-            config.num_blocks = 0;
         }
         DmaDirection::ToRam => {
             let mut address = config.start_address & !3;
-            for _ in 0..config.block_size * config.num_blocks {
+            for _ in 0..config.block_size {
                 let word = gpu.read_port();
                 memory.write_main_ram_u32(address, word);
 
@@ -566,45 +641,59 @@ fn run_gpu_block_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &mut Mem
             }
 
             config.start_address = address;
-            config.num_blocks = 0;
         }
     }
 
-    total_words
+    let cpu_wait_cycles = config.block_size * 17 / 16;
+    config.num_blocks -= 1;
+
+    // TODO actual GPU draw timing
+    config.next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles);
+
+    cpu_wait_cycles
 }
 
-fn run_gpu_linked_list_dma(config: &mut ChannelConfig, gpu: &mut Gpu, memory: &Memory) -> u32 {
-    let mut total_word_count = 0;
+fn progress_gpu_linked_list_dma(
+    config: &mut ChannelConfig,
+    gpu: &mut Gpu,
+    memory: &mut Memory,
+    cpu_cycle_counter: u64,
+) -> u32 {
+    if config.start_address.bit(23) {
+        // End marker encountered
+        config.transfer_active = false;
+        return 0;
+    }
 
     match config.direction {
         DmaDirection::FromRam => {
-            let mut address = config.start_address & !3;
-            loop {
-                // TODO timing, don't do all at once
-                let node = memory.read_main_ram_u32(address);
+            let address = config.start_address & !3;
+            let node = memory.read_main_ram_u32(address);
 
-                let word_count = node >> 24;
-                for i in 0..word_count {
-                    let word_addr = address.wrapping_add(4 * (i + 1));
-                    let word = memory.read_main_ram_u32(word_addr);
-                    gpu.write_gp0_command(word);
-                }
-
-                total_word_count += word_count;
-
-                if node.bit(23) {
-                    // End marker encountered
-                    config.start_address = node & 0xFFFFFF;
-                    break;
-                }
-
-                address = node & 0x1FFFFF;
+            let data_word_count = node >> 24;
+            for i in 0..data_word_count {
+                let word_addr = address.wrapping_add(4 * (i + 1));
+                let word = memory.read_main_ram_u32(word_addr);
+                gpu.write_gp0_command(word);
             }
+
+            let next_address = node & 0xFFFFFF;
+            config.start_address = next_address;
+
+            // TODO actual GPU command timing
+            let (cpu_wait_cycles, next_active_cycles) = if data_word_count == 0 {
+                (2, cpu_cycle_counter + 2)
+            } else {
+                let cpu_wait_cycles = data_word_count * 17 / 16;
+                let next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles) + 36;
+                (cpu_wait_cycles, next_active_cycles)
+            };
+            config.next_active_cycles = next_active_cycles;
+
+            cpu_wait_cycles
         }
         DmaDirection::ToRam => todo!("GPU linked list DMA from VRAM to CPU RAM"),
     }
-
-    total_word_count
 }
 
 // CD-ROM DMA
