@@ -617,6 +617,17 @@ impl Gpu {
             self.gp0.texture_window,
         );
 
+        if let Some(texture_mapping) = &first_args.texture_mapping {
+            // Drawing a textured polygon appears to change most of the current GP0($E1) settings.
+            // Valkyrie Profile depends on this to change semi-transparency mode or most text boxes
+            // will be the wrong color
+            self.gp0.global_texture_page = TexturePage {
+                rectangle_x_flip: self.gp0.global_texture_page.rectangle_x_flip,
+                rectangle_y_flip: self.gp0.global_texture_page.rectangle_y_flip,
+                ..texture_mapping.texpage
+            };
+        }
+
         log::debug!("Drawing polygon with params {first_args:?}");
 
         self.rasterizer.draw_triangle(first_args, &self.gp0.draw_settings);
