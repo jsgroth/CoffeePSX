@@ -309,20 +309,26 @@ impl Ps1Emulator {
     ) -> Result<TickEffect, TickError<R::Err, A::Err, S::Err>> {
         self.sio0.set_inputs(inputs);
 
-        let cpu_cycles = self.cpu.execute_instruction(&mut Bus {
-            gpu: &mut self.gpu,
-            spu: &mut self.spu,
-            cd_controller: &mut self.cd_controller,
-            mdec: &mut self.mdec,
-            memory: &mut self.memory,
-            memory_control: &mut self.memory_control,
-            dma_controller: &mut self.dma_controller,
-            interrupt_registers: &mut self.interrupt_registers,
-            sio0: &mut self.sio0,
-            sio1: &mut self.sio1,
-            timers: &mut self.timers,
-            scheduler: &mut self.scheduler,
-        });
+        let cpu_cycles = if self.dma_controller.cpu_wait_cycles() != 0 {
+            // TODO the CPU can run in parallel to a DMA as long as it doesn't access main RAM
+            // or an I/O register
+            self.dma_controller.take_cpu_wait_cycles()
+        } else {
+            self.cpu.execute_instruction(&mut Bus {
+                gpu: &mut self.gpu,
+                spu: &mut self.spu,
+                cd_controller: &mut self.cd_controller,
+                mdec: &mut self.mdec,
+                memory: &mut self.memory,
+                memory_control: &mut self.memory_control,
+                dma_controller: &mut self.dma_controller,
+                interrupt_registers: &mut self.interrupt_registers,
+                sio0: &mut self.sio0,
+                sio1: &mut self.sio1,
+                timers: &mut self.timers,
+                scheduler: &mut self.scheduler,
+            })
+        };
 
         if self.tty_enabled {
             self.check_for_putchar_call();
@@ -409,6 +415,18 @@ impl Ps1Emulator {
                     self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(
                         event.cpu_cycles + SPU_CLOCK_DIVIDER,
                     ));
+                }
+                SchedulerEventType::ProcessDma => {
+                    // Process the highest-priority active DMA that is ready to transfer
+                    self.dma_controller.process(
+                        &mut self.memory,
+                        &mut self.gpu,
+                        &mut self.spu,
+                        &mut self.mdec,
+                        &mut self.cd_controller,
+                        &mut self.scheduler,
+                        &mut self.interrupt_registers,
+                    );
                 }
                 SchedulerEventType::Timer0Irq => {
                     // Timer 0 IRQ event: Set the Timer 0 IRQ flag (rarely used but can track the GPU dot clock).

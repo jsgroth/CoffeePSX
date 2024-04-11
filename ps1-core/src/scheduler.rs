@@ -8,6 +8,7 @@ mod heap;
 pub enum SchedulerEventType {
     VBlank,
     SpuAndCdClock,
+    ProcessDma,
     Timer0Irq,
     Timer1Irq,
     Timer2Irq,
@@ -30,6 +31,10 @@ impl SchedulerEvent {
 
     pub fn spu_and_cd_clock(cpu_cycles: u64) -> Self {
         Self { event_type: SchedulerEventType::SpuAndCdClock, cpu_cycles }
+    }
+
+    pub fn process_dma(cpu_cycles: u64) -> Self {
+        Self { event_type: SchedulerEventType::ProcessDma, cpu_cycles }
     }
 }
 

@@ -188,16 +188,7 @@ impl<'a> Bus<'a> {
             0x1080..=0x10EF => match (address >> 2) & 3 {
                 0 => self.dma_controller.write_channel_address(address, value),
                 1 => self.dma_controller.write_channel_length(address, value),
-                2 => self.dma_controller.write_channel_control(
-                    address,
-                    value,
-                    self.gpu,
-                    self.spu,
-                    self.memory,
-                    self.cd_controller,
-                    self.mdec,
-                    self.interrupt_registers,
-                ),
+                2 => self.dma_controller.write_channel_control(address, value, self.scheduler),
                 3 => todo!("Invalid DMA register write: {address:08X} {value:08X} {size:?}"),
                 _ => unreachable!("value & 3 is always <= 3"),
             },
