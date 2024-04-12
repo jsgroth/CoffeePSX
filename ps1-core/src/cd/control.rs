@@ -3,7 +3,9 @@
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{status, CdController, Command, CommandState, DriveState, SpinUpNextState};
+use crate::cd::{
+    status, CdController, Command, CommandState, DriveState, SpinUpNextState, SPIN_UP_CYCLES,
+};
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};
 
@@ -56,8 +58,9 @@ impl From<u8> for DriveMode {
         let auto_pause_audio = mode.bit(1);
         let cd_da_enabled = mode.bit(0);
 
+        // TODO "ignore bit" (bit 4); seems to be bugged in actual hardware?
         if mode.bit(4) {
-            todo!("SetMode 'ignore bit' was set");
+            log::warn!("SetMode command executed with ignore bit set: {mode:02X}");
         }
 
         Self {
@@ -179,6 +182,25 @@ impl CdController {
     pub(super) fn stop_second_response(&mut self) -> CommandState {
         self.drive_state = DriveState::Stopped;
         int2!(self, [stat!(self)]);
+        CommandState::Idle
+    }
+
+    // $07: MotorOn() -> INT3(stat), INT2(stat)
+    // Turns on the drive motor if it is stopped
+    // Returns an INT5 error response if the motor is already running
+    pub(super) fn execute_motor_on(&mut self) -> CommandState {
+        if self.drive_state != DriveState::Stopped {
+            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
+            return CommandState::Idle;
+        }
+
+        int3!(self, [stat!(self)]);
+
+        self.drive_state = DriveState::SpinningUp {
+            cycles_remaining: SPIN_UP_CYCLES,
+            next: SpinUpNextState::Pause,
+        };
+
         CommandState::Idle
     }
 

@@ -582,7 +582,7 @@ fn progress_mdec_out_dma(
 
     // TODO actual MDEC decompression time
     let cpu_wait_cycles = config.block_size * 17 / 16;
-    config.next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles) + 128;
+    config.next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles) + 256;
 
     cpu_wait_cycles
 }
