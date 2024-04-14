@@ -416,6 +416,10 @@ fn decode_block(
             block[k as usize] = value;
         }
 
+        if k == 63 {
+            break;
+        }
+
         hw = data_in.pop_front().unwrap_or(0xFE00);
         k += (hw >> 10) + 1;
 
