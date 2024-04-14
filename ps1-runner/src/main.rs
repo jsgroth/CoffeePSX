@@ -43,6 +43,8 @@ struct Args {
     simd: bool,
 }
 
+const AUDIO_SYNC_THRESHOLD: usize = 2400;
+
 struct CpalAudioOutput {
     audio_queue: Arc<Mutex<VecDeque<(f64, f64)>>>,
 }
@@ -52,6 +54,12 @@ impl AudioOutput for CpalAudioOutput {
 
     fn queue_samples(&mut self, samples: &[(f64, f64)]) -> Result<(), Self::Err> {
         let mut audio_queue = self.audio_queue.lock().unwrap();
+
+        if audio_queue.len() >= AUDIO_SYNC_THRESHOLD {
+            // Drop samples; this should only happen if audio sync is disabled
+            return Ok(());
+        }
+
         for &sample in samples {
             audio_queue.push_back(sample);
         }
@@ -398,7 +406,8 @@ fn main() -> anyhow::Result<()> {
         Event::AboutToWait => {
             if !step_to_next_frame
                 && (paused
-                    || (args.audio_sync && audio_output.audio_queue.lock().unwrap().len() >= 2400))
+                    || (args.audio_sync
+                        && audio_output.audio_queue.lock().unwrap().len() >= AUDIO_SYNC_THRESHOLD))
             {
                 elwt.set_control_flow(ControlFlow::WaitUntil(
                     Instant::now() + Duration::from_millis(1),
