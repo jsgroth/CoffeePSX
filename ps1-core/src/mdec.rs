@@ -340,10 +340,13 @@ impl MacroblockDecoder {
     // $1F801824 R: MDEC status register
     pub fn read_status(&self) -> u32 {
         // TODO bit 30: data in FIFO full
-        // TODO bit 29: command busy
         // TODO bit 27: data out request
         // TODO bits 18-16: current block (hardcoded to 4)
+        let command_busy =
+            !matches!(self.command_state, CommandState::Idle) || !self.data_out.is_empty();
+
         let value = (u32::from(self.data_out.is_empty()) << 31)
+            | (u32::from(command_busy) << 29)
             | (u32::from(self.enable_data_in) << 28)
             | ((self.decode_config.depth as u32) << 25)
             | (u32::from(self.decode_config.signed) << 24)
