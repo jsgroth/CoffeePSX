@@ -354,22 +354,21 @@ fn populate_frame_buffer(
             & 0x1FF;
         let vram_row_addr = (1024 * vram_y) as usize;
 
-        frame_buffer[vram_row_addr..vram_row_addr + frame_coords.display_x_start as usize]
-            .fill(RgbaColor::BLACK);
-        frame_buffer[vram_row_addr
-            + (frame_coords.display_x_start + frame_coords.display_width) as usize
-            ..vram_row_addr + 1024]
+        // Fill pixels outside of the horizontal display range with solid black
+        let fb_row_addr = 1024 * y as usize;
+        frame_buffer[fb_row_addr..fb_row_addr + x_range.start as usize].fill(RgbaColor::BLACK);
+        frame_buffer[fb_row_addr + x_range.end as usize..fb_row_addr + frame_size.width as usize]
             .fill(RgbaColor::BLACK);
 
         for x in x_range.clone() {
-            let frame_buffer_addr = (1024 * y + x) as usize;
+            let frame_buffer_addr = fb_row_addr + x as usize;
 
             match color_depth {
                 ColorDepthBits::Fifteen => {
                     let vram_x = ((frame_coords.frame_x + x + frame_coords.display_x_offset)
                         .wrapping_sub(frame_coords.display_x_start))
                         & 0x3FF;
-                    let vram_addr = (1024 * vram_y + vram_x) as usize;
+                    let vram_addr = vram_row_addr | (vram_x as usize);
                     let vram_color = vram[vram_addr];
 
                     let r = RGB_5_TO_8[(vram_color & 0x1F) as usize];
