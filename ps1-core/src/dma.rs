@@ -682,10 +682,10 @@ fn progress_gpu_linked_list_dma(
 
             // TODO actual GPU command timing
             let (cpu_wait_cycles, next_active_cycles) = if data_word_count == 0 {
-                (2, cpu_cycle_counter + 2)
+                (0, cpu_cycle_counter + 16)
             } else {
                 let cpu_wait_cycles = data_word_count * 17 / 16;
-                let next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles) + 36;
+                let next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles) + 128;
                 (cpu_wait_cycles, next_active_cycles)
             };
             config.next_active_cycles = next_active_cycles;
