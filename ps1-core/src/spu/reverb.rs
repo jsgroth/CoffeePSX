@@ -1,7 +1,10 @@
 //! SPU reverb code
 
+mod fir;
+
 use crate::num::U32Ext;
 use crate::spu;
+use crate::spu::reverb::fir::FirSampleDeque;
 use crate::spu::voice::Voice;
 use crate::spu::{multiply_volume_i32, I32Ext, SoundRam};
 use bincode::{Decode, Encode};
@@ -108,6 +111,11 @@ pub struct ReverbUnit {
     apf_addr_2: StereoU32,
     apf_offset_2: u32,
     clock: ReverbClock,
+    input_buffer_l: FirSampleDeque,
+    input_buffer_r: FirSampleDeque,
+    output_buffer_l: FirSampleDeque,
+    output_buffer_r: FirSampleDeque,
+    unfiltered_output: (i16, i16),
     pub current_output: (i16, i16),
 }
 
@@ -119,7 +127,18 @@ impl ReverbUnit {
         cd_sample: (i16, i16),
         sound_ram: &mut SoundRam,
     ) {
-        let input_sample = self.compute_input_sample(voices, cd_sample);
+        // Input samples are pushed into buffers on every 44100 Hz clock
+        let (input_sample_l, input_sample_r) = self.compute_input_sample(voices, cd_sample);
+        self.input_buffer_l.push(input_sample_l.into());
+        self.input_buffer_r.push(input_sample_r.into());
+
+        // The reverb unit as a whole processes at only 22050 Hz.
+        // Emulate this by alternating between L processing and R processing on every 44100 Hz clock
+        let input_sample = match self.clock {
+            ReverbClock::Left => fir::filter(&self.input_buffer_l),
+            ReverbClock::Right => fir::filter(&self.input_buffer_r),
+        };
+        let input_sample: i32 = input_sample.into();
 
         self.perform_same_side_reflection(input_sample, sound_ram);
         self.perform_different_side_reflection(input_sample, sound_ram);
@@ -130,7 +149,13 @@ impl ReverbUnit {
 
         let v_out = self.output_volume.get(self.clock);
         let output_sample = multiply_volume_i32(apf2_output, v_out);
-        self.current_output.set(output_sample.clamp_to_i16(), self.clock);
+        self.unfiltered_output.set(output_sample.clamp_to_i16(), self.clock);
+
+        self.output_buffer_l.push(self.unfiltered_output.0.into());
+        self.output_buffer_r.push(self.unfiltered_output.1.into());
+
+        self.current_output =
+            (fir::filter(&self.output_buffer_l), fir::filter(&self.output_buffer_r));
 
         // Increment buffer address only after processing both L and R samples
         if self.clock == ReverbClock::Right {
@@ -147,27 +172,29 @@ impl ReverbUnit {
         &self,
         voices: &[Voice; spu::NUM_VOICES],
         cd_sample: (i16, i16),
-    ) -> i32 {
-        let input_volume = self.input_volume.get(self.clock);
-        let mut input_sample = 0_i32;
+    ) -> (i16, i16) {
+        let input_volume_l = self.input_volume.l;
+        let input_volume_r = self.input_volume.r;
+
+        let mut input_sample_l = 0_i32;
+        let mut input_sample_r = 0_i32;
         for (voice, reverb_enabled) in voices.iter().zip(self.voices_enabled) {
             if !reverb_enabled {
                 continue;
             }
 
-            let voice_sample = voice.current_sample.get(self.clock);
-            input_sample += multiply_volume_i32(voice_sample.into(), input_volume);
+            let (voice_sample_l, voice_sample_r) = voice.current_sample;
+            input_sample_l += multiply_volume_i32(voice_sample_l.into(), input_volume_l);
+            input_sample_r += multiply_volume_i32(voice_sample_r.into(), input_volume_r);
         }
 
         if self.cd_enabled {
-            let cd_input = match self.clock {
-                ReverbClock::Left => cd_sample.0,
-                ReverbClock::Right => cd_sample.1,
-            };
-            input_sample += multiply_volume_i32(cd_input.into(), input_volume);
+            let (cd_l, cd_r) = cd_sample;
+            input_sample_l += multiply_volume_i32(cd_l.into(), input_volume_l);
+            input_sample_r += multiply_volume_i32(cd_r.into(), input_volume_r);
         }
 
-        input_sample
+        (input_sample_l.clamp_to_i16(), input_sample_r.clamp_to_i16())
     }
 
     fn perform_same_side_reflection(&mut self, input_sample: i32, sound_ram: &mut SoundRam) {
@@ -206,7 +233,8 @@ impl ReverbUnit {
 
         let reflect_sample = m_sample
             + multiply_volume_i32(
-                input_sample + multiply_volume_i32(d_sample, v_wall) - m_sample,
+                (input_sample + multiply_volume_i32(d_sample, v_wall) - m_sample)
+                    .clamp(i16::MIN.into(), i16::MAX.into()),
                 v_iir,
             );
         sound_ram.set_i16(self.relative_buffer_address(m_addr), reflect_sample.clamp_to_i16());
@@ -219,7 +247,8 @@ impl ReverbUnit {
                 let comb_sample: i32 = sound_ram.get_i16(ram_addr).into();
                 multiply_volume_i32(comb_sample, self.comb_volumes[i])
             })
-            .sum()
+            .sum::<i32>()
+            .clamp(i16::MIN.into(), i16::MAX.into())
     }
 
     fn apply_all_pass_filter_1(&self, comb_filter_output: i32, sound_ram: &mut SoundRam) -> i32 {
@@ -247,12 +276,13 @@ impl ReverbUnit {
         let apf_input_sample: i32 =
             sound_ram.get_i16(self.relative_buffer_address(m_apf.wrapping_sub(d_apf))).into();
 
-        let new_apf_sample = prev_output - multiply_volume_i32(apf_input_sample, v_apf);
+        let new_apf_sample =
+            (prev_output - multiply_volume_i32(apf_input_sample, v_apf)).clamp_to_i16();
         if self.writes_enabled {
-            sound_ram.set_i16(self.relative_buffer_address(m_apf), new_apf_sample.clamp_to_i16());
+            sound_ram.set_i16(self.relative_buffer_address(m_apf), new_apf_sample);
         }
 
-        apf_input_sample + multiply_volume_i32(new_apf_sample, v_apf)
+        apf_input_sample + multiply_volume_i32(new_apf_sample.into(), v_apf)
     }
 
     fn reverb_buffer_len(&self) -> u32 {

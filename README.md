@@ -23,7 +23,7 @@ Not yet implemented:
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing will work but timings are quite inaccurate right now
 * PAL display and video timings; only NTSC is supported right now
-* SPU: Capture buffers, reverb FIR filter
+* SPU: Capture buffers
 * Some CD-ROM functionality including infrequently used commands and 8-bit CD-XA audio
 * MDEC 4bpp/8bpp modes
   * Even 15bpp/24bpp MDEC does not work properly in some games, possibly timing-related
