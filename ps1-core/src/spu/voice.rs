@@ -2,7 +2,7 @@ mod gaussian;
 
 use crate::spu;
 use crate::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
-use crate::spu::envelope::{AdsrEnvelope, AdsrState, SweepEnvelope};
+use crate::spu::envelope::{AdsrEnvelope, AdsrPhase, SweepEnvelope};
 use crate::spu::{adpcm, multiply_volume, SoundRam};
 use bincode::{Decode, Encode};
 use std::cmp;
@@ -129,7 +129,7 @@ impl Voice {
         if loop_end {
             self.current_address = self.repeat_address;
             if !loop_repeat {
-                self.adsr.state = AdsrState::Release;
+                self.adsr.phase = AdsrPhase::Release;
                 self.adsr.level = 0;
             }
         } else {

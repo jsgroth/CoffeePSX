@@ -2,7 +2,6 @@
 
 use crate::num::U32Ext;
 use bincode::{Decode, Encode};
-use std::cmp;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum EnvelopeMode {
@@ -39,35 +38,44 @@ pub struct EnvelopeSettings {
 }
 
 impl EnvelopeSettings {
-    pub fn should_update(self, current_volume_magnitude: u16, cycle_counter: u64) -> bool {
-        let mut effective_shift = self.shift.saturating_sub(11);
-
-        // Exponential increase is faked by increasing volume at a 4x slower rate when volume is
-        // greater than $6000 out of $7FFF
-        if self.mode == EnvelopeMode::Exponential
-            && self.direction == EnvelopeDirection::Increasing
-            && current_volume_magnitude > 0x6000
-        {
-            effective_shift += 2;
-        }
-
-        cycle_counter & ((1 << effective_shift) - 1) == 0
+    pub fn counter_decrement(self, current_volume_magnitude: u16) -> u32 {
+        // The envelope should update every cycle if shift <= 11.
+        // If shift > 11, it should update every 1 << (shift - 11) cycles.
+        // Computing the number of wait cycles ahead of time doesn't work with games that change
+        // envelope settings of keyed-on envelopes (e.g. Final Fantasy 7)
+        let shift = self.effective_shift(current_volume_magnitude);
+        ENVELOPE_COUNTER >> shift.saturating_sub(11)
     }
 
     pub fn next_step(self, current_volume_magnitude: u16) -> i16 {
-        let base_step = match self.direction {
-            // 0-3 maps to +7 to +4
-            EnvelopeDirection::Increasing => i32::from(7 - self.step),
-            // 0-3 maps to -8 to -5
-            EnvelopeDirection::Decreasing => -i32::from(8 - self.step),
-        };
-        let step = base_step << 11_u8.saturating_sub(self.shift);
+        // Step is interpreted as (7 - N) for increasing and -(8 - N) for decreasing
+        // -(8 - N) is just the 1's complement of (7 - N)
+        let mut step = i32::from(7 - self.step);
+        if self.direction == EnvelopeDirection::Decreasing {
+            step = !step;
+        }
+
+        // Step is left shifted if shift is less than 11
+        step <<= 11_u8.saturating_sub(self.effective_shift(current_volume_magnitude));
 
         if self.mode == EnvelopeMode::Exponential && self.direction == EnvelopeDirection::Decreasing
         {
             ((step * i32::from(current_volume_magnitude)) >> 15) as i16
         } else {
             step as i16
+        }
+    }
+
+    fn effective_shift(self, current_volume_magnitude: u16) -> u8 {
+        // Exponential increase is faked by increasing volume at a 4x slower rate when volume is
+        // greater than $6000 out of $7FFF
+        if self.direction == EnvelopeDirection::Increasing
+            && self.mode == EnvelopeMode::Exponential
+            && current_volume_magnitude > 0x6000
+        {
+            self.shift + 2
+        } else {
+            self.shift
         }
     }
 }
@@ -118,12 +126,18 @@ impl SweepSetting {
 pub struct SweepEnvelope {
     pub volume: i16,
     pub setting: SweepSetting,
-    cycle_counter: u64,
+    counter: u32,
 }
+
+// Max shift value is 31, and shift values over 11 should cause the envelope to update every
+// 1 << (N - 11) cycles.
+// Use 33 instead of 31 because exponential increase will sometimes increase the effective shift
+// by 2.
+pub const ENVELOPE_COUNTER: u32 = 1 << (33 - 11);
 
 impl SweepEnvelope {
     pub fn new() -> Self {
-        Self { volume: 0, setting: SweepSetting::default(), cycle_counter: 0 }
+        Self { volume: 0, setting: SweepSetting::default(), counter: ENVELOPE_COUNTER }
     }
 
     pub fn write(&mut self, value: u32) {
@@ -150,22 +164,32 @@ impl SweepEnvelope {
     }
 
     pub fn clock(&mut self) {
-        self.cycle_counter += 1;
-
         let SweepSetting::Sweep(envelope_settings, sweep_phase) = self.setting else {
             return;
         };
 
         let current_volume_magnitude = self.volume.saturating_abs() as u16;
-        if envelope_settings.should_update(current_volume_magnitude, self.cycle_counter) {
-            let step = envelope_settings.next_step(current_volume_magnitude);
 
+        let counter_decrement = envelope_settings.counter_decrement(current_volume_magnitude);
+        self.counter = self.counter.saturating_sub(counter_decrement);
+
+        if self.counter == 0 {
+            // Sweep negative does not seem to work properly when exponential decrease is enabled
+            let bugged_sweep_negative = sweep_phase == SweepPhase::Negative
+                && (envelope_settings.direction == EnvelopeDirection::Decreasing
+                    && envelope_settings.mode == EnvelopeMode::Exponential);
+
+            let mut step: i32 = envelope_settings.next_step(current_volume_magnitude).into();
+            if bugged_sweep_negative {
+                step = -step;
+            }
+
+            let volume: i32 = self.volume.into();
             self.volume = match sweep_phase {
-                SweepPhase::Positive => {
-                    (i32::from(self.volume) + i32::from(step)).clamp(0, 0x7FFF) as i16
-                }
+                SweepPhase::Positive => (volume + step).clamp(0, 0x7FFF) as i16,
                 SweepPhase::Negative => {
-                    (i32::from(self.volume) - i32::from(step)).clamp(-0x7FFF, 0) as i16
+                    let abs_volume = (-volume + step).clamp(0, 0x7FFF);
+                    (-abs_volume) as i16
                 }
             };
         }
@@ -288,7 +312,7 @@ fn reverse_sustain_level(value: u16) -> u32 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
-pub enum AdsrState {
+pub enum AdsrPhase {
     Attack,
     Decay,
     Sustain,
@@ -300,8 +324,8 @@ pub enum AdsrState {
 pub struct AdsrEnvelope {
     pub level: i16,
     pub settings: AdsrSettings,
-    pub state: AdsrState,
-    cycle_counter: u64,
+    pub phase: AdsrPhase,
+    counter: u32,
 }
 
 impl AdsrEnvelope {
@@ -309,49 +333,40 @@ impl AdsrEnvelope {
         Self {
             level: 0,
             settings: AdsrSettings::new(),
-            state: AdsrState::default(),
-            cycle_counter: 0,
+            phase: AdsrPhase::default(),
+            counter: ENVELOPE_COUNTER,
         }
     }
 
     pub fn clock(&mut self) {
-        self.cycle_counter += 1;
-
-        if self.state == AdsrState::Attack && self.level == i16::MAX {
-            self.state = AdsrState::Decay;
+        if self.phase == AdsrPhase::Attack && self.level == i16::MAX {
+            self.phase = AdsrPhase::Decay;
         }
 
-        let effective_sustain_level = cmp::min(i16::MAX as u16, self.settings.sustain_level) as i16;
-        let mut min_level = match self.state {
-            AdsrState::Decay => effective_sustain_level,
-            AdsrState::Attack | AdsrState::Sustain | AdsrState::Release => 0,
-        };
-
-        if self.state == AdsrState::Decay && self.level == min_level {
-            self.state = AdsrState::Sustain;
-            min_level = 0;
+        if self.phase == AdsrPhase::Decay && (self.level as u16) <= self.settings.sustain_level {
+            self.phase = AdsrPhase::Sustain;
         }
 
-        let envelope_settings = match self.state {
-            AdsrState::Attack => EnvelopeSettings {
+        let envelope_settings = match self.phase {
+            AdsrPhase::Attack => EnvelopeSettings {
                 step: self.settings.attack_step,
                 shift: self.settings.attack_shift,
                 direction: EnvelopeDirection::Increasing,
                 mode: self.settings.attack_mode,
             },
-            AdsrState::Decay => EnvelopeSettings {
+            AdsrPhase::Decay => EnvelopeSettings {
                 step: 0,
                 shift: self.settings.decay_shift,
                 direction: EnvelopeDirection::Decreasing,
                 mode: EnvelopeMode::Exponential,
             },
-            AdsrState::Sustain => EnvelopeSettings {
+            AdsrPhase::Sustain => EnvelopeSettings {
                 step: self.settings.sustain_step,
                 shift: self.settings.sustain_shift,
                 direction: self.settings.sustain_direction,
                 mode: self.settings.sustain_mode,
             },
-            AdsrState::Release => EnvelopeSettings {
+            AdsrPhase::Release => EnvelopeSettings {
                 step: 0,
                 shift: self.settings.release_shift,
                 direction: EnvelopeDirection::Decreasing,
@@ -359,19 +374,22 @@ impl AdsrEnvelope {
             },
         };
 
-        if envelope_settings.should_update(self.level as u16, self.cycle_counter) {
-            let step = envelope_settings.next_step(self.level as u16);
-            self.level = (i32::from(self.level) + i32::from(step))
-                .clamp(min_level.into(), i16::MAX.into()) as i16;
+        let counter_decrement = envelope_settings.counter_decrement(self.level as u16);
+        self.counter = self.counter.saturating_sub(counter_decrement);
+        if self.counter == 0 {
+            self.counter = ENVELOPE_COUNTER;
+
+            let step: i32 = envelope_settings.next_step(self.level as u16).into();
+            self.level = (i32::from(self.level) + step).clamp(0, i16::MAX.into()) as i16;
         }
     }
 
     pub fn key_on(&mut self) {
-        self.state = AdsrState::Attack;
+        self.phase = AdsrPhase::Attack;
         self.level = 0;
     }
 
     pub fn key_off(&mut self) {
-        self.state = AdsrState::Release;
+        self.phase = AdsrPhase::Release;
     }
 }
