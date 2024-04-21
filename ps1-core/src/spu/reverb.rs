@@ -115,7 +115,6 @@ pub struct ReverbUnit {
     input_buffer_r: FirSampleDeque,
     output_buffer_l: FirSampleDeque,
     output_buffer_r: FirSampleDeque,
-    unfiltered_output: (i16, i16),
     pub current_output: (i16, i16),
 }
 
@@ -138,7 +137,6 @@ impl ReverbUnit {
             ReverbClock::Left => fir::filter(&self.input_buffer_l),
             ReverbClock::Right => fir::filter(&self.input_buffer_r),
         };
-        let input_sample: i32 = input_sample.into();
 
         self.perform_same_side_reflection(input_sample, sound_ram);
         self.perform_different_side_reflection(input_sample, sound_ram);
@@ -148,14 +146,26 @@ impl ReverbUnit {
         let apf2_output = self.apply_all_pass_filter_2(apf1_output, sound_ram);
 
         let v_out = self.output_volume.get(self.clock);
-        let output_sample = multiply_volume_i32(apf2_output, v_out);
-        self.unfiltered_output.set(output_sample.clamp_to_i16(), self.clock);
+        let output_sample =
+            multiply_volume_i32(apf2_output, v_out).clamp(i16::MIN.into(), i16::MAX.into());
 
-        self.output_buffer_l.push(self.unfiltered_output.0.into());
-        self.output_buffer_r.push(self.unfiltered_output.1.into());
+        // Push the output sample into the correct buffer and push a padding zero to the other
+        match self.clock {
+            ReverbClock::Left => {
+                self.output_buffer_l.push(output_sample);
+                self.output_buffer_r.push(0);
+            }
+            ReverbClock::Right => {
+                self.output_buffer_l.push(0);
+                self.output_buffer_r.push(output_sample);
+            }
+        };
 
-        self.current_output =
-            (fir::filter(&self.output_buffer_l), fir::filter(&self.output_buffer_r));
+        // Double FIR filter outputs to account for zero padding
+        self.current_output = (
+            (fir::filter(&self.output_buffer_l) << 1).clamp_to_i16(),
+            (fir::filter(&self.output_buffer_r) << 1).clamp_to_i16(),
+        );
 
         // Increment buffer address only after processing both L and R samples
         if self.clock == ReverbClock::Right {

@@ -1,4 +1,4 @@
-use crate::spu::{multiply_volume_i32, I32Ext};
+use crate::spu::multiply_volume_i32;
 use bincode::{Decode, Encode};
 use std::collections::VecDeque;
 
@@ -32,10 +32,11 @@ impl Default for FirSampleDeque {
     }
 }
 
-pub fn filter(samples: &FirSampleDeque) -> i16 {
-    let mut sum = 0_i32;
-    for (i, sample) in samples.0.iter().copied().enumerate().take(FILTER.len()) {
-        sum += multiply_volume_i32(sample, FILTER[i]);
-    }
-    sum.clamp_to_i16()
+pub fn filter(samples: &FirSampleDeque) -> i32 {
+    FILTER
+        .iter()
+        .copied()
+        .zip(samples.0.iter().copied())
+        .map(|(a, b)| multiply_volume_i32(a, b))
+        .sum()
 }
