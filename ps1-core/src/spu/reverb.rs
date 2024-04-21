@@ -6,7 +6,7 @@ use crate::num::U32Ext;
 use crate::spu;
 use crate::spu::reverb::fir::FirSampleDeque;
 use crate::spu::voice::Voice;
-use crate::spu::{multiply_volume_i32, I32Ext, SoundRam};
+use crate::spu::{multiply_volume, multiply_volume_i32, I32Ext, SoundRam};
 use bincode::{Decode, Encode};
 use std::cmp;
 
@@ -64,6 +64,7 @@ impl<T: Copy> StereoValue<T> {
     }
 }
 
+type StereoI16 = StereoValue<i16>;
 type StereoI32 = StereoValue<i32>;
 type StereoU32 = StereoValue<u32>;
 
@@ -95,7 +96,7 @@ pub struct ReverbUnit {
     buffer_start_addr: u32,
     buffer_current_addr: u32,
     input_volume: StereoI32,
-    output_volume: StereoI32,
+    output_volume: StereoI16,
     comb_volumes: [i32; 4],
     reflection_volume_1: i32,
     reflection_volume_2: i32,
@@ -119,7 +120,6 @@ pub struct ReverbUnit {
 }
 
 impl ReverbUnit {
-    // TODO 39-tap FIR filter for in/out resampling
     pub fn clock(
         &mut self,
         voices: &[Voice; spu::NUM_VOICES],
@@ -138,6 +138,9 @@ impl ReverbUnit {
             ReverbClock::Right => fir::filter(&self.input_buffer_r),
         };
 
+        // Apply input volume
+        let input_sample = multiply_volume_i32(input_sample, self.input_volume.get(self.clock));
+
         self.perform_same_side_reflection(input_sample, sound_ram);
         self.perform_different_side_reflection(input_sample, sound_ram);
 
@@ -145,9 +148,7 @@ impl ReverbUnit {
         let apf1_output = self.apply_all_pass_filter_1(comb_filter_output, sound_ram);
         let apf2_output = self.apply_all_pass_filter_2(apf1_output, sound_ram);
 
-        let v_out = self.output_volume.get(self.clock);
-        let output_sample =
-            multiply_volume_i32(apf2_output, v_out).clamp(i16::MIN.into(), i16::MAX.into());
+        let output_sample = apf2_output.clamp(i16::MIN.into(), i16::MAX.into());
 
         // Push the output sample into the correct buffer and push a padding zero to the other
         match self.clock {
@@ -162,9 +163,13 @@ impl ReverbUnit {
         };
 
         // Double FIR filter outputs to account for zero padding
+        let filtered_l = (fir::filter(&self.output_buffer_l) << 1).clamp_to_i16();
+        let filtered_r = (fir::filter(&self.output_buffer_r) << 1).clamp_to_i16();
+
+        // Apply output volume after filtering so that volume changes will take immediate effect
         self.current_output = (
-            (fir::filter(&self.output_buffer_l) << 1).clamp_to_i16(),
-            (fir::filter(&self.output_buffer_r) << 1).clamp_to_i16(),
+            multiply_volume(filtered_l, self.output_volume.l),
+            multiply_volume(filtered_r, self.output_volume.r),
         );
 
         // Increment buffer address only after processing both L and R samples
@@ -183,9 +188,6 @@ impl ReverbUnit {
         voices: &[Voice; spu::NUM_VOICES],
         cd_sample: (i16, i16),
     ) -> (i16, i16) {
-        let input_volume_l = self.input_volume.l;
-        let input_volume_r = self.input_volume.r;
-
         let mut input_sample_l = 0_i32;
         let mut input_sample_r = 0_i32;
         for (voice, reverb_enabled) in voices.iter().zip(self.voices_enabled) {
@@ -194,14 +196,14 @@ impl ReverbUnit {
             }
 
             let (voice_sample_l, voice_sample_r) = voice.current_sample;
-            input_sample_l += multiply_volume_i32(voice_sample_l.into(), input_volume_l);
-            input_sample_r += multiply_volume_i32(voice_sample_r.into(), input_volume_r);
+            input_sample_l += i32::from(voice_sample_l);
+            input_sample_r += i32::from(voice_sample_r);
         }
 
         if self.cd_enabled {
             let (cd_l, cd_r) = cd_sample;
-            input_sample_l += multiply_volume_i32(cd_l.into(), input_volume_l);
-            input_sample_r += multiply_volume_i32(cd_r.into(), input_volume_r);
+            input_sample_l += i32::from(cd_l);
+            input_sample_r += i32::from(cd_r);
         }
 
         (input_sample_l.clamp_to_i16(), input_sample_r.clamp_to_i16())
@@ -307,7 +309,7 @@ impl ReverbUnit {
 
     // $1F801D84: Reverb output volume L (vLOUT)
     pub fn write_output_volume_l(&mut self, value: u32) {
-        self.output_volume.l = parse_volume(value);
+        self.output_volume.l = parse_volume(value) as i16;
         log::trace!("Reverb output volume L: {}", self.output_volume.l);
     }
 
@@ -317,7 +319,7 @@ impl ReverbUnit {
 
     // $1F801D86: Reverb output volume R (vROUT)
     pub fn write_output_volume_r(&mut self, value: u32) {
-        self.output_volume.r = parse_volume(value);
+        self.output_volume.r = parse_volume(value) as i16;
         log::trace!("Reverb output volume R: {}", self.output_volume.r);
     }
 
