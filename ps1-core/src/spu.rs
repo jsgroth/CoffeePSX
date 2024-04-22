@@ -301,10 +301,12 @@ impl Spu {
 
         // Grab current CD audio samples
         let (cd_l, cd_r) = if self.control.cd_audio_enabled {
-            apply_volume_matrix(
+            let (cd_l, cd_r) = apply_volume_matrix(
                 cd_controller.current_audio_sample(),
                 cd_controller.spu_volume_matrix(),
-            )
+            );
+
+            (multiply_volume(cd_l, self.volume.cd_l), multiply_volume(cd_r, self.volume.cd_r))
         } else {
             (0, 0)
         };
@@ -325,13 +327,18 @@ impl Spu {
         let sample_r = multiply_volume(sample_r.clamp_to_i16(), self.volume.main_r.volume);
 
         // Mix in reverb unit output
-        let sample_l =
+        let mut sample_l =
             (i32::from(sample_l) + i32::from(self.reverb.current_output.0)).clamp_to_i16();
-        let sample_r =
+        let mut sample_r =
             (i32::from(sample_r) + i32::from(self.reverb.current_output.1)).clamp_to_i16();
 
-        let cd_l = multiply_volume(cd_l, self.volume.cd_l);
-        let cd_r = multiply_volume(cd_r, self.volume.cd_r);
+        // If amplifier is muted, only CD audio samples are sent to audio output
+        if !self.control.amplifier_enabled {
+            sample_l = 0;
+            sample_r = 0;
+        }
+
+        // Mix in CD audio
         let sample_l = (i32::from(sample_l) + i32::from(cd_l)).clamp_to_i16();
         let sample_r = (i32::from(sample_r) + i32::from(cd_r)).clamp_to_i16();
 
@@ -485,13 +492,23 @@ impl Spu {
             0x1DA4 => self.sound_ram.write_irq_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
             0x1DA8 => self.write_data_port(value as u16),
-            0x1DAA => self.control.write_spucnt(
-                value,
-                &mut self.sound_ram,
-                &mut self.data_port,
-                &mut self.reverb,
-                &mut self.noise,
-            ),
+            0x1DAA => {
+                self.control.write_spucnt(
+                    value,
+                    &mut self.sound_ram,
+                    &mut self.data_port,
+                    &mut self.reverb,
+                    &mut self.noise,
+                );
+
+                // When SPU is disabled, all voices are immediately muted and keyed off
+                if !self.control.spu_enabled {
+                    for voice in &mut self.voices {
+                        voice.adsr.level = 0;
+                        voice.key_off();
+                    }
+                }
+            }
             0x1DAC => {
                 // Sound RAM data transfer control register; writing any value other than $0004
                 // would be highly unexpected
@@ -655,6 +672,11 @@ impl Spu {
     fn key_on_low(&mut self, value: u32) {
         log::debug!("Key on low write: {value:04X}");
 
+        // Key on writes are ignored when SPU is disabled
+        if !self.control.spu_enabled {
+            return;
+        }
+
         for voice in 0..16 {
             if value.bit(voice) {
                 log::trace!("Keying on voice {voice}");
@@ -668,6 +690,11 @@ impl Spu {
     // $1F801D8A: Key on (voices 16-23)
     fn key_on_high(&mut self, value: u32) {
         log::debug!("Key on high write: {value:04X}");
+
+        // Key on writes are ignored when SPU is disabled
+        if !self.control.spu_enabled {
+            return;
+        }
 
         for voice in 16..24 {
             if value.bit(voice - 16) {
