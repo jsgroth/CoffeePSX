@@ -1,5 +1,6 @@
 doc-valid-idents = [
     "HBlank",
     "x86_64",
+    "MHz",
     "..",
 ]

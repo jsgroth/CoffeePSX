@@ -1,7 +1,8 @@
 use crate::api::ColorDepthBits;
 use crate::gpu::gp0::{Gp0CommandState, Gp0State};
+use crate::interrupts::InterruptRegisters;
 use crate::scheduler::Scheduler;
-use crate::timers::Timers;
+use crate::timers::{GpuStatus, Timers};
 use bincode::{Decode, Encode};
 use std::fmt::{Display, Formatter};
 
@@ -154,6 +155,7 @@ impl Registers {
         gp0_state: &Gp0State,
         timers: &mut Timers,
         scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
     ) -> u32 {
         let ready_to_receive_command =
             matches!(gp0_state.command_state, Gp0CommandState::WaitingForCommand);
@@ -173,11 +175,10 @@ impl Registers {
             DmaMode::GpuToCpu => ready_to_send_vram.into(),
         };
 
-        let interlaced_bit = if self.interlaced {
-            !timers.in_vblank(scheduler) && timers.odd_frame(scheduler)
-        } else {
-            !timers.in_vblank(scheduler) && timers.scanline(scheduler) % 2 == 1
-        };
+        let GpuStatus { in_vblank, odd_scanline, odd_frame } =
+            timers.get_gpu_status(scheduler, interrupt_registers);
+        let interlaced_bit =
+            if self.interlaced { !in_vblank && odd_frame } else { !in_vblank && odd_scanline };
 
         // TODO bits hardcoded:
         //   Bit 13: interlaced field

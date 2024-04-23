@@ -17,7 +17,7 @@ Implemented:
 * Partial MDEC functionality (15bpp/24bpp only, assumes output is always read via DMA1)
 * Digital controllers, P1 only
 * Memory card, port 1 only and shared across all games
-* Most of the hardware timers
+* The hardware timers
 
 Not yet implemented:
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
@@ -29,7 +29,6 @@ Not yet implemented:
   * Even 15bpp/24bpp MDEC does not work properly in some games, possibly timing-related
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
-* Interrupts and synchronization modes for dot clock and HBlank timers
 
 ## AVX2 Dependency
 

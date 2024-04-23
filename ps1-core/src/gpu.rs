@@ -21,6 +21,7 @@ use std::rc::Rc;
 
 use crate::gpu::rasterizer::Rasterizer;
 
+use crate::interrupts::InterruptRegisters;
 pub use rasterizer::{RasterizerState, RasterizerType};
 
 const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
@@ -110,8 +111,13 @@ impl Gpu {
         self.gpu_read_buffer
     }
 
-    pub fn read_status_register(&self, timers: &mut Timers, scheduler: &mut Scheduler) -> u32 {
-        let status = self.registers.read_status(&self.gp0, timers, scheduler);
+    pub fn read_status_register(
+        &self,
+        timers: &mut Timers,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) -> u32 {
+        let status = self.registers.read_status(&self.gp0, timers, scheduler, interrupt_registers);
         log::trace!("GPU status register read: {status:08X}");
         status
     }
@@ -125,8 +131,9 @@ impl Gpu {
         value: u32,
         timers: &mut Timers,
         scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
     ) {
-        self.handle_gp1_write(value, timers, scheduler);
+        self.handle_gp1_write(value, timers, scheduler, interrupt_registers);
     }
 
     pub fn generate_frame_texture(&mut self) -> &wgpu::Texture {

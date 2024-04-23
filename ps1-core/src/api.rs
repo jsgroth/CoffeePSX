@@ -248,7 +248,7 @@ impl Ps1Emulator {
     }
 
     fn schedule_initial_events(&mut self) {
-        self.timers.schedule_next_vblank(&mut self.scheduler);
+        self.timers.schedule_next_vblank(&mut self.scheduler, &mut self.interrupt_registers);
         self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(SPU_CLOCK_DIVIDER));
     }
 
@@ -395,7 +395,8 @@ impl Ps1Emulator {
                     // Triggers once per frame (when scanline == Y2) unless the GPU's vertical
                     // display range is invalid
                     self.interrupt_registers.set_interrupt_flag(InterruptType::VBlank);
-                    self.timers.schedule_next_vblank(&mut self.scheduler);
+                    self.timers
+                        .schedule_next_vblank(&mut self.scheduler, &mut self.interrupt_registers);
 
                     self.sio0.catch_up(&mut self.scheduler, &mut self.interrupt_registers);
                     self.sio1.catch_up(&mut self.scheduler, &mut self.interrupt_registers);
@@ -428,23 +429,12 @@ impl Ps1Emulator {
                         &mut self.interrupt_registers,
                     );
                 }
-                SchedulerEventType::Timer0Irq => {
-                    // Timer 0 IRQ event: Set the Timer 0 IRQ flag (rarely used but can track the GPU dot clock).
-                    // Trigger rate depends on Timer 0 configuration
-                    self.interrupt_registers.set_interrupt_flag(InterruptType::Timer0);
-                    self.timers.schedule_next_timer_0_irq(&mut self.scheduler);
-                }
-                SchedulerEventType::Timer1Irq => {
-                    // Timer 1 IRQ event: Set the Timer 1 IRQ flag (usually counts GPU HBlank signals).
-                    // Trigger rate depends on Timer 1 configuration
-                    self.interrupt_registers.set_interrupt_flag(InterruptType::Timer1);
-                    self.timers.scheduler_next_timer_1_irq(&mut self.scheduler);
-                }
-                SchedulerEventType::Timer2Irq => {
-                    // Timer 2 IRQ event: Set the Timer 2 IRQ flag (usually ticks at system clock rate / 8).
-                    // Trigger rate depends on Timer 2 configuration
-                    self.interrupt_registers.set_interrupt_flag(InterruptType::Timer2);
-                    self.timers.schedule_next_timer_2_irq(&mut self.scheduler);
+                SchedulerEventType::Timer0Irq
+                | SchedulerEventType::Timer1Irq
+                | SchedulerEventType::Timer2Irq => {
+                    self.timers.catch_up(&mut self.scheduler, &mut self.interrupt_registers);
+                    self.timers
+                        .schedule_timer_events(&mut self.scheduler, &mut self.interrupt_registers);
                 }
                 SchedulerEventType::Sio0Irq | SchedulerEventType::Sio0Tx => {
                     self.sio0.catch_up(&mut self.scheduler, &mut self.interrupt_registers);

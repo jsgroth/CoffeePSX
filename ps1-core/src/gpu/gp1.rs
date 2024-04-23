@@ -9,6 +9,7 @@ use crate::gpu::registers::{
     DEFAULT_Y_DISPLAY_RANGE,
 };
 use crate::gpu::Gpu;
+use crate::interrupts::InterruptRegisters;
 use crate::num::U32Ext;
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
@@ -22,27 +23,35 @@ impl Gpu {
         value: u32,
         timers: &mut Timers,
         scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
     ) {
         log::trace!("GP1 command write: {value:08X}");
 
         // Highest 8 bits of word determine command
         match value >> 24 {
-            0x00 => self.reset(timers, scheduler),
+            0x00 => self.reset(timers, scheduler, interrupt_registers),
             0x01 => self.reset_command_buffer(),
             0x02 => self.acknowledge_interrupt(),
             0x03 => self.set_display_enabled(value),
             0x04 => self.set_dma_mode(value),
             0x05 => self.set_display_area_start(value),
-            0x06 => self.set_horizontal_display_range(value),
-            0x07 => self.set_vertical_display_range(value, timers, scheduler),
-            0x08 => self.set_display_mode(value, timers, scheduler),
+            0x06 => {
+                self.set_horizontal_display_range(value, timers, scheduler, interrupt_registers);
+            }
+            0x07 => self.set_vertical_display_range(value, timers, scheduler, interrupt_registers),
+            0x08 => self.set_display_mode(value, timers, scheduler, interrupt_registers),
             0x10..=0x1F => self.get_gpu_info(value),
             _ => log::error!("unimplemented GP1 command {value:08X}"),
         }
     }
 
     // GP1($00)
-    fn reset(&mut self, timers: &mut Timers, scheduler: &mut Scheduler) {
+    fn reset(
+        &mut self,
+        timers: &mut Timers,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
         log::trace!("GP1($00): Reset");
 
         self.reset_command_buffer();
@@ -50,9 +59,9 @@ impl Gpu {
         self.set_display_enabled(1);
         self.set_dma_mode(0);
         self.set_display_area_start(0);
-        self.set_horizontal_display_range(RESET_06_VALUE);
-        self.set_vertical_display_range(RESET_07_VALUE, timers, scheduler);
-        self.set_display_mode(0, timers, scheduler);
+        self.set_horizontal_display_range(RESET_06_VALUE, timers, scheduler, interrupt_registers);
+        self.set_vertical_display_range(RESET_07_VALUE, timers, scheduler, interrupt_registers);
+        self.set_display_mode(0, timers, scheduler, interrupt_registers);
 
         for gp0_command in 0xE1..=0xE6 {
             self.write_gp0_command(gp0_command << 24);
@@ -99,10 +108,23 @@ impl Gpu {
     }
 
     // GP1($06)
-    fn set_horizontal_display_range(&mut self, value: u32) {
+    fn set_horizontal_display_range(
+        &mut self,
+        value: u32,
+        timers: &mut Timers,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
         let x1 = value & 0xFFF;
         let x2 = (value >> 12) & 0xFFF;
         self.registers.x_display_range = (x1, x2);
+
+        timers.update_horizontal_display_range(
+            x1 as u16,
+            x2 as u16,
+            scheduler,
+            interrupt_registers,
+        );
 
         log::debug!("GP1($06): Horizontal display range");
         log::debug!(
@@ -118,12 +140,13 @@ impl Gpu {
         value: u32,
         timers: &mut Timers,
         scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
     ) {
         let y1 = value & 0x3FF;
         let y2 = (value >> 10) & 0x3FF;
         self.registers.y_display_range = (y1, y2);
 
-        timers.update_v_display_area(y1 as u16, y2 as u16, scheduler);
+        timers.update_vertical_display_range(y1 as u16, y2 as u16, scheduler, interrupt_registers);
 
         log::debug!("GP1($07): Vertical display range");
         log::debug!(
@@ -134,7 +157,13 @@ impl Gpu {
     }
 
     // GP1($08)
-    fn set_display_mode(&mut self, value: u32, timers: &mut Timers, scheduler: &mut Scheduler) {
+    fn set_display_mode(
+        &mut self,
+        value: u32,
+        timers: &mut Timers,
+        scheduler: &mut Scheduler,
+        interrupt_registers: &mut InterruptRegisters,
+    ) {
         self.registers.h_resolution = HorizontalResolution::from_bits(value);
         self.registers.v_resolution = VerticalResolution::from_bit(value.bit(2));
         self.registers.video_mode = VideoMode::from_bit(value.bit(3));
@@ -144,7 +173,12 @@ impl Gpu {
         // TODO "reverseflag"
 
         let dot_clock_divider = self.registers.dot_clock_divider();
-        timers.update_display_mode(dot_clock_divider, self.registers.interlaced, scheduler);
+        timers.update_display_mode(
+            dot_clock_divider,
+            self.registers.interlaced,
+            scheduler,
+            interrupt_registers,
+        );
 
         log::debug!("GP1($08): Display mode");
         log::debug!("  Horizontal resolution: {}", self.registers.h_resolution);

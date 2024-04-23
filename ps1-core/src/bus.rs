@@ -156,10 +156,14 @@ impl<'a> Bus<'a> {
             },
             0x10F4 => self.dma_controller.read_interrupt(),
             0x10F6 => self.dma_controller.read_interrupt() >> 16,
-            0x1100..=0x113F => self.timers.read_register(address, self.scheduler),
+            0x1100..=0x113F => {
+                self.timers.read_register(address, self.scheduler, self.interrupt_registers)
+            }
             0x1800..=0x1803 => read_cd_controller(self.cd_controller, address, size),
             0x1810 => self.gpu.read_port(),
-            0x1814 => self.gpu.read_status_register(self.timers, self.scheduler),
+            0x1814 => {
+                self.gpu.read_status_register(self.timers, self.scheduler, self.interrupt_registers)
+            }
             0x1824 => self.mdec.read_status(),
             0x1C00..=0x1FFF => self.spu.read_register(address, size),
             _ => todo!("I/O register read {address:08X} {size:?}"),
@@ -200,10 +204,22 @@ impl<'a> Bus<'a> {
                 (size.mask(value) << 16) | (self.dma_controller.read_interrupt() & 0xFFFF),
                 self.interrupt_registers,
             ),
-            0x1100..=0x112F => self.timers.write_register(address, value, self.scheduler),
+            0x1100..=0x112F => {
+                self.timers.write_register(
+                    address,
+                    value,
+                    self.scheduler,
+                    self.interrupt_registers,
+                );
+            }
             0x1800..=0x1803 => self.cd_controller.write_port(address, value as u8),
             0x1810 => self.gpu.write_gp0_command(value),
-            0x1814 => self.gpu.write_gp1_command(value, self.timers, self.scheduler),
+            0x1814 => self.gpu.write_gp1_command(
+                value,
+                self.timers,
+                self.scheduler,
+                self.interrupt_registers,
+            ),
             0x1820 => self.mdec.write_command(value),
             0x1824 => self.mdec.write_control(value),
             0x1C00..=0x1FFF => self.spu.write_register(address, value, size),

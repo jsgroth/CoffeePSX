@@ -2,7 +2,7 @@
 
 use bincode::{Decode, Encode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum InterruptType {
     VBlank,
     CdRom,
@@ -42,6 +42,11 @@ impl InterruptRegisters {
 
     pub fn read_interrupt_status(&self) -> u32 {
         self.interrupt_status.into()
+    }
+
+    #[cfg(test)]
+    pub fn read_interrupt_flag(&self, interrupt_type: InterruptType) -> bool {
+        self.interrupt_status & interrupt_type.bit_mask() != 0
     }
 
     pub fn write_interrupt_status(&mut self, value: u32) {
