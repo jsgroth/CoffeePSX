@@ -192,6 +192,7 @@ pub struct DmaController {
     interrupt: DmaInterruptRegister,
     channel_configs: [ChannelConfig; 7],
     cpu_wait_cycles: u32,
+    global_next_active_cycles: u64,
 }
 
 impl DmaController {
@@ -204,6 +205,7 @@ impl DmaController {
             interrupt: DmaInterruptRegister::default(),
             channel_configs,
             cpu_wait_cycles: 0,
+            global_next_active_cycles: 0,
         }
     }
 
@@ -350,6 +352,14 @@ impl DmaController {
         scheduler: &mut Scheduler,
         interrupt_registers: &mut InterruptRegisters,
     ) {
+        if scheduler.cpu_cycle_counter() < self.global_next_active_cycles {
+            scheduler
+                .update_or_push_event(SchedulerEvent::process_dma(self.global_next_active_cycles));
+            return;
+        }
+
+        self.cpu_wait_cycles = 0;
+
         for channel in self.control.channels_in_priority_order {
             if !self.control.channel_enabled[channel] {
                 break;
@@ -504,13 +514,16 @@ impl DmaController {
             }
         }
 
+        self.global_next_active_cycles =
+            scheduler.cpu_cycle_counter() + u64::from(self.cpu_wait_cycles);
+
         if let Some(next_active_cycles) = self
             .channel_configs
             .iter()
             .filter_map(|config| config.transfer_active.then_some(config.next_active_cycles))
             .min()
         {
-            let schedule_cycles = cmp::max(scheduler.cpu_cycle_counter() + 2, next_active_cycles);
+            let schedule_cycles = cmp::max(self.global_next_active_cycles, next_active_cycles);
             scheduler.min_or_push_event(SchedulerEvent::process_dma(schedule_cycles));
         }
     }
