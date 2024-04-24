@@ -263,8 +263,8 @@ impl SystemTimer {
         }
 
         // Advance counter to $FFFF
-        self.counter = 0xFFFF;
         clocks -= u64::from(0xFFFF - self.counter);
+        self.counter = 0xFFFF;
 
         // Each 65536-step loop will hit both the target and the max
         while clocks >= 0x10000 {
