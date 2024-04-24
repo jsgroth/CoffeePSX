@@ -392,7 +392,7 @@ impl DmaController {
                     // Always uses block DMA
                     // Takes roughly 17 cycles per 16 words, not including decompression timing
                     // TODO per-block timing and decompression timing
-                    if !mdec.data_out_request() {
+                    if !mdec.data_out_request() && self.channel_configs[1].num_blocks != 0 {
                         self.channel_configs[1].next_active_cycles =
                             scheduler.cpu_cycle_counter() + 16;
                         continue;
