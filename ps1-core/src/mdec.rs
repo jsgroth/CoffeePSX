@@ -78,6 +78,7 @@ struct Buffers {
     y_block: [i32; 64],
     idct_buffer: [i32; 64],
     color_out_buffer: [Color; 256],
+    mono_out_buffer: [u8; 64],
 }
 
 impl Default for Buffers {
@@ -88,6 +89,7 @@ impl Default for Buffers {
             y_block: [0; 64],
             idct_buffer: [0; 64],
             color_out_buffer: [Color::default(); 256],
+            mono_out_buffer: [0; 64],
         }
     }
 }
@@ -250,7 +252,7 @@ impl MacroblockDecoder {
 
         match self.decode_config.depth {
             DepthBits::TwentyFour | DepthBits::Fifteen => self.decode_colored_macroblocks(),
-            DepthBits::Four | DepthBits::Eight => todo!("decode monochrome macroblocks"),
+            DepthBits::Four | DepthBits::Eight => self.decode_monochrome_macroblocks(),
         }
     }
 
@@ -268,7 +270,6 @@ impl MacroblockDecoder {
                 yuv_to_rgb(base_col, base_row, self.decode_config.signed, &mut self.buffers);
             }
 
-            // TODO don't assume DMA out
             match self.decode_config.depth {
                 DepthBits::TwentyFour => {
                     for row in 0..16 {
@@ -310,6 +311,39 @@ impl MacroblockDecoder {
         log::debug!("Decoded {count} 16x16 colored macroblocks");
     }
 
+    fn decode_monochrome_macroblocks(&mut self) {
+        let mut count = 0;
+
+        loop {
+            if !decode_block(&mut self.buffers.y_block, decode_ctx!(self, luminance)) {
+                break;
+            }
+
+            y_to_mono(self.decode_config.signed, &mut self.buffers);
+
+            match self.decode_config.depth {
+                DepthBits::Four => {
+                    for chunk in self.buffers.mono_out_buffer.chunks_exact(2) {
+                        let byte = (chunk[0] >> 4) | (chunk[1] & 0xF0);
+                        self.data_out.push_back(byte);
+                    }
+                }
+                DepthBits::Eight => {
+                    for &byte in &self.buffers.mono_out_buffer {
+                        self.data_out.push_back(byte);
+                    }
+                }
+                DepthBits::Fifteen | DepthBits::TwentyFour => {
+                    panic!("decode_monochrome_macroblocks called with 15bpp/24bpp color")
+                }
+            }
+
+            count += 1;
+        }
+
+        log::debug!("Decoded {count} 8x8 monochrome macroblocks");
+    }
+
     fn populate_luminance_table(&mut self) {
         log::debug!("Populating luminance quant table");
 
@@ -337,16 +371,20 @@ impl MacroblockDecoder {
         self.data_in.clear();
     }
 
+    pub fn data_out_request(&self) -> bool {
+        self.enable_data_out && !self.data_out.is_empty()
+    }
+
     // $1F801824 R: MDEC status register
     pub fn read_status(&self) -> u32 {
         // TODO bit 30: data in FIFO full
-        // TODO bit 27: data out request
         // TODO bits 18-16: current block (hardcoded to 4)
         let command_busy =
             !matches!(self.command_state, CommandState::Idle) || !self.data_out.is_empty();
 
         let value = (u32::from(self.data_out.is_empty()) << 31)
             | (u32::from(command_busy) << 29)
+            | (u32::from(self.data_out_request()) << 27)
             | (u32::from(self.enable_data_in) << 28)
             | ((self.decode_config.depth as u32) << 25)
             | (u32::from(self.decode_config.signed) << 24)
@@ -480,6 +518,22 @@ fn yuv_to_rgb(base_col: usize, base_row: usize, signed: bool, buffers: &mut Buff
 
             buffers.color_out_buffer[16 * (base_row + row) + (base_col + col)] = Color { r, g, b };
         }
+    }
+}
+
+fn y_to_mono(signed: bool, buffers: &mut Buffers) {
+    for (i, &y) in buffers.y_block.iter().enumerate() {
+        // Clip to signed 9-bit
+        let y = (y << (32 - 9)) >> (32 - 9);
+
+        // Clamp to signed 8-bit
+        let mut y = y.clamp(-128, 127);
+
+        if !signed {
+            y += 128;
+        }
+
+        buffers.mono_out_buffer[i] = y as u8;
     }
 }
 

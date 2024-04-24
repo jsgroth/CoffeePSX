@@ -14,7 +14,7 @@ Implemented:
 * The GPU, with a software rasterizer
 * Most of the SPU
 * Most of the CD-ROM controller
-* Partial MDEC functionality (15bpp/24bpp only, assumes output is always read via DMA1)
+* The MDEC
 * Digital controllers, P1 only
 * Memory card, port 1 only and shared across all games
 * The hardware timers
@@ -25,8 +25,6 @@ Not yet implemented:
 * PAL display and video timings; only NTSC is supported right now
 * SPU: Capture buffers
 * Some CD-ROM functionality including infrequently used commands and 8-bit CD-XA audio
-* MDEC 4bpp/8bpp modes
-  * Even 15bpp/24bpp MDEC does not work properly in some games, possibly timing-related
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
 

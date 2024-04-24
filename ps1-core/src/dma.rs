@@ -273,6 +273,10 @@ impl DmaController {
             channel_config.block_size = 0x10000;
         }
 
+        if channel_config.num_blocks == 0 {
+            channel_config.num_blocks = 0x10000;
+        }
+
         log::trace!(
             "DMA{channel} length: block_size={:04X}, block_amount={:04X}",
             channel_config.block_size,
@@ -388,6 +392,12 @@ impl DmaController {
                     // Always uses block DMA
                     // Takes roughly 17 cycles per 16 words, not including decompression timing
                     // TODO per-block timing and decompression timing
+                    if !mdec.data_out_request() {
+                        self.channel_configs[1].next_active_cycles =
+                            scheduler.cpu_cycle_counter() + 16;
+                        continue;
+                    }
+
                     log::debug!(
                         "Running MDEC Out DMA; {} blocks of size {}, addr {:X}",
                         self.channel_configs[1].num_blocks,

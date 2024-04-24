@@ -164,6 +164,7 @@ impl<'a> Bus<'a> {
             0x1814 => {
                 self.gpu.read_status_register(self.timers, self.scheduler, self.interrupt_registers)
             }
+            0x1820 => self.mdec.read_data(),
             0x1824 => self.mdec.read_status(),
             0x1C00..=0x1FFF => self.spu.read_register(address, size),
             _ => todo!("I/O register read {address:08X} {size:?}"),
