@@ -23,6 +23,7 @@ use crate::gpu::rasterizer::Rasterizer;
 
 use crate::interrupts::InterruptRegisters;
 pub use rasterizer::{RasterizerState, RasterizerType};
+pub use registers::VideoMode;
 
 const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
 

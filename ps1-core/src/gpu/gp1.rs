@@ -176,6 +176,7 @@ impl Gpu {
         timers.update_display_mode(
             dot_clock_divider,
             self.registers.interlaced,
+            self.registers.video_mode,
             scheduler,
             interrupt_registers,
         );

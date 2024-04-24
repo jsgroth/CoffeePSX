@@ -27,6 +27,7 @@
 #[cfg(test)]
 mod tests;
 
+use crate::gpu::VideoMode;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
 use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
@@ -403,12 +404,33 @@ impl SystemTimer {
     }
 }
 
-const NTSC_DOTS_PER_LINE: u64 = 3412;
+const NTSC_CYCLES_PER_LINE: u64 = 3412;
 const NTSC_LINES_PER_FRAME: u16 = 263;
-
 const NTSC_GPU_CLOCK: u64 = 53_693_175;
 
+const PAL_CYCLES_PER_LINE: u64 = 3405;
+const PAL_LINES_PER_FRAME_INTERLACED: u16 = 313;
+const PAL_LINES_PER_FRAME_PROGRESSIVE: u16 = 314;
+const PAL_GPU_CLOCK: u64 = 53_203_425;
+
 const CPU_CLOCK: u64 = 33_868_800;
+
+impl VideoMode {
+    const fn gpu_clock(self) -> u64 {
+        match self {
+            Self::Ntsc => NTSC_GPU_CLOCK,
+            Self::Pal => PAL_GPU_CLOCK,
+        }
+    }
+
+    const fn lines_per_frame(self, interlaced: bool) -> u16 {
+        match (self, interlaced) {
+            (Self::Ntsc, _) => NTSC_LINES_PER_FRAME,
+            (Self::Pal, true) => PAL_LINES_PER_FRAME_INTERLACED,
+            (Self::Pal, false) => PAL_LINES_PER_FRAME_PROGRESSIVE,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Encode, Decode)]
 struct GpuTimer {
@@ -419,6 +441,7 @@ struct GpuTimer {
     x2: u64,
     y1: u16,
     y2: u16,
+    video_mode: VideoMode,
     dot_clock_divider: u64,
     interlaced: bool,
     odd_frame: bool,
@@ -434,27 +457,39 @@ impl GpuTimer {
             x2: 0x200 + 2560,
             y1: 16,
             y2: 256,
+            video_mode: VideoMode::default(),
             dot_clock_divider: 10,
             interlaced: false,
             odd_frame: false,
         }
     }
 
-    // Emulate 3412.5 cycles per line by using the lowest bit of the line to conditionally add 1 cycle.
-    // This is not _exactly_ accurate since there are an odd number of lines per frame, but it
-    // should be close enough
     fn cycles_in_line(&self) -> u64 {
-        let base_dots = if self.interlaced && self.line == NTSC_LINES_PER_FRAME - 1 {
-            NTSC_DOTS_PER_LINE / 2
-        } else {
-            NTSC_DOTS_PER_LINE
-        };
-        base_dots + u64::from(self.line & 1)
+        match self.video_mode {
+            VideoMode::Ntsc => {
+                // Emulate 3412.5 cycles per line by using the lowest bit of the line to conditionally add 1 cycle.
+                // This is not _exactly_ accurate since there are an odd number of lines per frame, but it
+                // should be close enough
+                let base_dots = if self.interlaced && self.line == NTSC_LINES_PER_FRAME - 1 {
+                    NTSC_CYCLES_PER_LINE / 2
+                } else {
+                    NTSC_CYCLES_PER_LINE
+                };
+                base_dots + u64::from(self.line & 1)
+            }
+            VideoMode::Pal => {
+                if self.interlaced && self.line == PAL_LINES_PER_FRAME_INTERLACED - 1 {
+                    PAL_CYCLES_PER_LINE / 2
+                } else {
+                    PAL_CYCLES_PER_LINE
+                }
+            }
+        }
     }
 
     fn increment_line(&mut self) {
         self.line += 1;
-        if self.line == NTSC_LINES_PER_FRAME {
+        if self.line >= self.video_mode.lines_per_frame(self.interlaced) {
             self.line = 0;
             self.odd_frame = !self.odd_frame;
         }
@@ -477,9 +512,9 @@ enum Timer0ClockSource {
 }
 
 impl Timer0ClockSource {
-    fn clocks(self, dot_clocks: u64, gpu_clocks: u64) -> u64 {
+    fn clocks(self, dot_clocks: u64, gpu_clocks: u64, video_mode: VideoMode) -> u64 {
         match self {
-            Self::System => gpu_clocks * CPU_CLOCK / NTSC_GPU_CLOCK,
+            Self::System => gpu_clocks * CPU_CLOCK / video_mode.gpu_clock(),
             Self::Dot => dot_clocks,
         }
     }
@@ -493,9 +528,9 @@ enum Timer1ClockSource {
 }
 
 impl Timer1ClockSource {
-    fn clocks(self, h_retrace_clocks: u64, gpu_clocks: u64) -> u64 {
+    fn clocks(self, h_retrace_clocks: u64, gpu_clocks: u64, video_mode: VideoMode) -> u64 {
         match self {
-            Self::System => gpu_clocks * CPU_CLOCK / NTSC_GPU_CLOCK,
+            Self::System => gpu_clocks * CPU_CLOCK / video_mode.gpu_clock(),
             Self::HRetrace => h_retrace_clocks,
         }
     }
@@ -630,7 +665,7 @@ impl Timers {
         cpu_elapsed: u64,
         interrupt_registers: &mut InterruptRegisters,
     ) {
-        self.gpu.cycle_product += cpu_elapsed * NTSC_GPU_CLOCK;
+        self.gpu.cycle_product += cpu_elapsed * self.gpu.video_mode.gpu_clock();
         let mut gpu_elapsed = self.gpu.cycle_product / CPU_CLOCK;
         self.gpu.cycle_product %= CPU_CLOCK;
 
@@ -687,7 +722,7 @@ impl Timers {
         cpu_elapsed: u64,
         interrupt_registers: &mut InterruptRegisters,
     ) {
-        self.gpu.cycle_product += cpu_elapsed * NTSC_GPU_CLOCK;
+        self.gpu.cycle_product += cpu_elapsed * self.gpu.video_mode.gpu_clock();
         let mut gpu_elapsed = self.gpu.cycle_product / CPU_CLOCK;
         self.gpu.cycle_product %= CPU_CLOCK;
 
@@ -750,7 +785,11 @@ impl Timers {
                         Timer01SyncMode::ResetAtBlank | Timer01SyncMode::PauseOutsideBlank => {
                             // Clock timer 0 to current position and then reset
                             self.timers[0].clock(
-                                self.timer_0_clock_source.clocks(dot_clocks, timer_0_gpu_clocks),
+                                self.timer_0_clock_source.clocks(
+                                    dot_clocks,
+                                    timer_0_gpu_clocks,
+                                    self.gpu.video_mode,
+                                ),
                                 interrupt_registers,
                             );
 
@@ -800,8 +839,11 @@ impl Timers {
                         Timer01SyncMode::ResetAtBlank | Timer01SyncMode::PauseOutsideBlank => {
                             // Clock timer 1 to current position and then reset
                             self.timers[1].clock(
-                                self.timer_1_clock_source
-                                    .clocks(h_retrace_clocks, timer_1_gpu_clocks),
+                                self.timer_1_clock_source.clocks(
+                                    h_retrace_clocks,
+                                    timer_1_gpu_clocks,
+                                    self.gpu.video_mode,
+                                ),
                                 interrupt_registers,
                             );
 
@@ -820,11 +862,15 @@ impl Timers {
         }
 
         self.timers[0].clock(
-            self.timer_0_clock_source.clocks(dot_clocks, timer_0_gpu_clocks),
+            self.timer_0_clock_source.clocks(dot_clocks, timer_0_gpu_clocks, self.gpu.video_mode),
             interrupt_registers,
         );
         self.timers[1].clock(
-            self.timer_1_clock_source.clocks(h_retrace_clocks, timer_1_gpu_clocks),
+            self.timer_1_clock_source.clocks(
+                h_retrace_clocks,
+                timer_1_gpu_clocks,
+                self.gpu.video_mode,
+            ),
             interrupt_registers,
         );
     }
@@ -878,16 +924,26 @@ impl Timers {
         &mut self,
         dot_clock_divider: u16,
         interlaced: bool,
+        video_mode: VideoMode,
         scheduler: &mut Scheduler,
         interrupt_registers: &mut InterruptRegisters,
     ) {
         self.catch_up(scheduler, interrupt_registers);
 
         let prev_interlaced = self.gpu.interlaced;
+        let prev_video_mode = self.gpu.video_mode;
         self.gpu.dot_clock_divider = dot_clock_divider.into();
         self.gpu.interlaced = interlaced;
+        self.gpu.video_mode = video_mode;
 
-        if prev_interlaced != self.gpu.interlaced {
+        if prev_interlaced != self.gpu.interlaced || prev_video_mode != self.gpu.video_mode {
+            if self.gpu.line >= self.gpu.video_mode.lines_per_frame(self.gpu.interlaced)
+                || self.gpu.line_cycle >= self.gpu.cycles_in_line()
+            {
+                self.gpu.line_cycle = 0;
+                self.gpu.increment_line();
+            }
+
             self.schedule_next_vblank(scheduler, interrupt_registers);
         }
     }
@@ -907,7 +963,7 @@ impl Timers {
                         // This is not exactly right (will underestimate the number of GPU clocks),
                         // but should be close enough
                         let gpu_cycles = clocks * self.gpu.dot_clock_divider;
-                        gpu_cycles * CPU_CLOCK / NTSC_GPU_CLOCK + 1
+                        gpu_cycles * CPU_CLOCK / self.gpu.video_mode.gpu_clock() + 1
                     }
                 };
                 scheduler.update_or_push_event(SchedulerEvent {
@@ -928,7 +984,7 @@ impl Timers {
                         // This not exactly right but should be close enough
                         // 6825 == 3412.5 * 2
                         let gpu_cycles = clocks * 6825 / 2;
-                        gpu_cycles * CPU_CLOCK / NTSC_GPU_CLOCK + 1
+                        gpu_cycles * CPU_CLOCK / self.gpu.video_mode.gpu_clock() + 1
                     }
                 };
                 scheduler.update_or_push_event(SchedulerEvent {
@@ -975,19 +1031,27 @@ impl Timers {
 
         let mut gpu_cycles = self.gpu.cycles_in_line() - self.gpu.line_cycle;
 
-        let start_y = if self.gpu.line < self.gpu.y2 { self.gpu.line + 1 } else { 0 };
-        gpu_cycles +=
-            (start_y..self.gpu.y2).map(|y| NTSC_DOTS_PER_LINE + u64::from(y & 1)).sum::<u64>();
+        let cycles_per_line = match self.gpu.video_mode {
+            VideoMode::Ntsc => NTSC_CYCLES_PER_LINE,
+            VideoMode::Pal => PAL_CYCLES_PER_LINE,
+        };
 
-        if self.gpu.line >= self.gpu.y2 && self.gpu.line != NTSC_LINES_PER_FRAME - 1 {
-            gpu_cycles +=
-                if self.gpu.interlaced { NTSC_DOTS_PER_LINE / 2 } else { NTSC_DOTS_PER_LINE };
-            gpu_cycles += (self.gpu.line + 1..NTSC_LINES_PER_FRAME - 1)
-                .map(|y| NTSC_DOTS_PER_LINE + u64::from(y & 1))
+        let is_ntsc = u16::from(self.gpu.video_mode == VideoMode::Ntsc);
+
+        let start_y = if self.gpu.line < self.gpu.y2 { self.gpu.line + 1 } else { 0 };
+        gpu_cycles += (start_y..self.gpu.y2)
+            .map(|y| cycles_per_line + u64::from(is_ntsc & y & 1))
+            .sum::<u64>();
+
+        let lines_per_frame = self.gpu.video_mode.lines_per_frame(self.gpu.interlaced);
+        if self.gpu.line >= self.gpu.y2 && self.gpu.line != lines_per_frame - 1 {
+            gpu_cycles += if self.gpu.interlaced { cycles_per_line / 2 } else { cycles_per_line };
+            gpu_cycles += (self.gpu.line + 1..lines_per_frame - 1)
+                .map(|y| cycles_per_line + u64::from(is_ntsc & y & 1))
                 .sum::<u64>();
         }
 
-        let cpu_cycles = gpu_cycles * CPU_CLOCK / NTSC_GPU_CLOCK + 1;
+        let cpu_cycles = gpu_cycles * CPU_CLOCK / self.gpu.video_mode.gpu_clock() + 1;
         scheduler.update_or_push_event(SchedulerEvent::vblank(
             scheduler.cpu_cycle_counter() + cpu_cycles,
         ));
