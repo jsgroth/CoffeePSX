@@ -234,6 +234,13 @@ impl DmaController {
         log::trace!("  DMA priority: {:?}", self.control.channel_priority);
     }
 
+    pub fn read_channel_address(&self, address: u32) -> u32 {
+        let channel = (address >> 4) & 7;
+        assert!(channel < 7, "DMA channel should always be 0-6");
+
+        self.channel_configs[channel as usize].start_address
+    }
+
     pub fn write_channel_address(&mut self, address: u32, value: u32) {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -244,6 +251,14 @@ impl DmaController {
             "DMA{channel} address: {:06X}",
             self.channel_configs[channel as usize].start_address
         );
+    }
+
+    pub fn read_channel_length(&self, address: u32) -> u32 {
+        let channel = (address >> 4) & 7;
+        assert!(channel < 7, "DMA channel should always be 0-6");
+
+        let channel_config = &self.channel_configs[channel as usize];
+        (channel_config.block_size & 0xFFFF) | (channel_config.num_blocks << 16)
     }
 
     pub fn write_channel_length(&mut self, address: u32, value: u32) {

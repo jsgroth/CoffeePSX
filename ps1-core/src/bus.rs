@@ -149,6 +149,8 @@ impl<'a> Bus<'a> {
             0x1074 => self.interrupt_registers.read_interrupt_mask(),
             0x10F0 => self.dma_controller.read_control(),
             0x1080..=0x10EF => match (address >> 2) & 3 {
+                0 => self.dma_controller.read_channel_address(address),
+                1 => self.dma_controller.read_channel_length(address),
                 2 => self.dma_controller.read_channel_control(address),
                 _ => todo!("DMA register read {address:08X} {size:?}"),
             },
