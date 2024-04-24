@@ -3,7 +3,7 @@
 use crate::bus::Bus;
 use crate::cd::{CdController, CdControllerState};
 use crate::cpu::R3000;
-use crate::dma::DmaController;
+use crate::dma::{DmaContext, DmaController};
 use crate::gpu::Gpu;
 use crate::gpu::GpuState;
 use crate::input::Ps1Inputs;
@@ -208,6 +208,39 @@ pub enum TickEffect {
 // This _should_ be 44100 Hz, but it may not be exactly depending on the exact oscillator speed
 const SPU_CLOCK_DIVIDER: u64 = 768;
 
+macro_rules! new_bus {
+    ($self:expr) => {
+        Bus {
+            gpu: &mut $self.gpu,
+            spu: &mut $self.spu,
+            cd_controller: &mut $self.cd_controller,
+            mdec: &mut $self.mdec,
+            memory: &mut $self.memory,
+            memory_control: &mut $self.memory_control,
+            dma_controller: &mut $self.dma_controller,
+            interrupt_registers: &mut $self.interrupt_registers,
+            sio0: &mut $self.sio0,
+            sio1: &mut $self.sio1,
+            timers: &mut $self.timers,
+            scheduler: &mut $self.scheduler,
+        }
+    };
+}
+
+macro_rules! new_dma_ctx {
+    ($self:expr) => {
+        DmaContext {
+            memory: &mut $self.memory,
+            gpu: &mut $self.gpu,
+            spu: &mut $self.spu,
+            mdec: &mut $self.mdec,
+            cd_controller: &mut $self.cd_controller,
+            scheduler: &mut $self.scheduler,
+            interrupt_registers: &mut $self.interrupt_registers,
+        }
+    };
+}
+
 impl Ps1Emulator {
     /// # Errors
     ///
@@ -314,20 +347,7 @@ impl Ps1Emulator {
             // or an I/O register
             self.dma_controller.take_cpu_wait_cycles()
         } else {
-            self.cpu.execute_instruction(&mut Bus {
-                gpu: &mut self.gpu,
-                spu: &mut self.spu,
-                cd_controller: &mut self.cd_controller,
-                mdec: &mut self.mdec,
-                memory: &mut self.memory,
-                memory_control: &mut self.memory_control,
-                dma_controller: &mut self.dma_controller,
-                interrupt_registers: &mut self.interrupt_registers,
-                sio0: &mut self.sio0,
-                sio1: &mut self.sio1,
-                timers: &mut self.timers,
-                scheduler: &mut self.scheduler,
-            })
+            self.cpu.execute_instruction(&mut new_bus!(self))
         };
 
         if self.tty_enabled {
@@ -419,15 +439,7 @@ impl Ps1Emulator {
                 }
                 SchedulerEventType::ProcessDma => {
                     // Process the highest-priority active DMA that is ready to transfer
-                    self.dma_controller.process(
-                        &mut self.memory,
-                        &mut self.gpu,
-                        &mut self.spu,
-                        &mut self.mdec,
-                        &mut self.cd_controller,
-                        &mut self.scheduler,
-                        &mut self.interrupt_registers,
-                    );
+                    self.dma_controller.process(new_dma_ctx!(self));
                 }
                 SchedulerEventType::Timer0Irq
                 | SchedulerEventType::Timer1Irq

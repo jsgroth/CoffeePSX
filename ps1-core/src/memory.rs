@@ -9,7 +9,7 @@ const MAIN_RAM_LEN: usize = 2 * 1024 * 1024;
 const SCRATCHPAD_LEN: usize = 1024;
 
 const BIOS_ROM_MASK: u32 = (BIOS_ROM_LEN - 1) as u32;
-const MAIN_RAM_MASK: u32 = (MAIN_RAM_LEN - 1) as u32;
+pub const MAIN_RAM_MASK: u32 = (MAIN_RAM_LEN - 1) as u32;
 const SCRATCHPAD_MASK: u32 = (SCRATCHPAD_LEN - 1) as u32;
 
 type BiosRom = [u8; BIOS_ROM_LEN];
