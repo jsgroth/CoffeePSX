@@ -188,7 +188,11 @@ impl WgpuRenderer {
     /// # Safety
     ///
     /// The value referenced by `window` must live at least as long as the returned `WgpuRenderer`.
-    pub async unsafe fn new<W>(window: &W, window_size: (u32, u32)) -> anyhow::Result<Self>
+    pub async unsafe fn new<W>(
+        window: &W,
+        window_size: (u32, u32),
+        present_mode: PresentMode,
+    ) -> anyhow::Result<Self>
     where
         W: HasWindowHandle + HasDisplayHandle,
     {
@@ -231,7 +235,7 @@ impl WgpuRenderer {
             format: surface_format,
             width: window_size.0,
             height: window_size.1,
-            present_mode: PresentMode::Mailbox,
+            present_mode,
             desired_maximum_frame_latency: 2,
             alpha_mode: CompositeAlphaMode::default(),
             view_formats: vec![],

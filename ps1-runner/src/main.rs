@@ -37,10 +37,18 @@ struct Args {
     disc_path: Option<String>,
     #[arg(short = 't', long, default_value_t)]
     tty_enabled: bool,
+    #[arg(long = "no-vsync", default_value_t = true, action = clap::ArgAction::SetFalse)]
+    video_sync: bool,
     #[arg(long = "no-audio-sync", default_value_t = true, action = clap::ArgAction::SetFalse)]
     audio_sync: bool,
     #[arg(long = "no-simd", default_value_t = true)]
     simd: bool,
+}
+
+impl Args {
+    fn present_mode(&self) -> wgpu::PresentMode {
+        if self.video_sync { wgpu::PresentMode::Fifo } else { wgpu::PresentMode::Mailbox }
+    }
 }
 
 const AUDIO_SYNC_THRESHOLD: usize = 2400;
@@ -313,7 +321,11 @@ fn main() -> anyhow::Result<()> {
 
     // SAFETY: The renderer does not outlive the window
     let mut renderer = pollster::block_on(unsafe {
-        WgpuRenderer::new(&window, (window.inner_size().width, window.inner_size().height))
+        WgpuRenderer::new(
+            &window,
+            (window.inner_size().width, window.inner_size().height),
+            args.present_mode(),
+        )
     })?;
 
     let mut display_config = DisplayConfig {
