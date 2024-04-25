@@ -53,6 +53,18 @@ impl SoundRam {
 
         log::debug!("SPU IRQ address: {:05X}", self.irq_address);
     }
+
+    fn get_i16(&self, address: u32) -> i16 {
+        let address = address as usize;
+        i16::from_le_bytes([self[address], self[address + 1]])
+    }
+
+    fn set_i16(&mut self, address: u32, sample: i16) {
+        let address = address as usize;
+        let [lsb, msb] = sample.to_le_bytes();
+        self[address] = lsb;
+        self[address + 1] = msb;
+    }
 }
 
 impl Index<usize> for SoundRam {
@@ -268,7 +280,16 @@ pub struct Spu {
     reverb: ReverbUnit,
     noise: NoiseGenerator,
     last_irq_bit: bool,
+    capture_buffer_addr: u32,
 }
+
+// Each individual capture buffer is 1KB
+const CAPTURE_BUFFER_MASK: u32 = 0x3FF;
+
+const CD_L_CAPTURE_BUFFER_ADDR: u32 = 0x000;
+const CD_R_CAPTURE_BUFFER_ADDR: u32 = 0x400;
+const VOICE_1_CAPTURE_BUFFER_ADDR: u32 = 0x800;
+const VOICE_3_CAPTURE_BUFFER_ADDR: u32 = 0xC00;
 
 impl Spu {
     pub fn new() -> Self {
@@ -281,6 +302,7 @@ impl Spu {
             reverb: ReverbUnit::default(),
             noise: NoiseGenerator::new(),
             last_irq_bit: false,
+            capture_buffer_addr: 0,
         }
     }
 
@@ -300,16 +322,18 @@ impl Spu {
         }
 
         // Grab current CD audio samples
-        let (cd_l, cd_r) = if self.control.cd_audio_enabled {
-            let (cd_l, cd_r) = apply_volume_matrix(
+        let (raw_cd_l, raw_cd_r) = if self.control.cd_audio_enabled {
+            apply_volume_matrix(
                 cd_controller.current_audio_sample(),
                 cd_controller.spu_volume_matrix(),
-            );
-
-            (multiply_volume(cd_l, self.volume.cd_l), multiply_volume(cd_r, self.volume.cd_r))
+            )
         } else {
             (0, 0)
         };
+        let (cd_l, cd_r) = (
+            multiply_volume(raw_cd_l, self.volume.cd_l),
+            multiply_volume(raw_cd_r, self.volume.cd_r),
+        );
 
         self.reverb.clock(&self.voices, (cd_l, cd_r), &mut self.sound_ram);
 
@@ -346,6 +370,8 @@ impl Spu {
         let sample_l = f64::from(sample_l) / -f64::from(i16::MIN);
         let sample_r = f64::from(sample_r) / -f64::from(i16::MIN);
 
+        self.write_to_capture_buffers(raw_cd_l, raw_cd_r);
+
         let sound_ram_irq = self.sound_ram.irq.get();
         if !self.last_irq_bit && sound_ram_irq {
             interrupt_registers.set_interrupt_flag(InterruptType::Spu);
@@ -353,6 +379,21 @@ impl Spu {
         self.last_irq_bit = sound_ram_irq;
 
         (sample_l, sample_r)
+    }
+
+    fn write_to_capture_buffers(&mut self, raw_cd_l: i16, raw_cd_r: i16) {
+        // Capture buffers use the samples from post-ADSR and pre-stereo volume
+        let voice_1_sample = self.voices[1].current_amplitude;
+        let voice_3_sample = self.voices[3].current_amplitude;
+
+        self.sound_ram.set_i16(CD_L_CAPTURE_BUFFER_ADDR | self.capture_buffer_addr, raw_cd_l);
+        self.sound_ram.set_i16(CD_R_CAPTURE_BUFFER_ADDR | self.capture_buffer_addr, raw_cd_r);
+        self.sound_ram
+            .set_i16(VOICE_1_CAPTURE_BUFFER_ADDR | self.capture_buffer_addr, voice_1_sample);
+        self.sound_ram
+            .set_i16(VOICE_3_CAPTURE_BUFFER_ADDR | self.capture_buffer_addr, voice_3_sample);
+
+        self.capture_buffer_addr = (self.capture_buffer_addr + 2) & CAPTURE_BUFFER_MASK;
     }
 
     pub fn read_register(&mut self, address: u32, size: OpSize) -> u32 {
@@ -627,10 +668,11 @@ impl Spu {
 
     // $1F801DAE: SPU status register (SPUSTAT)
     fn read_status_register(&self) -> u32 {
-        // TODO: bit 11 (writing to first/second half of capture buffers)
         // TODO: bit 10 (data transfer busy) is hardcoded
         // TODO: timing? switching to DMA read mode should not immediately set bits 7 and 9
-        let value = (u32::from(self.data_port.mode == DataPortMode::DmaRead) << 9)
+        let capture_buffer_second_half = self.capture_buffer_addr >= 0x200;
+        let value = (u32::from(capture_buffer_second_half) << 11)
+            | (u32::from(self.data_port.mode == DataPortMode::DmaRead) << 9)
             | (u32::from(self.data_port.mode == DataPortMode::DmaWrite) << 8)
             | (u32::from(self.data_port.mode.is_dma()) << 7)
             | (u32::from(self.sound_ram.irq.get()) << 6)

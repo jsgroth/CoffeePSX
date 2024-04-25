@@ -68,26 +68,6 @@ type StereoI16 = StereoValue<i16>;
 type StereoI32 = StereoValue<i32>;
 type StereoU32 = StereoValue<u32>;
 
-trait AudioRamExt {
-    fn get_i16(&self, address: u32) -> i16;
-
-    fn set_i16(&mut self, address: u32, sample: i16);
-}
-
-impl AudioRamExt for SoundRam {
-    fn get_i16(&self, address: u32) -> i16 {
-        let address = address as usize;
-        i16::from_le_bytes([self[address], self[address + 1]])
-    }
-
-    fn set_i16(&mut self, address: u32, sample: i16) {
-        let address = address as usize;
-        let [lsb, msb] = sample.to_le_bytes();
-        self[address] = lsb;
-        self[address + 1] = msb;
-    }
-}
-
 #[derive(Debug, Clone, Default, Encode, Decode)]
 pub struct ReverbUnit {
     pub writes_enabled: bool,

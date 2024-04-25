@@ -12,7 +12,7 @@ Implemented:
 * The R3000-compatible CPU
 * The GTE
 * The GPU, with a software rasterizer
-* Most of the SPU
+* The SPU
 * Most of the CD-ROM controller
 * The MDEC
 * Digital controllers, P1 only
@@ -23,7 +23,6 @@ Not yet implemented:
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing will work but timings are quite inaccurate right now
 * PAL display and video timings; only NTSC is supported right now
-* SPU: Capture buffers
 * Some CD-ROM functionality including infrequently used commands and 8-bit CD-XA audio
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
