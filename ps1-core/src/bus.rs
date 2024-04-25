@@ -199,7 +199,7 @@ impl<'a> Bus<'a> {
                 3 => todo!("Invalid DMA register write: {address:08X} {value:08X} {size:?}"),
                 _ => unreachable!("value & 3 is always <= 3"),
             },
-            0x10F0 => self.dma_controller.write_control(value),
+            0x10F0 => self.dma_controller.write_control(value, self.scheduler),
             0x10F4 => self.dma_controller.write_interrupt(value, self.interrupt_registers),
             0x10F6 => self.dma_controller.write_interrupt(
                 (size.mask(value) << 16) | (self.dma_controller.read_interrupt() & 0xFFFF),

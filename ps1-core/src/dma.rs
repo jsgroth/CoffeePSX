@@ -234,14 +234,29 @@ impl DmaController {
         }
     }
 
+    // $1F8010F0: DPCR (DMA control register)
     pub fn read_control(&self) -> u32 {
         self.control.read()
     }
 
+    // $1F8010F0: DPCR (DMA control register)
+    pub fn write_control(&mut self, value: u32, scheduler: &mut Scheduler) {
+        self.control.write(value);
+
+        // Attempt to schedule in case any active channels were enabled
+        self.maybe_schedule_process_dma(scheduler);
+
+        log::debug!("DMA control register write: {value:08X}");
+        log::debug!("  DMA enabled: {:?}", self.control.channel_enabled);
+        log::debug!("  DMA priority: {:?}", self.control.channel_priority);
+    }
+
+    // $1F8010F4: DICR (DMA interrupt register)
     pub fn read_interrupt(&self) -> u32 {
         self.interrupt.read()
     }
 
+    // $1F8010F4: DICR (DMA interrupt register)
     pub fn write_interrupt(&mut self, value: u32, interrupt_registers: &mut InterruptRegisters) {
         let prev_irq_pending = self.interrupt.pending();
         self.interrupt.write(value);
@@ -253,14 +268,7 @@ impl DmaController {
         log::debug!("DMA interrupt register write: {value:08X} {:X?}", self.interrupt);
     }
 
-    pub fn write_control(&mut self, value: u32) {
-        self.control.write(value);
-
-        log::trace!("DMA control register write: {value:08X}");
-        log::trace!("  DMA enabled: {:?}", self.control.channel_enabled);
-        log::trace!("  DMA priority: {:?}", self.control.channel_priority);
-    }
-
+    // $1F801080 + N*$10: Dn_MADR (DMA base address)
     pub fn read_channel_address(&self, address: u32) -> u32 {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -268,6 +276,7 @@ impl DmaController {
         self.channel_configs[channel as usize].start_address
     }
 
+    // $1F801080 + N*$10: Dn_MADR (DMA base address)
     pub fn write_channel_address(&mut self, address: u32, value: u32) {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -280,6 +289,7 @@ impl DmaController {
         );
     }
 
+    // $1F801084 + N*$10: Dn_BCR (DMA block control)
     pub fn read_channel_length(&self, address: u32) -> u32 {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -288,6 +298,7 @@ impl DmaController {
         (channel_config.block_size & 0xFFFF) | (channel_config.num_blocks << 16)
     }
 
+    // $1F801084 + N*$10: Dn_BCR (DMA block control)
     pub fn write_channel_length(&mut self, address: u32, value: u32) {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -311,6 +322,7 @@ impl DmaController {
         );
     }
 
+    // $1F801088 + N*$10: Dn_CHCR (DMA channel control)
     pub fn read_channel_control(&self, address: u32) -> u32 {
         let channel = (address >> 4) & 7;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -326,6 +338,7 @@ impl DmaController {
             | (u32::from(channel_config.transfer_active) << 24)
     }
 
+    // $1F801088 + N*$10: Dn_CHCR (DMA channel control)
     pub fn write_channel_control(&mut self, address: u32, value: u32, scheduler: &mut Scheduler) {
         let channel = ((address >> 4) & 7) as usize;
         assert!(channel < 7, "DMA channel should always be 0-6");
@@ -343,19 +356,20 @@ impl DmaController {
             channel_config.chopping_dma_window_size = (value >> 16) & 7;
             channel_config.chopping_cpu_window_size = (value >> 20) & 7;
 
-            log::trace!("DMA{channel} channel control write: {value:08X}");
-            log::trace!("  Direction: {:?}", channel_config.direction);
-            log::trace!("  Step: {:?}", channel_config.step);
-            log::trace!("  Sync mode: {:?}", channel_config.transfer_mode);
-            log::trace!("  Chopping enabled: {}", channel_config.chopping_enabled);
-            log::trace!(
+            log::debug!("DMA{channel} channel control write: {value:08X}");
+            log::debug!("  Direction: {:?}", channel_config.direction);
+            log::debug!("  Step: {:?}", channel_config.step);
+            log::debug!("  Sync mode: {:?}", channel_config.transfer_mode);
+            log::debug!("  Chopping enabled: {}", channel_config.chopping_enabled);
+            log::debug!(
                 "  Chopping DMA window size: {}",
                 1 << channel_config.chopping_dma_window_size
             );
-            log::trace!(
+            log::debug!(
                 "  Chopping CPU window size: {}",
                 1 << channel_config.chopping_cpu_window_size
             );
+            log::debug!("  Transfer active: {}", value.bit(24));
         }
 
         let start_transfer = value.bit(24);
@@ -531,10 +545,18 @@ impl DmaController {
         self.global_next_active_cycles =
             scheduler.cpu_cycle_counter() + u64::from(self.cpu_wait_cycles);
 
+        self.maybe_schedule_process_dma(scheduler);
+    }
+
+    fn maybe_schedule_process_dma(&self, scheduler: &mut Scheduler) {
         if let Some(next_active_cycles) = self
             .channel_configs
             .iter()
-            .filter_map(|config| config.transfer_active.then_some(config.next_active_cycles))
+            .enumerate()
+            .filter_map(|(channel, config)| {
+                (config.transfer_active && self.control.channel_enabled[channel])
+                    .then_some(config.next_active_cycles)
+            })
             .min()
         {
             let schedule_cycles = cmp::max(self.global_next_active_cycles, next_active_cycles);
