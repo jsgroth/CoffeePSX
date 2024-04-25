@@ -493,17 +493,18 @@ impl DmaController {
                     // TODO per-block timing
                     let config = &mut self.channel_configs[SPU];
 
-                    self.cpu_wait_cycles = 4 * config.num_blocks * config.block_size;
-
                     log::debug!(
                         "Running SPU DMA; {} blocks of size {}",
                         config.num_blocks,
                         config.block_size
                     );
-                    run_spu_dma(config, memory, spu);
+                    self.cpu_wait_cycles =
+                        progress_spu_dma(config, memory, spu, scheduler.cpu_cycle_counter());
 
-                    config.transfer_active = false;
-                    self.maybe_flag_dma_interrupt(SPU, interrupt_registers);
+                    if !config.transfer_active {
+                        log::debug!("SPU DMA complete");
+                        self.maybe_flag_dma_interrupt(SPU, interrupt_registers);
+                    }
 
                     break;
                 }
@@ -750,27 +751,37 @@ fn run_cdrom_dma(config: &ChannelConfig, memory: &mut Memory, cd_controller: &mu
 }
 
 // SPU DMA
-// Copies data between main RAM and SPU audio RAM
-fn run_spu_dma(config: &mut ChannelConfig, memory: &mut Memory, spu: &mut Spu) {
+// Copies data between main RAM and SPU sound RAM
+fn progress_spu_dma(
+    config: &mut ChannelConfig,
+    memory: &mut Memory,
+    spu: &mut Spu,
+    cpu_cycle_counter: u64,
+) -> u32 {
+    if config.num_blocks == 0 {
+        config.transfer_active = false;
+        return 0;
+    }
+
     match config.direction {
         DmaDirection::FromRam => {
-            for _ in 0..config.num_blocks {
-                transfer_block_from_ram(config, memory, |word| {
-                    spu.write_data_port(word as u16);
-                    spu.write_data_port((word >> 16) as u16);
-                });
-            }
+            transfer_block_from_ram(config, memory, |word| {
+                spu.write_data_port(word as u16);
+                spu.write_data_port((word >> 16) as u16);
+            });
         }
         DmaDirection::ToRam => {
-            for _ in 0..config.num_blocks {
-                transfer_block_to_ram(config, memory, || {
-                    let low_halfword = spu.read_data_port();
-                    let high_halfword = spu.read_data_port();
-                    u32::from(low_halfword) | (u32::from(high_halfword) << 16)
-                });
-            }
+            transfer_block_to_ram(config, memory, || {
+                let low_halfword = spu.read_data_port();
+                let high_halfword = spu.read_data_port();
+                u32::from(low_halfword) | (u32::from(high_halfword) << 16)
+            });
         }
     }
+
+    let cpu_wait_cycles = 4 * config.block_size;
+    config.next_active_cycles = cpu_cycle_counter + u64::from(cpu_wait_cycles) + 64;
+    cpu_wait_cycles
 }
 
 // OTC (ordering table clear) DMA
