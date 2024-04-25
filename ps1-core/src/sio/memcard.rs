@@ -127,6 +127,11 @@ impl ConnectedMemoryCard {
                 self.sector |= u16::from(tx);
                 self.sector &= 0x3FF;
 
+                log::debug!(
+                    "Received memory card sector number {:04X}, command {command:?}",
+                    self.sector
+                );
+
                 self.checksum ^= (self.sector >> 8) as u8;
                 self.checksum ^= self.sector as u8;
 
@@ -214,7 +219,7 @@ impl ConnectedMemoryCard {
 }
 
 fn memory_card_address(sector: u16, bytes_remaining: u8) -> usize {
-    ((sector << 7) | u16::from(128 - bytes_remaining)) as usize
+    ((u32::from(sector) << 7) | u32::from(128 - bytes_remaining)) as usize
 }
 
 fn new_formatted_memory_card() -> Vec<u8> {
