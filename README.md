@@ -20,6 +20,7 @@ Implemented:
 * The hardware timers
 
 Not yet implemented:
+* A hardware rasterizer (would enable enhancements like increased rendering resolution, draw output in 24bpp color, and texture filtering)
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing will work but timings are quite inaccurate right now
 * PAL display and video timings; only NTSC is supported right now
