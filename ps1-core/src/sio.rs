@@ -369,10 +369,9 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
 
         if self.dsr_interrupt_enabled
             && !self.irq
-            && self
-                .active_device
-                .as_ref()
-                .is_some_and(|device| !matches!(device, SerialDevice::Disconnected))
+            && self.active_device.as_ref().is_some_and(|device| {
+                !matches!(device, SerialDevice::NoDevice | SerialDevice::Disconnected)
+            })
         {
             self.irq = true;
             self.irq_delay_cycles = IRQ_DELAY_CYCLES as u16;
