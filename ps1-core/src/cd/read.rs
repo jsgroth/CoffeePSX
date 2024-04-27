@@ -27,6 +27,12 @@ impl CdController {
         int3!(self, [stat!(self)]);
 
         let seek_location = self.seek_location.take().unwrap_or(self.drive_state.current_time());
+        if matches!(self.drive_state, DriveState::Reading(ReadState { time, .. }) if time == seek_location)
+        {
+            log::debug!("Drive is already reading at desired position of {seek_location}");
+            return CommandState::Idle;
+        }
+
         self.drive_state =
             seek::determine_drive_state(self.drive_state, seek_location, SeekNextState::Read);
 
