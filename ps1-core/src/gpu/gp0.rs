@@ -367,13 +367,15 @@ impl Gpu {
             Gp0CommandState::WaitingForCommand => match value >> 29 {
                 0 => {
                     match value >> 24 {
-                        0x00 => {
+                        0x00 | 0x03..=0x1E => {
                             // GP0($00): Apparently a no-op? Functionally unknown
+                            log::debug!("No-op/invalid GP0 command: {value:08X}");
                             Gp0CommandState::WaitingForCommand
                         }
                         0x01 => {
                             // GP0($01): Clear texture cache
                             // TODO emulate texture cache?
+                            log::debug!("Clear texture cache command: {value:08X}");
                             Gp0CommandState::WaitingForCommand
                         }
                         0x02 => {
@@ -386,7 +388,9 @@ impl Gpu {
                             // to accidentally send a GP0($1F) command
                             todo!("GP0($1F) - set GPU IRQ")
                         }
-                        _ => todo!("GP0 command: {value:08X}"),
+                        _ => unreachable!(
+                            "highest 3 bits are 0, highest byte must be in 0x00..=0x1F"
+                        ),
                     }
                 }
                 1 => Gp0CommandState::draw_polygon(value),
@@ -565,7 +569,13 @@ impl Gpu {
                 log::debug!("  Force mask bit: {}", self.gp0.draw_settings.force_mask_bit);
                 log::debug!("  Check mask bit on draw: {}", self.gp0.draw_settings.check_mask_bit);
             }
-            _ => todo!("GP0 settings command {command:08X}"),
+            0xE0 | 0xE7..=0xFF => {
+                // Unknown/no-op commands?
+                log::debug!("No-op/invalid GP0 command: {command:08X}");
+            }
+            _ => {
+                panic!("execute_settings_command() called with high bits not all 1: {command:08X}")
+            }
         }
     }
 
