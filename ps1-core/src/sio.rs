@@ -104,7 +104,7 @@ enum PortState {
 }
 
 const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
-const IRQ_DELAY_CYCLES: u64 = 100;
+const ACK_LOW_CYCLES: u64 = 100;
 
 #[derive(Debug, Clone, Encode, Decode)]
 enum SerialDevice<Device> {
@@ -147,15 +147,20 @@ pub enum Sio0Device {
     MemoryCard(ConnectedMemoryCard),
 }
 
+const CONTROLLER_ADDRESS: u8 = 0x01;
+const MEMORY_CARD_ADDRESS: u8 = 0x81;
+
 impl SerialDevices for Sio0Devices {
     type Device = Sio0Device;
 
     fn connect(&self, tx: u8, port: Port) -> Option<Self::Device> {
         match (tx, port) {
-            (0x01, Port::One) => Some(Sio0Device::DigitalController(DigitalController::initial(
-                self.p1_joypad_state,
-            ))),
-            (0x81, Port::One) => Some(Sio0Device::MemoryCard(ConnectedMemoryCard::initial())),
+            (CONTROLLER_ADDRESS, Port::One) => Some(Sio0Device::DigitalController(
+                DigitalController::initial(self.p1_joypad_state),
+            )),
+            (MEMORY_CARD_ADDRESS, Port::One) => {
+                Some(Sio0Device::MemoryCard(ConnectedMemoryCard::initial()))
+            }
             _ => None,
         }
     }
@@ -215,8 +220,10 @@ pub struct SerialPort<Devices: SerialDevices> {
     dsr_interrupt_enabled: bool,
     selected_port: Port,
     baudrate_timer: BaudrateTimer,
+    ack: bool,
     irq: bool,
-    irq_delay_cycles: u16,
+    pending_irq7: bool,
+    ack_low_cycles: u16,
 }
 
 pub type SerialPort0 = SerialPort<Sio0Devices>;
@@ -269,8 +276,10 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
             dsr_interrupt_enabled: false,
             selected_port: Port::default(),
             baudrate_timer: BaudrateTimer::new(),
+            ack: false,
             irq: false,
-            irq_delay_cycles: 0,
+            pending_irq7: false,
+            ack_low_cycles: 0,
         }
     }
 
@@ -287,11 +296,16 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
 
         self.baudrate_timer.tick(cycles_elapsed);
 
-        if self.irq_delay_cycles != 0 {
-            self.irq_delay_cycles =
-                u32::from(self.irq_delay_cycles).saturating_sub(cycles_elapsed) as u16;
-            if self.irq_delay_cycles == 0 {
-                interrupt_registers.set_interrupt_flag(InterruptType::Sio);
+        if self.ack_low_cycles != 0 {
+            self.ack_low_cycles =
+                u32::from(self.ack_low_cycles).saturating_sub(cycles_elapsed) as u16;
+            if self.ack_low_cycles == 0 {
+                if self.pending_irq7 {
+                    interrupt_registers.set_interrupt_flag(InterruptType::Sio);
+                }
+
+                self.ack = false;
+                self.pending_irq7 = false;
             }
         }
 
@@ -367,20 +381,25 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
             }
         };
 
-        if self.dsr_interrupt_enabled
-            && !self.irq
-            && self.active_device.as_ref().is_some_and(|device| {
-                !matches!(device, SerialDevice::NoDevice | SerialDevice::Disconnected)
-            })
-        {
+        self.ack = true;
+        if self.dsr_interrupt_enabled && self.device_is_connected() {
+            if !self.irq {
+                self.pending_irq7 = true;
+            }
             self.irq = true;
-            self.irq_delay_cycles = IRQ_DELAY_CYCLES as u16;
-
-            scheduler.update_or_push_event(SchedulerEvent {
-                event_type: self.irq_event_type,
-                cpu_cycles: scheduler.cpu_cycle_counter() + IRQ_DELAY_CYCLES,
-            });
         }
+
+        self.ack_low_cycles = ACK_LOW_CYCLES as u16;
+        scheduler.update_or_push_event(SchedulerEvent {
+            event_type: self.irq_event_type,
+            cpu_cycles: scheduler.cpu_cycle_counter() + ACK_LOW_CYCLES,
+        });
+    }
+
+    fn device_is_connected(&self) -> bool {
+        self.active_device.as_ref().is_some_and(|device| {
+            !matches!(device, SerialDevice::NoDevice | SerialDevice::Disconnected)
+        })
     }
 
     pub fn write_tx_data(
@@ -438,15 +457,12 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
     ) -> u32 {
         self.catch_up(scheduler, interrupt_registers);
 
-        let ack_high = matches!(
-            self.active_device,
-            None | Some(SerialDevice::NoDevice | SerialDevice::Disconnected)
-        );
+        let ack = self.ack && self.device_is_connected();
 
         let value = u32::from(self.tx_fifo.ready_for_new_byte())
             | (u32::from(!self.rx_fifo.empty()) << 1)
             | (u32::from(self.tx_fifo == TxFifoState::Empty) << 2)
-            | (u32::from(ack_high) << 7)
+            | (u32::from(ack) << 7)
             | (u32::from(self.irq) << 9)
             | (self.baudrate_timer.timer << 11);
 
@@ -519,6 +535,8 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
             return;
         }
 
+        let prev_port = self.selected_port;
+
         self.tx_enabled = value.bit(0);
         self.dtr_on = value.bit(1);
         self.rx_enabled = value.bit(2);
@@ -532,7 +550,7 @@ impl<Devices: SerialDevices> SerialPort<Devices> {
             self.irq = false;
         }
 
-        if !self.dtr_on {
+        if !self.dtr_on || self.selected_port != prev_port {
             self.tx_fifo = TxFifoState::Empty;
             self.active_device = None;
         }
