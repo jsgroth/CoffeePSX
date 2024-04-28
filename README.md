@@ -23,9 +23,10 @@ Not yet implemented:
 * A hardware rasterizer (would enable enhancements like increased rendering resolution, draw output in 24bpp color, and texture filtering)
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing will work but timings are quite inaccurate right now
-* Some CD-ROM functionality including infrequently used commands and 8-bit CD-XA audio
+* Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio (not sure any games even use 8-bit CD-XA)
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
+* A GUI
 
 ## AVX2 Dependency
 
