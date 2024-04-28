@@ -21,11 +21,12 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
-use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowBuilder};
+use winit::window::{Window, WindowId};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -129,93 +130,20 @@ fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> 
     Ok((audio_output, audio_stream))
 }
 
-struct HandleKeyEventArgs<'a, Stream> {
-    emulator: &'a mut Ps1Emulator,
-    window: &'a Window,
-    renderer: &'a mut WgpuRenderer,
-    audio_output: &'a CpalAudioOutput,
-    audio_stream: &'a Stream,
-    elwt: &'a EventLoopWindowTarget<()>,
-    inputs: &'a mut Ps1Inputs,
-    display_config: &'a mut DisplayConfig,
-    save_state_path: &'a PathBuf,
-    paused: &'a mut bool,
-    step_to_next_frame: &'a mut bool,
-}
-
-fn handle_key_event<Stream: StreamTrait>(
-    HandleKeyEventArgs {
-        emulator,
-        window,
-        renderer,
-        audio_output,
-        audio_stream,
-        elwt,
-        inputs,
-        display_config,
-        save_state_path,
-        paused,
-        step_to_next_frame,
-    }: HandleKeyEventArgs<'_, Stream>,
-    event: KeyEvent,
-) -> anyhow::Result<()> {
-    let pressed = event.state == ElementState::Pressed;
-
-    match event.physical_key {
-        PhysicalKey::Code(keycode) => match keycode {
-            KeyCode::ArrowUp => inputs.p1.set_up(pressed),
-            KeyCode::ArrowLeft => inputs.p1.set_left(pressed),
-            KeyCode::ArrowRight => inputs.p1.set_right(pressed),
-            KeyCode::ArrowDown => inputs.p1.set_down(pressed),
-            KeyCode::KeyX => inputs.p1.set_cross(pressed),
-            KeyCode::KeyS => inputs.p1.set_circle(pressed),
-            KeyCode::KeyZ => inputs.p1.set_square(pressed),
-            KeyCode::KeyA => inputs.p1.set_triangle(pressed),
-            KeyCode::KeyW => inputs.p1.set_l1(pressed),
-            KeyCode::KeyQ => inputs.p1.set_l2(pressed),
-            KeyCode::KeyE => inputs.p1.set_r1(pressed),
-            KeyCode::KeyR => inputs.p1.set_r2(pressed),
-            KeyCode::Enter => inputs.p1.set_start(pressed),
-            KeyCode::ShiftRight => inputs.p1.set_select(pressed),
-            KeyCode::Escape if pressed => elwt.exit(),
-            KeyCode::F5 if pressed => save_state(save_state_path, emulator)?,
-            KeyCode::F6 if pressed => load_state(save_state_path, *display_config, emulator),
-            KeyCode::Slash if pressed => renderer.toggle_prescaling(),
-            KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
-            KeyCode::KeyN if pressed => *step_to_next_frame = true,
-            KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
-            KeyCode::Quote if pressed => {
-                display_config.dump_vram = !display_config.dump_vram;
-                emulator.update_display_config(*display_config);
-
-                if display_config.dump_vram {
-                    let _ = window.request_inner_size(LogicalSize::new(1024, 512));
-                } else {
-                    let _ = window.request_inner_size(LogicalSize::new(586, 448));
-                }
-            }
-            KeyCode::Period if pressed => {
-                display_config.crop_vertical_overscan = !display_config.crop_vertical_overscan;
-                emulator.update_display_config(*display_config);
-            }
-            KeyCode::Minus if pressed => {
-                display_config.rasterizer_type = RasterizerType::SimdSoftware;
-                emulator.update_display_config(*display_config);
-
-                log::info!("Using AVX2 software rasterizer");
-            }
-            KeyCode::Equal if pressed => {
-                display_config.rasterizer_type = RasterizerType::NaiveSoftware;
-                emulator.update_display_config(*display_config);
-
-                log::info!("Using naive software rasterizer");
-            }
-            _ => {}
-        },
-        PhysicalKey::Unidentified(_) => {}
-    }
-
-    Ok(())
+struct ApplicationState<Stream> {
+    emulator: Ps1Emulator,
+    renderer: WgpuRenderer,
+    audio_output: CpalAudioOutput,
+    audio_stream: Stream,
+    audio_sync: bool,
+    inputs: Ps1Inputs,
+    save_writer: FsSaveWriter,
+    display_config: DisplayConfig,
+    save_state_path: PathBuf,
+    paused: bool,
+    step_to_next_frame: bool,
+    // SAFETY: The window must outlive the WgpuRenderer
+    window: Window,
 }
 
 macro_rules! bincode_config {
@@ -227,56 +155,193 @@ macro_rules! bincode_config {
     };
 }
 
-fn save_state(path: &PathBuf, emulator: &Ps1Emulator) -> anyhow::Result<()> {
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-    bincode::encode_into_std_write(emulator.to_state(), &mut writer, bincode_config!())?;
+impl<Stream: StreamTrait> ApplicationState<Stream> {
+    fn handle_key_event(
+        &mut self,
+        event: KeyEvent,
+        event_loop: &ActiveEventLoop,
+    ) -> anyhow::Result<()> {
+        let pressed = event.state == ElementState::Pressed;
 
-    log::info!("Saved state to '{}'", path.display());
+        match event.physical_key {
+            PhysicalKey::Code(keycode) => match keycode {
+                KeyCode::ArrowUp => self.inputs.p1.set_up(pressed),
+                KeyCode::ArrowLeft => self.inputs.p1.set_left(pressed),
+                KeyCode::ArrowRight => self.inputs.p1.set_right(pressed),
+                KeyCode::ArrowDown => self.inputs.p1.set_down(pressed),
+                KeyCode::KeyX => self.inputs.p1.set_cross(pressed),
+                KeyCode::KeyS => self.inputs.p1.set_circle(pressed),
+                KeyCode::KeyZ => self.inputs.p1.set_square(pressed),
+                KeyCode::KeyA => self.inputs.p1.set_triangle(pressed),
+                KeyCode::KeyW => self.inputs.p1.set_l1(pressed),
+                KeyCode::KeyQ => self.inputs.p1.set_l2(pressed),
+                KeyCode::KeyE => self.inputs.p1.set_r1(pressed),
+                KeyCode::KeyR => self.inputs.p1.set_r2(pressed),
+                KeyCode::Enter => self.inputs.p1.set_start(pressed),
+                KeyCode::ShiftRight => self.inputs.p1.set_select(pressed),
+                KeyCode::Escape if pressed => event_loop.exit(),
+                KeyCode::F5 if pressed => self.save_state()?,
+                KeyCode::F6 if pressed => self.load_state(),
+                KeyCode::Slash if pressed => self.renderer.toggle_prescaling(),
+                KeyCode::KeyP if pressed => self.toggle_pause()?,
+                KeyCode::KeyN if pressed => self.step_to_next_frame = true,
+                KeyCode::Semicolon if pressed => self.renderer.toggle_filter_mode(),
+                KeyCode::Quote if pressed => {
+                    self.display_config.dump_vram = !self.display_config.dump_vram;
+                    self.emulator.update_display_config(self.display_config);
 
-    Ok(())
+                    if self.display_config.dump_vram {
+                        let _ = self.window.request_inner_size(LogicalSize::new(1024, 512));
+                    } else {
+                        let _ = self.window.request_inner_size(LogicalSize::new(586, 448));
+                    }
+                }
+                KeyCode::Period if pressed => {
+                    self.display_config.crop_vertical_overscan =
+                        !self.display_config.crop_vertical_overscan;
+                    self.emulator.update_display_config(self.display_config);
+                }
+                KeyCode::Minus if pressed => {
+                    self.display_config.rasterizer_type = RasterizerType::SimdSoftware;
+                    self.emulator.update_display_config(self.display_config);
+
+                    log::info!("Using AVX2 software rasterizer");
+                }
+                KeyCode::Equal if pressed => {
+                    self.display_config.rasterizer_type = RasterizerType::NaiveSoftware;
+                    self.emulator.update_display_config(self.display_config);
+
+                    log::info!("Using naive software rasterizer");
+                }
+                _ => {}
+            },
+            PhysicalKey::Unidentified(_) => {}
+        }
+
+        Ok(())
+    }
+
+    fn save_state(&mut self) -> anyhow::Result<()> {
+        let file = File::create(&self.save_state_path)?;
+        let mut writer = BufWriter::new(file);
+        bincode::encode_into_std_write(self.emulator.to_state(), &mut writer, bincode_config!())?;
+
+        log::info!("Saved state to '{}'", self.save_state_path.display());
+
+        Ok(())
+    }
+
+    fn load_state(&mut self) {
+        let file = match File::open(&self.save_state_path) {
+            Ok(file) => file,
+            Err(err) => {
+                log::error!(
+                    "Failed to open save state path at '{}': {err}",
+                    self.save_state_path.display()
+                );
+                return;
+            }
+        };
+        let mut reader = BufReader::new(file);
+
+        match bincode::decode_from_std_read::<Ps1EmulatorState, _, _>(
+            &mut reader,
+            bincode_config!(),
+        ) {
+            Ok(loaded_state) => {
+                let unserialized = self.emulator.take_unserialized_fields();
+                self.emulator = Ps1Emulator::from_state(loaded_state, unserialized);
+                self.emulator.update_display_config(self.display_config);
+
+                log::info!("Loaded state from '{}'", self.save_state_path.display());
+            }
+            Err(err) => {
+                log::error!(
+                    "Failed to load save state from '{}': {err}",
+                    self.save_state_path.display()
+                );
+            }
+        }
+    }
+
+    fn toggle_pause(&mut self) -> anyhow::Result<()> {
+        self.paused = !self.paused;
+
+        self.audio_output.audio_queue.lock().unwrap().clear();
+
+        if self.paused {
+            self.audio_stream.pause()?;
+        } else {
+            self.audio_stream.play()?;
+        }
+
+        Ok(())
+    }
 }
 
-fn load_state(path: &PathBuf, display_config: DisplayConfig, emulator: &mut Ps1Emulator) {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(err) => {
-            log::error!("Failed to open save state path at '{}': {err}", path.display());
+impl<Stream: StreamTrait> ApplicationHandler for ApplicationState<Stream> {
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        if self.window.id() != window_id {
             return;
         }
-    };
-    let mut reader = BufReader::new(file);
 
-    match bincode::decode_from_std_read::<Ps1EmulatorState, _, _>(&mut reader, bincode_config!()) {
-        Ok(loaded_state) => {
-            let unserialized = emulator.take_unserialized_fields();
-            *emulator = Ps1Emulator::from_state(loaded_state, unserialized);
-            emulator.update_display_config(display_config);
-
-            log::info!("Loaded state from '{}'", path.display());
-        }
-        Err(err) => {
-            log::error!("Failed to load save state from '{}': {err}", path.display());
+        match event {
+            WindowEvent::CloseRequested => {
+                event_loop.exit();
+            }
+            WindowEvent::Resized(size) => {
+                self.renderer.handle_resize(size.width, size.height);
+            }
+            WindowEvent::KeyboardInput { event: key_event, .. } => {
+                if let Err(err) = self.handle_key_event(key_event, event_loop) {
+                    log::error!("Error handling key presse event: {err}");
+                }
+            }
+            _ => {}
         }
     }
-}
 
-fn toggle_pause<Stream: StreamTrait>(
-    paused: &mut bool,
-    audio_output: &CpalAudioOutput,
-    audio_stream: &Stream,
-) -> anyhow::Result<()> {
-    *paused = !*paused;
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.step_to_next_frame
+            && (self.paused
+                || (self.audio_sync
+                    && self.audio_output.audio_queue.lock().unwrap().len() >= AUDIO_SYNC_THRESHOLD))
+        {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(1),
+            ));
+            return;
+        }
 
-    audio_output.audio_queue.lock().unwrap().clear();
+        loop {
+            match self.emulator.tick(
+                self.inputs,
+                &mut self.renderer,
+                &mut self.audio_output,
+                &mut self.save_writer,
+            ) {
+                Ok(TickEffect::None) => {}
+                Ok(TickEffect::FrameRendered) => {
+                    self.step_to_next_frame = false;
+                    break;
+                }
+                Err(err) => {
+                    log::error!("Emulator error, terminating: {err}");
+                    event_loop.exit();
+                    break;
+                }
+            }
+        }
 
-    if *paused {
-        audio_stream.pause()?;
-    } else {
-        audio_stream.play()?;
+        event_loop.set_control_flow(ControlFlow::Poll);
     }
-
-    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -314,10 +379,12 @@ fn main() -> anyhow::Result<()> {
     };
 
     let event_loop = EventLoop::new()?;
-    let window = WindowBuilder::new()
-        .with_title(window_title)
-        .with_inner_size(LogicalSize::new(586, 448))
-        .build(&event_loop)?;
+    #[allow(deprecated)]
+    let window = event_loop.create_window(
+        Window::default_attributes()
+            .with_title(window_title)
+            .with_inner_size(LogicalSize::new(586, 448)),
+    )?;
 
     // SAFETY: The renderer does not outlive the window
     let mut renderer = pollster::block_on(unsafe {
@@ -328,7 +395,7 @@ fn main() -> anyhow::Result<()> {
         )
     })?;
 
-    let mut display_config = DisplayConfig {
+    let display_config = DisplayConfig {
         rasterizer_type: if !args.simd {
             RasterizerType::NaiveSoftware
         } else {
@@ -362,8 +429,6 @@ fn main() -> anyhow::Result<()> {
 
     let mut emulator = emulator_builder.build()?;
 
-    let mut inputs = Ps1Inputs::default();
-
     let (mut audio_output, audio_stream) = create_audio_output()?;
     audio_stream.play()?;
 
@@ -372,7 +437,12 @@ fn main() -> anyhow::Result<()> {
 
         let exe = fs::read(exe_path)?;
         loop {
-            emulator.tick(inputs, &mut renderer, &mut audio_output, &mut save_writer)?;
+            emulator.tick(
+                Ps1Inputs::default(),
+                &mut renderer,
+                &mut audio_output,
+                &mut save_writer,
+            )?;
             if emulator.cpu_pc() == 0x80030000 {
                 emulator.sideload_exe(&exe)?;
                 log::info!("EXE sideloaded");
@@ -381,70 +451,21 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut paused = false;
-    let mut step_to_next_frame = false;
-
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    event_loop.run(move |event, elwt| match event {
-        Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-            elwt.exit();
-        }
-        Event::WindowEvent {
-            event: WindowEvent::KeyboardInput { event: key_event, .. }, ..
-        } => {
-            if let Err(err) = handle_key_event(
-                HandleKeyEventArgs {
-                    emulator: &mut emulator,
-                    window: &window,
-                    renderer: &mut renderer,
-                    audio_output: &audio_output,
-                    audio_stream: &audio_stream,
-                    elwt,
-                    inputs: &mut inputs,
-                    display_config: &mut display_config,
-                    save_state_path: &save_state_path,
-                    paused: &mut paused,
-                    step_to_next_frame: &mut step_to_next_frame,
-                },
-                key_event,
-            ) {
-                log::error!("Error handling key press: {err}");
-            };
-        }
-        Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
-            renderer.handle_resize(size.width, size.height);
-        }
-        Event::AboutToWait => {
-            if !step_to_next_frame
-                && (paused
-                    || (args.audio_sync
-                        && audio_output.audio_queue.lock().unwrap().len() >= AUDIO_SYNC_THRESHOLD))
-            {
-                elwt.set_control_flow(ControlFlow::WaitUntil(
-                    Instant::now() + Duration::from_millis(1),
-                ));
-                return;
-            }
-
-            loop {
-                match emulator.tick(inputs, &mut renderer, &mut audio_output, &mut save_writer) {
-                    Ok(TickEffect::None) => {}
-                    Ok(TickEffect::FrameRendered) => {
-                        step_to_next_frame = false;
-                        break;
-                    }
-                    Err(err) => {
-                        log::error!("Emulator error, terminating: {err}");
-                        elwt.exit();
-                        break;
-                    }
-                }
-            }
-
-            elwt.set_control_flow(ControlFlow::Poll);
-        }
-        _ => {}
+    event_loop.run_app(&mut ApplicationState {
+        emulator,
+        renderer,
+        audio_output,
+        audio_stream,
+        audio_sync: args.audio_sync,
+        inputs: Ps1Inputs::default(),
+        save_writer,
+        display_config,
+        save_state_path,
+        paused: false,
+        step_to_next_frame: false,
+        window,
     })?;
 
     Ok(())
