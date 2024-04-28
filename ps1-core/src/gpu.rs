@@ -146,9 +146,12 @@ impl Gpu {
             return 1.0;
         }
 
-        // Target 64:49 screen aspect ratio after accounting for vertical overscan
         let dot_clock_divider: f64 = self.registers.dot_clock_divider().into();
-        let normal_ratio = 64.0 / 49.0 / (2560.0 / dot_clock_divider / 224.0);
+        let h256_pixel_aspect_ratio = match self.registers.video_mode {
+            VideoMode::Ntsc => 8.0 / 7.0,
+            VideoMode::Pal => 11.0 / 8.0,
+        };
+        let normal_ratio = h256_pixel_aspect_ratio * dot_clock_divider / 10.0;
 
         if self.registers.interlaced && self.registers.v_resolution == VerticalResolution::Double {
             2.0 * normal_ratio

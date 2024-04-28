@@ -1,18 +1,25 @@
 use crate::api::{ColorDepthBits, DisplayConfig};
-use crate::gpu;
 use crate::gpu::rasterizer::{Color, CpuVramBlitArgs, VramVramBlitArgs};
 use crate::gpu::registers::{Registers, VerticalResolution};
-use crate::gpu::{Vram, WgpuResources};
+use crate::gpu::{VideoMode, Vram, WgpuResources};
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::{cmp, iter};
 
-const SCREEN_LEFT: i32 = 0x260;
-const SCREEN_RIGHT: i32 = 0xC60;
+struct ScreenSize {
+    left: i32,
+    right: i32,
+    top: i32,
+    bottom: i32,
+    v_overscan_rows: i32,
+}
 
-const NTSC_SCREEN_TOP: i32 = 16;
-const NTSC_SCREEN_BOTTOM: i32 = 256;
+impl ScreenSize {
+    const NTSC: Self = Self { left: 0x260, right: 0xC60, top: 16, bottom: 256, v_overscan_rows: 8 };
+
+    const PAL: Self = Self { left: 0x274, right: 0xC74, top: 20, bottom: 308, v_overscan_rows: 10 };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FrameCoords {
@@ -59,7 +66,10 @@ impl RgbaColor {
     }
 }
 
-type FrameBuffer = [RgbaColor; gpu::VRAM_LEN_HALFWORDS];
+const FRAME_BUFFER_LEN: usize =
+    (1024 * 2 * (ScreenSize::PAL.bottom - ScreenSize::PAL.top)) as usize;
+
+type FrameBuffer = [RgbaColor; FRAME_BUFFER_LEN];
 
 #[derive(Debug)]
 pub struct SoftwareRenderer {
@@ -73,7 +83,7 @@ impl SoftwareRenderer {
         let clear_pipeline = create_clear_pipeline(device);
 
         Self {
-            frame_buffer: vec![RgbaColor::BLACK; gpu::VRAM_LEN_HALFWORDS]
+            frame_buffer: vec![RgbaColor::BLACK; FRAME_BUFFER_LEN]
                 .into_boxed_slice()
                 .try_into()
                 .unwrap(),
@@ -113,6 +123,17 @@ impl SoftwareRenderer {
         let Some(frame_coords) = frame_coords else {
             return self.clear_frame(&wgpu_resources.device, &wgpu_resources.queue, frame_size);
         };
+
+        log::debug!(
+            "Computed frame coords {frame_coords:?} and frame_size {frame_size:?} from video_mode={}, X1={}, X2={}, Y1={}, Y2={}, dot_clock_divider={}, v_resolution={:?}",
+            registers.video_mode,
+            registers.x_display_range.0,
+            registers.x_display_range.1,
+            registers.y_display_range.0,
+            registers.y_display_range.1,
+            registers.dot_clock_divider(),
+            registers.v_resolution
+        );
 
         if !registers.display_enabled {
             return self.clear_frame(&wgpu_resources.device, &wgpu_resources.queue, frame_size);
@@ -201,11 +222,24 @@ fn compute_frame_location(
     display_config: DisplayConfig,
 ) -> (Option<FrameCoords>, FrameSize) {
     let crop_v_overscan = display_config.crop_vertical_overscan;
-    let screen_top = if crop_v_overscan { NTSC_SCREEN_TOP + 8 } else { NTSC_SCREEN_TOP };
-    let screen_bottom = if crop_v_overscan { NTSC_SCREEN_BOTTOM - 8 } else { NTSC_SCREEN_BOTTOM };
+    let screen_size = match registers.video_mode {
+        VideoMode::Ntsc => ScreenSize::NTSC,
+        VideoMode::Pal => ScreenSize::PAL,
+    };
+
+    let screen_top = if crop_v_overscan {
+        screen_size.top + screen_size.v_overscan_rows
+    } else {
+        screen_size.top
+    };
+    let screen_bottom = if crop_v_overscan {
+        screen_size.bottom - screen_size.v_overscan_rows
+    } else {
+        screen_size.bottom
+    };
 
     let dot_clock_divider: i32 = registers.dot_clock_divider().into();
-    let frame_width = (SCREEN_RIGHT - SCREEN_LEFT) / dot_clock_divider;
+    let frame_width = (screen_size.right - screen_size.left) / dot_clock_divider;
 
     let height_multipler =
         if registers.interlaced && registers.v_resolution == VerticalResolution::Double {
@@ -213,12 +247,16 @@ fn compute_frame_location(
         } else {
             1
         };
-    let frame_height = (if crop_v_overscan { 224 } else { 240 }) * height_multipler;
+    let frame_height = (if crop_v_overscan {
+        screen_size.bottom - screen_size.top - 2 * screen_size.v_overscan_rows
+    } else {
+        screen_size.bottom - screen_size.top
+    }) * height_multipler;
 
     let frame_size = FrameSize { width: frame_width as u32, height: frame_height as u32 };
 
     let x1 = registers.x_display_range.0 as i32;
-    let x2 = cmp::min(SCREEN_RIGHT, registers.x_display_range.1 as i32);
+    let x2 = cmp::min(screen_size.right, registers.x_display_range.1 as i32);
     let y1 = registers.y_display_range.0 as i32;
     let y2 = cmp::min(screen_bottom, registers.y_display_range.1 as i32);
 
@@ -226,9 +264,9 @@ fn compute_frame_location(
     let mut display_height = (y2 - y1) * height_multipler;
 
     let mut display_x_offset = 0;
-    if x1 < SCREEN_LEFT {
-        display_x_offset = (SCREEN_LEFT - x1) / dot_clock_divider;
-        display_width_clocks -= SCREEN_LEFT - x1;
+    if x1 < screen_size.left {
+        display_x_offset = (screen_size.left - x1) / dot_clock_divider;
+        display_width_clocks -= screen_size.left - x1;
     }
 
     let mut display_y_offset = 0;
@@ -242,7 +280,7 @@ fn compute_frame_location(
         return (None, frame_size);
     }
 
-    let display_x_start = cmp::max(0, (x1 - SCREEN_LEFT) / dot_clock_divider);
+    let display_x_start = cmp::max(0, (x1 - screen_size.left) / dot_clock_divider);
     let display_y_start = cmp::max(0, (y1 - screen_top) * height_multipler);
 
     // Clamp display width in case of errors caused by dot clock division
