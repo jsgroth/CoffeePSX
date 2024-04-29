@@ -23,7 +23,7 @@ rand = "0.8"
 regex = "1"
 thiserror = "1"
 wgpu = "0.19"
-winit = "0.30"
+winit = "0.29"
 
 [profile.dev-fast]
 # dev profile with debug symbols disabled, which results in significantly faster compile times
