@@ -13,11 +13,11 @@ anyhow = { workspace = true }
 bincode = { workspace = true }
 bytemuck = { workspace = true, features = ["derive"] }
 clap = { workspace = true, features = ["derive"] }
-cpal = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
 pollster = { workspace = true }
 rand = { workspace = true }
+sdl2 = { workspace = true }
 thiserror = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }

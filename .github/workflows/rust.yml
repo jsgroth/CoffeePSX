@@ -26,7 +26,7 @@ jobs:
 
     - name: Install required system libraries
       run: |
-        sudo apt update && sudo apt install -y libasound2-dev
+        sudo apt update && sudo apt install -y libsdl2-dev
 
     - name: Check formatting
       run: |

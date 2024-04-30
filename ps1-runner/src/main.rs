@@ -1,11 +1,9 @@
 mod renderer;
 
 use crate::renderer::WgpuRenderer;
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use cdrom::reader::{CdRom, CdRomFileFormat};
 use clap::Parser;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, OutputCallbackInfo, SampleRate, StreamConfig};
 use env_logger::Env;
 use ps1_core::api::{
     AudioOutput, DisplayConfig, Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, SaveWriter,
@@ -13,13 +11,13 @@ use ps1_core::api::{
 };
 use ps1_core::input::Ps1Inputs;
 use ps1_core::RasterizerType;
-use std::collections::VecDeque;
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
+use sdl2::Sdl;
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
@@ -51,26 +49,49 @@ impl Args {
     }
 }
 
-const AUDIO_SYNC_THRESHOLD: usize = 2400;
+const AUDIO_SYNC_THRESHOLD_SAMPLES: u32 = 1024;
+const AUDIO_SYNC_THRESHOLD_BYTES: u32 = 1024 * 4 * 2;
 
-struct CpalAudioOutput {
-    audio_queue: Arc<Mutex<VecDeque<(f64, f64)>>>,
+struct SdlAudioOutput {
+    audio_queue: AudioQueue<f32>,
+    audio_buffer: Vec<f32>,
+    audio_sync: bool,
 }
 
-impl AudioOutput for CpalAudioOutput {
+impl SdlAudioOutput {
+    fn new(sdl: &Sdl, audio_sync: bool) -> anyhow::Result<Self> {
+        let audio = sdl.audio().map_err(anyhow::Error::msg)?;
+
+        let audio_queue = audio
+            .open_queue(
+                None,
+                &AudioSpecDesired { freq: Some(44100), channels: Some(2), samples: Some(1024) },
+            )
+            .map_err(anyhow::Error::msg)?;
+        audio_queue.resume();
+
+        let audio_buffer = Vec::with_capacity(2 * AUDIO_SYNC_THRESHOLD_SAMPLES as usize);
+
+        Ok(Self { audio_queue, audio_buffer, audio_sync })
+    }
+}
+
+impl AudioOutput for SdlAudioOutput {
     type Err = anyhow::Error;
 
     fn queue_samples(&mut self, samples: &[(f64, f64)]) -> Result<(), Self::Err> {
-        let mut audio_queue = self.audio_queue.lock().unwrap();
-
-        if audio_queue.len() >= AUDIO_SYNC_THRESHOLD {
-            // Drop samples; this should only happen if audio sync is disabled
+        if self.audio_queue.size() >= AUDIO_SYNC_THRESHOLD_BYTES && !self.audio_sync {
+            // Drop samples
             return Ok(());
         }
 
-        for &sample in samples {
-            audio_queue.push_back(sample);
+        self.audio_buffer.clear();
+        for &(sample_l, sample_r) in samples {
+            self.audio_buffer.push(sample_l as f32);
+            self.audio_buffer.push(sample_r as f32);
         }
+
+        self.audio_queue.queue_audio(&self.audio_buffer).map_err(anyhow::Error::msg)?;
 
         Ok(())
     }
@@ -96,45 +117,10 @@ impl SaveWriter for FsSaveWriter {
     }
 }
 
-fn create_audio_output() -> anyhow::Result<(CpalAudioOutput, impl StreamTrait)> {
-    let audio_queue = Arc::new(Mutex::new(VecDeque::with_capacity(1600)));
-    let audio_output = CpalAudioOutput { audio_queue: Arc::clone(&audio_queue) };
-
-    let audio_host = cpal::default_host();
-    let audio_device = audio_host
-        .default_output_device()
-        .ok_or_else(|| anyhow!("No audio output device found"))?;
-    let audio_stream = audio_device.build_output_stream(
-        &StreamConfig {
-            channels: 2,
-            sample_rate: SampleRate(44100),
-            buffer_size: BufferSize::Fixed(1024),
-        },
-        move |data: &mut [f32], _: &OutputCallbackInfo| {
-            let mut audio_queue = audio_queue.lock().unwrap();
-            for chunk in data.chunks_exact_mut(2) {
-                let Some((sample_l, sample_r)) = audio_queue.pop_front() else {
-                    return;
-                };
-                chunk[0] = sample_l as f32;
-                chunk[1] = sample_r as f32;
-            }
-        },
-        move |err| {
-            log::error!("CPAL audio stream error: {err}");
-        },
-        None,
-    )?;
-
-    Ok((audio_output, audio_stream))
-}
-
-struct HandleKeyEventArgs<'a, Stream> {
+struct HandleKeyEventArgs<'a> {
     emulator: &'a mut Ps1Emulator,
     window: &'a Window,
     renderer: &'a mut WgpuRenderer,
-    audio_output: &'a CpalAudioOutput,
-    audio_stream: &'a Stream,
     elwt: &'a EventLoopWindowTarget<()>,
     inputs: &'a mut Ps1Inputs,
     display_config: &'a mut DisplayConfig,
@@ -143,20 +129,18 @@ struct HandleKeyEventArgs<'a, Stream> {
     step_to_next_frame: &'a mut bool,
 }
 
-fn handle_key_event<Stream: StreamTrait>(
+fn handle_key_event(
     HandleKeyEventArgs {
         emulator,
         window,
         renderer,
-        audio_output,
-        audio_stream,
         elwt,
         inputs,
         display_config,
         save_state_path,
         paused,
         step_to_next_frame,
-    }: HandleKeyEventArgs<'_, Stream>,
+    }: HandleKeyEventArgs<'_>,
     event: KeyEvent,
 ) -> anyhow::Result<()> {
     let pressed = event.state == ElementState::Pressed;
@@ -181,7 +165,7 @@ fn handle_key_event<Stream: StreamTrait>(
             KeyCode::F5 if pressed => save_state(save_state_path, emulator)?,
             KeyCode::F6 if pressed => load_state(save_state_path, *display_config, emulator),
             KeyCode::Slash if pressed => renderer.toggle_prescaling(),
-            KeyCode::KeyP if pressed => toggle_pause(paused, audio_output, audio_stream)?,
+            KeyCode::KeyP if pressed => *paused = !*paused,
             KeyCode::KeyN if pressed => *step_to_next_frame = true,
             KeyCode::Semicolon if pressed => renderer.toggle_filter_mode(),
             KeyCode::Quote if pressed => {
@@ -259,24 +243,6 @@ fn load_state(path: &PathBuf, display_config: DisplayConfig, emulator: &mut Ps1E
             log::error!("Failed to load save state from '{}': {err}", path.display());
         }
     }
-}
-
-fn toggle_pause<Stream: StreamTrait>(
-    paused: &mut bool,
-    audio_output: &CpalAudioOutput,
-    audio_stream: &Stream,
-) -> anyhow::Result<()> {
-    *paused = !*paused;
-
-    audio_output.audio_queue.lock().unwrap().clear();
-
-    if *paused {
-        audio_stream.pause()?;
-    } else {
-        audio_stream.play()?;
-    }
-
-    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -364,8 +330,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut inputs = Ps1Inputs::default();
 
-    let (mut audio_output, audio_stream) = create_audio_output()?;
-    audio_stream.play()?;
+    let sdl = sdl2::init().map_err(anyhow::Error::msg)?;
+    let mut audio_output = SdlAudioOutput::new(&sdl, args.audio_sync)?;
 
     if let Some(exe_path) = &args.exe_path {
         log::info!("Sideloading EXE from '{exe_path}'");
@@ -398,8 +364,6 @@ fn main() -> anyhow::Result<()> {
                     emulator: &mut emulator,
                     window: &window,
                     renderer: &mut renderer,
-                    audio_output: &audio_output,
-                    audio_stream: &audio_stream,
                     elwt,
                     inputs: &mut inputs,
                     display_config: &mut display_config,
@@ -419,7 +383,7 @@ fn main() -> anyhow::Result<()> {
             if !step_to_next_frame
                 && (paused
                     || (args.audio_sync
-                        && audio_output.audio_queue.lock().unwrap().len() >= AUDIO_SYNC_THRESHOLD))
+                        && audio_output.audio_queue.size() >= AUDIO_SYNC_THRESHOLD_BYTES))
             {
                 elwt.set_control_flow(ControlFlow::WaitUntil(
                     Instant::now() + Duration::from_millis(1),

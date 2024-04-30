@@ -32,13 +32,17 @@ Not yet implemented:
 
 The rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (4th gen i3/i5/i7) and AMD CPUs since Zen (Ryzen 1000 series). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
 
-## Build Dependencies (Linux)
+## Build Dependencies
 
-This project uses the [cpal](https://crates.io/crates/cpal) crate for audio, which on Linux requires [ALSA](https://www.alsa-project.org/wiki/Main_Page) to build:
+This project uses [SDL2](https://www.libsdl.org/) for audio.
 
+Linux (Debian-based):
 ```
-sudo apt install libasound2-dev
+sudo apt install libsdl2-dev
 ```
+
+Windows:
+* https://github.com/libsdl-org/SDL/releases
 
 ## Build & Run
 
