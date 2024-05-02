@@ -16,6 +16,7 @@ use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
+use cfg_if::cfg_if;
 use proc_macros::SaveState;
 use std::rc::Rc;
 
@@ -70,7 +71,15 @@ fn check_rasterizer_type(rasterizer_type: RasterizerType) -> RasterizerType {
         return rasterizer_type;
     }
 
-    if !is_x86_feature_detected!("avx2") {
+    cfg_if! {
+        if #[cfg(target_arch = "x86_64")] {
+            let avx2_supported = is_x86_feature_detected!("avx2");
+        } else {
+            let avx2_supported = false;
+        }
+    }
+
+    if !avx2_supported {
         log::error!(
             "Current CPU does not support AVX2 instructions; SIMD rasterizer will not work, not using it"
         );

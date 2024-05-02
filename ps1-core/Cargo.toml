@@ -11,6 +11,7 @@ proc-macros = { path = "../proc-macros" }
 
 bincode = { workspace = true, features = ["derive"] }
 bytemuck = { workspace = true, features = ["derive"] }
+cfg-if = { workspace = true }
 log = { workspace = true }
 proc-bitfield = { workspace = true }
 rand = { workspace = true }

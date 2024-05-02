@@ -149,7 +149,14 @@ pub enum RasterizerType {
 
 impl Default for RasterizerType {
     fn default() -> Self {
-        if is_x86_feature_detected!("avx2") { Self::SimdSoftware } else { Self::NaiveSoftware }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if is_x86_feature_detected!("avx2") {
+                return Self::SimdSoftware;
+            }
+        }
+
+        Self::NaiveSoftware
     }
 }
 

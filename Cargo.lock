@@ -1450,6 +1450,7 @@ dependencies = [
  "bincode",
  "bytemuck",
  "cdrom",
+ "cfg-if",
  "log",
  "proc-bitfield",
  "proc-macros",
