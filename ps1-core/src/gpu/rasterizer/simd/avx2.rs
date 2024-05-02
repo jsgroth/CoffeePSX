@@ -718,8 +718,11 @@ const HIGH_SHUFFLE_MASK: &[u8; 32] = &[
 // using _mm256_packus_epi32 or _mm256_packs_epi32
 #[target_feature(enable = "avx2")]
 unsafe fn unpack_epi16_vector(v: __m256i) -> (__m256i, __m256i) {
-    let low = _mm256_shuffle_epi8(v, mem::transmute(*LOW_SHUFFLE_MASK));
-    let high = _mm256_shuffle_epi8(v, mem::transmute(*HIGH_SHUFFLE_MASK));
+    let low_shuffle_mask: __m256i = mem::transmute(*LOW_SHUFFLE_MASK);
+    let high_shuffle_mask: __m256i = mem::transmute(*HIGH_SHUFFLE_MASK);
+
+    let low = _mm256_shuffle_epi8(v, low_shuffle_mask);
+    let high = _mm256_shuffle_epi8(v, high_shuffle_mask);
 
     (low, high)
 }
