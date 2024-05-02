@@ -1,8 +1,8 @@
 # ps1-emu
 
-Work-in-progress attempt at a PlayStation emulator. Some games are fully playable, but many do not boot or have major issues. Currently CLI-only, no GUI.
+Work-in-progress attempt at a PlayStation emulator. Some games are fully playable, but some do not boot or have major issues, and the emulator is missing essential features like memory card management and proper handling of multi-disc games. Currently CLI-only, no GUI.
 
-Currently standalone rather than being an additional backend in [jgenesis](https://github.com/jsgroth/jgenesis) in order to enable easier experimentation for rendering and parallelism, since this is the first console I've emulated that supports 3D graphics (and a double-digit MHz main CPU).
+Currently standalone rather than being an additional backend in [jgenesis](https://github.com/jsgroth/jgenesis) in order to enable easier experimentation for rendering and parallelism. At least in the short term I'm unlikely to merge the two projects due to differences in how video output is rendered and displayed.
 
 The `cdrom` crate is a fork of the `cdrom` crate that [jgenesis](https://github.com/jsgroth/jgenesis) uses for Sega CD, but all changes to it in this repo have been upstreamed (e.g. support for Mode 2 data tracks) because I do not want the two to diverge.
 
@@ -20,17 +20,19 @@ Implemented:
 * The hardware timers
 
 Not yet implemented:
-* A hardware rasterizer (would enable enhancements like increased rendering resolution, draw output in 24bpp color, and texture filtering)
+* A hardware rasterizer (would enable enhancements like increased rendering resolution, draw output in 24bpp color, and possibly texture filtering)
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
-* More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing will work but timings are quite inaccurate right now
-* Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio (not sure any games even use 8-bit CD-XA)
+  * Though it seems like maybe nothing depends on this?
+* More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work but timings are quite inaccurate right now
+* Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio
+  * There are possibly no games that use 8-bit CD-XA audio samples?
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
 * A GUI
 
 ## AVX2 Dependency
 
-The rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (4th gen i3/i5/i7) and AMD CPUs since Zen (Ryzen 1000 series). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
+The rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (4th gen i3/i5/i7) and AMD CPUs since Bulldozer (FX-41xx/61xx/81xx). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
 
 ## Build Dependencies
 

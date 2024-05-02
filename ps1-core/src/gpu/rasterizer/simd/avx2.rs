@@ -216,9 +216,6 @@ pub unsafe fn rasterize_triangle(
     let min_x_aligned = x_bounds.0 / 16 * 16;
     let max_x_aligned = x_bounds.1 / 16 * 16;
 
-    let zero = _mm256_setzero_si256();
-    let negative_one = _mm256_set1_epi32(-1);
-
     let interpolation_denominator =
         rasterizer::cross_product_z(vertices[0], vertices[1], vertices[2]);
     if interpolation_denominator == 0 {
@@ -242,7 +239,6 @@ pub unsafe fn rasterize_triangle(
                 px1,
                 py,
                 x_bounds,
-                zero,
                 v01_is_not_bottom_right,
                 v12_is_not_bottom_right,
                 v20_is_not_bottom_right,
@@ -254,7 +250,6 @@ pub unsafe fn rasterize_triangle(
                 px2,
                 py,
                 x_bounds,
-                zero,
                 v01_is_not_bottom_right,
                 v12_is_not_bottom_right,
                 v20_is_not_bottom_right,
@@ -263,7 +258,7 @@ pub unsafe fn rasterize_triangle(
             let mut inside_mask = _mm256_packs_epi32(inside_mask_1, inside_mask_2);
 
             // If no points are inside the triangle, bail out early
-            if _mm256_testz_si256(inside_mask, negative_one) != 0 {
+            if _mm256_testz_si256(inside_mask, _mm256_set1_epi16(!0)) != 0 {
                 continue;
             }
 
@@ -309,7 +304,10 @@ pub unsafe fn rasterize_triangle(
                 );
 
                 // Mask out any pixels where the texel value is $0000
-                inside_mask = _mm256_andnot_si256(_mm256_cmpeq_epi16(texels, zero), inside_mask);
+                inside_mask = _mm256_andnot_si256(
+                    _mm256_cmpeq_epi16(texels, _mm256_setzero_si256()),
+                    inside_mask,
+                );
 
                 // Texels are semi-transparent only if bit 15 is set
                 let texture_mask_bits = _mm256_set1_epi16(1 << 15);
@@ -343,16 +341,17 @@ pub unsafe fn rasterize_triangle(
                     inside_mask,
                     _mm256_cmpeq_epi16(
                         _mm256_and_si256(existing, _mm256_set1_epi16(1 << 15)),
-                        zero,
+                        _mm256_setzero_si256(),
                     ),
                 );
             }
 
             // If semi-transparency is enabled, blend existing colors with new colors
             if let Some(semi_transparency_mode) = semi_transparency_mode {
-                if _mm256_testz_si256(semi_transparency_bits, negative_one) == 0 {
+                if _mm256_testz_si256(semi_transparency_bits, _mm256_set1_epi16(!0)) == 0 {
                     let (existing_r, existing_g, existing_b) = convert_15bit_to_24bit(existing);
-                    let semi_transparency_mask = _mm256_cmpeq_epi16(semi_transparency_bits, zero);
+                    let semi_transparency_mask =
+                        _mm256_cmpeq_epi16(semi_transparency_bits, _mm256_setzero_si256());
 
                     (r, g, b) = apply_semi_transparency(
                         (existing_r, existing_g, existing_b),
@@ -376,15 +375,15 @@ pub unsafe fn rasterize_triangle(
                 let u8_max = _mm256_set1_epi16(255);
                 r = _mm256_min_epi16(
                     u8_max,
-                    _mm256_max_epi16(zero, _mm256_add_epi16(r, dither_vector)),
+                    _mm256_max_epi16(_mm256_setzero_si256(), _mm256_add_epi16(r, dither_vector)),
                 );
                 g = _mm256_min_epi16(
                     u8_max,
-                    _mm256_max_epi16(zero, _mm256_add_epi16(g, dither_vector)),
+                    _mm256_max_epi16(_mm256_setzero_si256(), _mm256_add_epi16(g, dither_vector)),
                 );
                 b = _mm256_min_epi16(
                     u8_max,
-                    _mm256_max_epi16(zero, _mm256_add_epi16(b, dither_vector)),
+                    _mm256_max_epi16(_mm256_setzero_si256(), _mm256_add_epi16(b, dither_vector)),
                 );
             }
 
@@ -418,17 +417,16 @@ unsafe fn compute_write_mask(
     px: __m256i,
     py: __m256i,
     x_bounds: (i32, i32),
-    zero: __m256i,
     v01_is_not_bottom_right: i32,
     v12_is_not_bottom_right: i32,
     v20_is_not_bottom_right: i32,
 ) -> __m256i {
     _mm256_and_si256(
         _mm256_and_si256(
-            check_edge(vertices[0], vertices[1], px, py, zero, v01_is_not_bottom_right),
+            check_edge(vertices[0], vertices[1], px, py, v01_is_not_bottom_right),
             _mm256_and_si256(
-                check_edge(vertices[1], vertices[2], px, py, zero, v12_is_not_bottom_right),
-                check_edge(vertices[2], vertices[0], px, py, zero, v20_is_not_bottom_right),
+                check_edge(vertices[1], vertices[2], px, py, v12_is_not_bottom_right),
+                check_edge(vertices[2], vertices[0], px, py, v20_is_not_bottom_right),
             ),
         ),
         _mm256_andnot_si256(
@@ -447,10 +445,11 @@ unsafe fn check_edge(
     v1: Vertex,
     px: __m256i,
     py: __m256i,
-    zero: __m256i,
     is_not_bottom_right: i32,
 ) -> __m256i {
     let cpz = cross_product_z(v0, v1, px, py);
+    let zero = _mm256_setzero_si256();
+
     _mm256_or_si256(
         _mm256_cmpgt_epi32(cpz, zero),
         _mm256_and_si256(_mm256_cmpeq_epi32(cpz, zero), _mm256_set1_epi32(is_not_bottom_right)),
