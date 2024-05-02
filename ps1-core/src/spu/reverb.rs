@@ -27,28 +27,6 @@ impl ReverbClock {
     }
 }
 
-trait SampleTupleExt {
-    fn get(self, clock: ReverbClock) -> i16;
-
-    fn set(&mut self, value: i16, clock: ReverbClock);
-}
-
-impl SampleTupleExt for (i16, i16) {
-    fn get(self, clock: ReverbClock) -> i16 {
-        match clock {
-            ReverbClock::Left => self.0,
-            ReverbClock::Right => self.1,
-        }
-    }
-
-    fn set(&mut self, value: i16, clock: ReverbClock) {
-        match clock {
-            ReverbClock::Left => self.0 = value,
-            ReverbClock::Right => self.1 = value,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default, Encode, Decode)]
 struct StereoValue<T> {
     l: T,

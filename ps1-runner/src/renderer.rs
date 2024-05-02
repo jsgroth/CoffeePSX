@@ -430,7 +430,7 @@ fn create_render_pipeline(
 ) -> RenderPipeline {
     let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
         label: "render_pipeline_layout".into(),
-        bind_group_layouts: &[&bind_group_layout],
+        bind_group_layouts: &[bind_group_layout],
         push_constant_ranges: &[],
     });
 
