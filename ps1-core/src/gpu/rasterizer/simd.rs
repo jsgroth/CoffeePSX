@@ -5,7 +5,6 @@
 #[cfg(target_arch = "x86_64")]
 mod avx2;
 
-use crate::gpu;
 use crate::gpu::gp0::DrawSettings;
 use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
@@ -15,13 +14,34 @@ use crate::gpu::rasterizer::{
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{Vram, WgpuResources};
-use std::cmp;
+use std::alloc::Layout;
 use std::ops::{Deref, DerefMut};
+use std::{alloc, cmp};
 
 // AVX2 loads/stores must be aligned to a 32-byte boundary
-#[repr(align(32))]
+#[repr(align(32), C)]
 #[derive(Debug, Clone)]
 struct AlignedVram(Vram);
+
+impl AlignedVram {
+    fn new_on_heap() -> Box<Self> {
+        // SAFETY: The pointer is allocated using Layout of Self (which is not a zero-sized type)
+        // and then dereferenced only as a *mut Self. The struct's only field is zerofilled before
+        // returning the pointer inside a Box.
+        // TODO use Box functions when Box::new_uninit() is stabilized
+        unsafe {
+            let layout = Layout::new::<Self>();
+            let memory = alloc::alloc(layout).cast::<Self>();
+            if memory.is_null() {
+                alloc::handle_alloc_error(layout);
+            }
+
+            (*memory).0.fill(0);
+
+            Box::from_raw(memory)
+        }
+    }
+}
 
 impl Deref for AlignedVram {
     type Target = Vram;
@@ -46,15 +66,12 @@ pub struct SimdSoftwareRasterizer {
 impl SimdSoftwareRasterizer {
     #[allow(clippy::large_stack_arrays)]
     pub fn new(device: &wgpu::Device) -> Self {
-        Self {
-            vram: Box::new(AlignedVram([0; gpu::VRAM_LEN_HALFWORDS])),
-            renderer: SoftwareRenderer::new(device),
-        }
+        Self { vram: AlignedVram::new_on_heap(), renderer: SoftwareRenderer::new(device) }
     }
 
     #[allow(clippy::large_stack_arrays)]
     pub fn from_vram(device: &wgpu::Device, vram: &Vram) -> Self {
-        let mut aligned_vram = Box::new(AlignedVram([0; gpu::VRAM_LEN_HALFWORDS]));
+        let mut aligned_vram = AlignedVram::new_on_heap();
         aligned_vram.0.copy_from_slice(vram.as_ref());
 
         Self { vram: aligned_vram, renderer: SoftwareRenderer::new(device) }

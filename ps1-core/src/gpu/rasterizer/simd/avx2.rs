@@ -1280,3 +1280,172 @@ fn gouraud_color_steps([c0, c1]: [Color; 2], interval: f64) -> (f64, f64, f64) {
 unsafe fn first_step_vector(first: f64, step: f64) -> __m256d {
     _mm256_setr_pd(first, first + step, first + 2.0 * step, first + 3.0 * step)
 }
+
+// Tests don't assert - they're meant to be run with miri to check for undefined behavior:
+//   RUSTFLAGS="-C target-feature=+avx2" cargo +nightly miri test gpu
+#[cfg(test)]
+#[cfg(target_feature = "avx2")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn untextured_triangle() {
+        let mut vram = AlignedVram::new_on_heap();
+
+        unsafe {
+            rasterize_triangle(
+                &mut vram,
+                (0, 1023),
+                (0, 511),
+                [Vertex { x: 500, y: 0 }, Vertex { x: 520, y: 20 }, Vertex { x: 480, y: 20 }],
+                TriangleShading::Gouraud([
+                    Color::rgb(0, 0, 0),
+                    Color::rgb(255, 0, 0),
+                    Color::rgb(0, 255, 0),
+                ]),
+                None,
+                Some(SemiTransparencyMode::Add),
+                true,
+                false,
+                false,
+            );
+        }
+    }
+
+    fn textured_triangle(color_depth: TextureColorDepthBits) {
+        let mut vram = AlignedVram::new_on_heap();
+
+        unsafe {
+            rasterize_triangle(
+                &mut vram,
+                (0, 1023),
+                (0, 511),
+                [Vertex { x: 500, y: 0 }, Vertex { x: 520, y: 20 }, Vertex { x: 480, y: 20 }],
+                TriangleShading::Gouraud([
+                    Color::rgb(0, 0, 0),
+                    Color::rgb(255, 0, 0),
+                    Color::rgb(0, 255, 0),
+                ]),
+                Some(TriangleTextureMapping {
+                    mode: TextureMappingMode::Modulated,
+                    texpage: TexturePage {
+                        x_base: 0,
+                        y_base: 256,
+                        semi_transparency_mode: SemiTransparencyMode::Add,
+                        color_depth,
+                        rectangle_x_flip: false,
+                        rectangle_y_flip: false,
+                    },
+                    window: TextureWindow::default(),
+                    clut_x: 1,
+                    clut_y: 1,
+                    u: [0, 5, 10],
+                    v: [20, 10, 0],
+                }),
+                Some(SemiTransparencyMode::Add),
+                true,
+                false,
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn textured_triangle_15bpp() {
+        textured_triangle(TextureColorDepthBits::Fifteen);
+    }
+
+    #[test]
+    fn textured_triangle_8bpp() {
+        textured_triangle(TextureColorDepthBits::Eight);
+    }
+
+    #[test]
+    fn textured_triangle_4bpp() {
+        textured_triangle(TextureColorDepthBits::Four);
+    }
+
+    #[test]
+    fn untextured_rectangle() {
+        let mut vram = AlignedVram::new_on_heap();
+
+        unsafe {
+            rasterize_rectangle(
+                &mut vram,
+                (30, 50),
+                (70, 90),
+                Color::rgb(0, 0, 255),
+                None,
+                Some(SemiTransparencyMode::Add),
+                false,
+                false,
+            );
+        }
+    }
+
+    fn textured_rectangle(color_depth: TextureColorDepthBits) {
+        let mut vram = AlignedVram::new_on_heap();
+
+        unsafe {
+            rasterize_rectangle(
+                &mut vram,
+                (30, 50),
+                (70, 90),
+                Color::rgb(0, 0, 255),
+                Some(RectangleTextureMapping {
+                    mode: TextureMappingMode::Modulated,
+                    texpage: TexturePage {
+                        x_base: 0,
+                        y_base: 256,
+                        semi_transparency_mode: SemiTransparencyMode::Add,
+                        color_depth,
+                        rectangle_x_flip: false,
+                        rectangle_y_flip: false,
+                    },
+                    window: TextureWindow::default(),
+                    clut_x: 1,
+                    clut_y: 1,
+                    u: [0],
+                    v: [20],
+                }),
+                Some(SemiTransparencyMode::Add),
+                false,
+                false,
+            );
+        }
+    }
+
+    #[test]
+    fn textured_rectangle_15bpp() {
+        textured_rectangle(TextureColorDepthBits::Fifteen);
+    }
+
+    #[test]
+    fn textured_rectangle_8bpp() {
+        textured_rectangle(TextureColorDepthBits::Eight);
+    }
+
+    #[test]
+    fn textured_rectangle_4bpp() {
+        textured_rectangle(TextureColorDepthBits::Four);
+    }
+
+    #[test]
+    fn line() {
+        let mut vram = AlignedVram::new_on_heap();
+
+        unsafe {
+            rasterize_line(
+                &mut vram,
+                [Vertex { x: 10, y: 20 }, Vertex { x: 30, y: 10 }],
+                (0, 1023),
+                (0, 511),
+                LineShading::Gouraud([Color::rgb(255, 0, 0), Color::rgb(0, 255, 0)]),
+                Some(SemiTransparencyMode::Add),
+                true,
+                false,
+                false,
+            );
+        }
+    }
+}
