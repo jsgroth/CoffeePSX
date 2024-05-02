@@ -45,7 +45,7 @@ impl GeometryTransformationEngine {
             &multiply_vector,
             &matrix,
             &translation_vector,
-            MatrixMultiplyBehavior::Standard,
+            MatrixMultiplyBehavior::Mvmva,
         );
 
         7
@@ -67,14 +67,15 @@ impl GeometryTransformationEngine {
         vector: &[Vector16Component; 3],
         matrix: &[[MatrixComponent; 3]; 3],
     ) {
+        let shift = if opcode.bit(gte::SF_BIT) { 12 } else { 0 };
+
         let far_color = self.read_far_color().map(|fc| fc.reinterpret::<0>());
 
         for (i, mac) in [(0, Mac::One), (1, Mac::Two), (2, Mac::Three)] {
-            self.mac[i + 1] = 0;
+            self.mac[mac as usize] = 0;
             self.accumulate_into_mac(far_color[i].shift_to::<12>() + matrix[i][0] * vector[0], mac);
 
-            let bugged_value =
-                if opcode.bit(gte::SF_BIT) { self.mac[i + 1] >> 12 } else { self.mac[i + 1] };
+            let bugged_value = (self.mac[mac as usize] >> shift) as i32;
             if bugged_value < i16::MIN.into() || bugged_value > i16::MAX.into() {
                 let ir_saturation_flag = mac.corresponding_ir_saturation_flag();
                 self.r[Register::FLAG] |= ir_saturation_flag;
@@ -83,7 +84,7 @@ impl GeometryTransformationEngine {
                 }
             }
 
-            self.mac[i + 1] = 0;
+            self.mac[mac as usize] = 0;
             self.accumulate_into_mac(matrix[i][1] * vector[1], mac);
             self.accumulate_into_mac(matrix[i][2] * vector[2], mac);
         }

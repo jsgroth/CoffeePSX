@@ -12,12 +12,12 @@ const U16_MIN: i32 = u16::MIN as i32;
 const U16_MAX: i32 = u16::MAX as i32;
 
 // Screen X/Y coordinates are saturated to signed 11-bit
-const SCREEN_XY_MIN: i64 = -(1 << 10);
-const SCREEN_XY_MAX: i64 = (1 << 10) - 1;
+const SCREEN_XY_MIN: i32 = -(1 << 10);
+const SCREEN_XY_MAX: i32 = (1 << 10) - 1;
 
 // IR0 is saturated to [$0000, $1000]
-const IR0_MIN: i64 = 0;
-const IR0_MAX: i64 = 0x1000;
+const IR0_MIN: i32 = 0;
+const IR0_MAX: i32 = 0x1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WithDepthCalculation {
@@ -151,9 +151,10 @@ impl GeometryTransformationEngine {
         with_depth: WithDepthCalculation,
     ) {
         let sf = opcode.bit(gte::SF_BIT);
-        let sz3 = self.mac[3] >> (12 * (1 - u8::from(sf)));
+        let shift = 12 * (1 - u8::from(sf));
+        let sz3 = (self.mac[3] >> shift) as i32;
 
-        let clamped_sz3 = sz3.clamp(U16_MIN.into(), U16_MAX.into());
+        let clamped_sz3 = sz3.clamp(U16_MIN, U16_MAX);
         if sz3 != clamped_sz3 {
             self.r[Register::FLAG] |= Flag::SZ3_OTZ_SATURATED | Flag::ERROR;
         }
@@ -166,16 +167,17 @@ impl GeometryTransformationEngine {
         let ofx = fixedpoint::screen_offset(self.r[Register::OFX]);
         let ofy = fixedpoint::screen_offset(self.r[Register::OFY]);
 
-        let mac0 = gte_divide(&mut self.r) * ir1 + ofx;
+        let div_result = gte_divide(&mut self.r);
+
+        let mac0 = div_result * ir1 + ofx;
         self.check_mac0_overflow(mac0);
         let sx = mac0.shift_to::<0>();
 
-        let mac0 = gte_divide(&mut self.r) * ir2 + ofy;
+        let mac0 = div_result * ir2 + ofy;
         self.check_mac0_overflow(mac0);
         let sy = mac0.shift_to::<0>();
 
         self.push_screen_xy(sx, sy);
-        self.r[Register::MAC0] = i64::from(mac0) as u32;
 
         if with_depth != WithDepthCalculation::Yes {
             return;
@@ -184,11 +186,11 @@ impl GeometryTransformationEngine {
         let dqa = fixedpoint::dqa(self.r[Register::DQA]);
         let dqb = fixedpoint::dqb(self.r[Register::DQB]);
 
-        let mac0 = gte_divide(&mut self.r) * dqa + dqb;
+        let mac0 = div_result * dqa + dqb;
         self.check_mac0_overflow(mac0);
         self.r[Register::MAC0] = i64::from(mac0) as u32;
 
-        let ir0 = i64::from(mac0.shift_to::<12>());
+        let ir0 = i64::from(mac0.shift_to::<12>()) as i32;
         let clamped_ir0 = ir0.clamp(IR0_MIN, IR0_MAX);
         if ir0 != clamped_ir0 {
             self.r[Register::FLAG] |= Flag::IR0_SATURATED;
@@ -197,8 +199,8 @@ impl GeometryTransformationEngine {
     }
 
     fn push_screen_xy(&mut self, sx: FixedPointDecimal<0>, sy: FixedPointDecimal<0>) {
-        let sx = i64::from(sx);
-        let sy = i64::from(sy);
+        let sx = i64::from(sx) as i32;
+        let sy = i64::from(sy) as i32;
 
         let clamped_sx = sx.clamp(SCREEN_XY_MIN, SCREEN_XY_MAX);
         if sx != clamped_sx {

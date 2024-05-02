@@ -208,7 +208,7 @@ impl GeometryTransformationEngine {
             &vector,
             &light_matrix,
             &ZERO_VECTOR,
-            MatrixMultiplyBehavior::Standard,
+            MatrixMultiplyBehavior::Mvmva,
         );
     }
 
@@ -223,7 +223,7 @@ impl GeometryTransformationEngine {
             &ir_vector,
             &light_color_matrix,
             &background_color,
-            MatrixMultiplyBehavior::Standard,
+            MatrixMultiplyBehavior::Mvmva,
         );
     }
 

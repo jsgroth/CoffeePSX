@@ -35,18 +35,18 @@ const I44_MAX: i64 = (1 << 43) - 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MatrixMultiplyBehavior {
     Rtp,
-    Standard,
+    Mvmva,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mac {
-    One,
-    Two,
-    Three,
+    One = 1,
+    Two = 2,
+    Three = 3,
 }
 
 impl Mac {
-    fn positive_overflow_flag(self) -> u32 {
+    const fn positive_overflow_flag(self) -> u32 {
         match self {
             Self::One => Flag::MAC1_OVERFLOW_POSITIVE,
             Self::Two => Flag::MAC2_OVERFLOW_POSITIVE,
@@ -54,7 +54,7 @@ impl Mac {
         }
     }
 
-    fn negative_overflow_flag(self) -> u32 {
+    const fn negative_overflow_flag(self) -> u32 {
         match self {
             Self::One => Flag::MAC1_OVERFLOW_NEGATIVE,
             Self::Two => Flag::MAC2_OVERFLOW_NEGATIVE,
@@ -62,7 +62,7 @@ impl Mac {
         }
     }
 
-    fn corresponding_ir_saturation_flag(self) -> u32 {
+    const fn corresponding_ir_saturation_flag(self) -> u32 {
         match self {
             Self::One => Flag::IR1_SATURATED,
             Self::Two => Flag::IR2_SATURATED,
@@ -226,7 +226,7 @@ impl GeometryTransformationEngine {
         behavior: MatrixMultiplyBehavior,
     ) {
         for (i, mac) in [(0, Mac::One), (1, Mac::Two), (2, Mac::Three)] {
-            self.mac[i + 1] = 0;
+            self.mac[mac as usize] = 0;
             self.accumulate_into_mac(
                 translation[i].shift_to::<12>() + (matrix[i][0] * vector[0]),
                 mac,
@@ -243,18 +243,19 @@ impl GeometryTransformationEngine {
         self.set_ir_component(Register::IR2, self.mac[2] as u32, Flag::IR2_SATURATED, lm);
 
         match behavior {
-            MatrixMultiplyBehavior::Rtp if !opcode.bit(SF_BIT) => {
-                // Apparent hardware bug: When sf=0, IR3 saturation flag is set based on
-                // (MAC3 >> 12) instead of MAC3
-                let value = self.mac[3] as i32;
-                if !(I16_MIN..=I16_MAX).contains(&(value >> 12)) {
+            MatrixMultiplyBehavior::Rtp => {
+                // Apparent hardware bug in RTPS/RTPT: IR3 saturation flag is always set as if
+                // sf=1 and lm=0
+                let inverted_shift = if opcode.bit(SF_BIT) { 0 } else { 12 };
+                let saturate_flag_value = (self.mac[3] >> inverted_shift) as i32;
+                if !(I16_MIN..=I16_MAX).contains(&saturate_flag_value) {
                     self.r[Register::FLAG] |= Flag::IR3_SATURATED;
                 }
 
                 let min = if lm { 0 } else { I16_MIN };
-                self.r[Register::IR3] = value.clamp(min, I16_MAX) as u32;
+                self.r[Register::IR3] = (self.mac[3] as i32).clamp(min, I16_MAX) as u32;
             }
-            _ => {
+            MatrixMultiplyBehavior::Mvmva => {
                 self.set_ir_component(Register::IR3, self.mac[3] as u32, Flag::IR3_SATURATED, lm);
             }
         }
@@ -265,20 +266,12 @@ impl GeometryTransformationEngine {
         value: FixedPointDecimal<FRACTION_BITS>,
         mac: Mac,
     ) {
-        let existing_value = match mac {
-            Mac::One => FixedPointDecimal::new(self.mac[1]),
-            Mac::Two => FixedPointDecimal::new(self.mac[2]),
-            Mac::Three => FixedPointDecimal::new(self.mac[3]),
-        };
+        let existing_value = FixedPointDecimal::new(self.mac[mac as usize]);
 
         let new_value = value + existing_value;
         let new_value = self.check_mac123_overflow(new_value, mac);
 
-        match mac {
-            Mac::One => self.mac[1] = new_value.into(),
-            Mac::Two => self.mac[2] = new_value.into(),
-            Mac::Three => self.mac[3] = new_value.into(),
-        }
+        self.mac[mac as usize] = new_value.into();
     }
 
     fn check_mac0_overflow<const FRACTION_BITS: u8>(
@@ -318,8 +311,9 @@ impl GeometryTransformationEngine {
             return;
         }
 
-        let [mac1, mac2, mac3] = self.read_mac_vector::<12>().map(|mac| mac.shift_to::<0>());
-        self.set_mac(mac1, mac2, mac3);
+        self.mac[1] >>= 12;
+        self.mac[2] >>= 12;
+        self.mac[3] >>= 12;
     }
 
     fn set_ir_component(&mut self, register: usize, value: u32, saturation_bit: u32, lm: bool) {
