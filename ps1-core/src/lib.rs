@@ -1,4 +1,5 @@
 pub mod api;
+mod boxedarray;
 mod bus;
 mod cd;
 mod cpu;

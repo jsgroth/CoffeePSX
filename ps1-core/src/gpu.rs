@@ -22,13 +22,15 @@ use std::rc::Rc;
 
 use crate::gpu::rasterizer::Rasterizer;
 
+use crate::boxedarray::BoxedArray;
 use crate::interrupts::InterruptRegisters;
 pub use rasterizer::{RasterizerState, RasterizerType};
 pub use registers::VideoMode;
 
 const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
 
-type Vram = [u16; VRAM_LEN_HALFWORDS];
+type Vram = BoxedArray<u16, VRAM_LEN_HALFWORDS>;
+type VramArray = [u16; VRAM_LEN_HALFWORDS];
 
 #[derive(Debug, Clone, Copy)]
 pub struct DisplayConfig {
@@ -214,8 +216,4 @@ impl Gpu {
             rasterizer,
         }
     }
-}
-
-fn new_vram() -> Box<Vram> {
-    vec![0; VRAM_LEN_HALFWORDS].into_boxed_slice().try_into().unwrap()
 }

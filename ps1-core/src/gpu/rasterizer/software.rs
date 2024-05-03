@@ -1,7 +1,7 @@
 use crate::api::{ColorDepthBits, DisplayConfig};
 use crate::gpu::rasterizer::{Color, CpuVramBlitArgs, VramVramBlitArgs};
 use crate::gpu::registers::{Registers, VerticalResolution};
-use crate::gpu::{VideoMode, Vram, WgpuResources};
+use crate::gpu::{VideoMode, VramArray, WgpuResources};
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -96,7 +96,7 @@ impl SoftwareRenderer {
         &mut self,
         registers: &Registers,
         wgpu_resources: &WgpuResources,
-        vram: &Vram,
+        vram: &VramArray,
     ) -> &wgpu::Texture {
         if wgpu_resources.display_config.dump_vram {
             return self.write_frame(
@@ -195,7 +195,7 @@ impl SoftwareRenderer {
         frame_size: FrameSize,
         frame_coords: FrameCoords,
         color_depth: ColorDepthBits,
-        vram: &Vram,
+        vram: &VramArray,
     ) -> &wgpu::Texture {
         populate_frame_buffer(frame_size, frame_coords, color_depth, vram, &mut self.frame_buffer);
 
@@ -373,7 +373,7 @@ fn populate_frame_buffer(
     frame_size: FrameSize,
     frame_coords: FrameCoords,
     color_depth: ColorDepthBits,
-    vram: &Vram,
+    vram: &VramArray,
     frame_buffer: &mut FrameBuffer,
 ) {
     let x_range =
@@ -442,7 +442,7 @@ fn populate_frame_buffer(
     }
 }
 
-pub fn vram_fill(vram: &mut Vram, x: u32, y: u32, width: u32, height: u32, color: Color) {
+pub fn vram_fill(vram: &mut VramArray, x: u32, y: u32, width: u32, height: u32, color: Color) {
     let fill_x = x & 0x3F0;
     let fill_y = y & 0x1FF;
     let width = ((width & 0x3FF) + 0xF) & !0xF;
@@ -462,7 +462,7 @@ pub fn vram_fill(vram: &mut Vram, x: u32, y: u32, width: u32, height: u32, color
 }
 
 pub fn cpu_to_vram_blit(
-    vram: &mut Vram,
+    vram: &mut VramArray,
     CpuVramBlitArgs { x, y, width, height, force_mask_bit, check_mask_bit }: CpuVramBlitArgs,
     data: &[u16],
 ) {
@@ -492,7 +492,14 @@ pub fn cpu_to_vram_blit(
     }
 }
 
-pub fn vram_to_cpu_blit(vram: &Vram, x: u32, y: u32, width: u32, height: u32, out: &mut Vec<u16>) {
+pub fn vram_to_cpu_blit(
+    vram: &VramArray,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    out: &mut Vec<u16>,
+) {
     for row in 0..height {
         let vram_y = (y + row) & 0x1FF;
         for col in 0..width {
@@ -503,7 +510,7 @@ pub fn vram_to_cpu_blit(vram: &Vram, x: u32, y: u32, width: u32, height: u32, ou
     }
 }
 
-pub fn vram_to_vram_blit(vram: &mut Vram, args: VramVramBlitArgs) {
+pub fn vram_to_vram_blit(vram: &mut VramArray, args: VramVramBlitArgs) {
     let forced_mask_bit = u16::from(args.force_mask_bit) << 15;
 
     let mut source_y = args.source_y;

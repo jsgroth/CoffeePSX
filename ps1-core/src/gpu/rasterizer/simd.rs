@@ -13,7 +13,7 @@ use crate::gpu::rasterizer::{
     VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{Vram, WgpuResources};
+use crate::gpu::{Vram, VramArray, WgpuResources};
 use std::alloc::Layout;
 use std::ops::{Deref, DerefMut};
 use std::{alloc, cmp};
@@ -21,7 +21,7 @@ use std::{alloc, cmp};
 // AVX2 loads/stores must be aligned to a 32-byte boundary
 #[repr(align(32), C)]
 #[derive(Debug, Clone)]
-struct AlignedVram(Vram);
+struct AlignedVram(VramArray);
 
 impl AlignedVram {
     fn new_on_heap() -> Box<Self> {
@@ -44,7 +44,7 @@ impl AlignedVram {
 }
 
 impl Deref for AlignedVram {
-    type Target = Vram;
+    type Target = VramArray;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -287,7 +287,9 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
     }
 
-    fn clone_vram(&self) -> Box<Vram> {
-        self.vram.0.to_vec().into_boxed_slice().try_into().unwrap()
+    fn clone_vram(&self) -> Vram {
+        let vram_array: Box<VramArray> =
+            self.vram.0.to_vec().into_boxed_slice().try_into().unwrap();
+        vram_array.into()
     }
 }

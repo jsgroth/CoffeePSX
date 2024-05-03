@@ -2,7 +2,6 @@
 
 #![allow(clippy::many_single_char_names)]
 
-use crate::gpu;
 use crate::gpu::gp0::{
     DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
 };
@@ -13,7 +12,7 @@ use crate::gpu::rasterizer::{
     TextureMappingMode, TriangleShading, TriangleTextureMapping, Vertex, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{Vram, WgpuResources};
+use crate::gpu::{Vram, VramArray, WgpuResources};
 use std::cmp;
 use wgpu::Texture;
 
@@ -74,20 +73,18 @@ where
 
 #[derive(Debug)]
 pub struct NaiveSoftwareRasterizer {
-    vram: Box<Vram>,
+    vram: Vram,
     renderer: SoftwareRenderer,
 }
 
 impl NaiveSoftwareRasterizer {
     pub fn new(device: &wgpu::Device) -> Self {
-        Self { vram: gpu::new_vram(), renderer: SoftwareRenderer::new(device) }
+        Self { vram: Vram::new(), renderer: SoftwareRenderer::new(device) }
     }
 
     pub fn from_vram(device: &wgpu::Device, vram: &Vram) -> Self {
-        Self {
-            vram: vram.to_vec().into_boxed_slice().try_into().unwrap(),
-            renderer: SoftwareRenderer::new(device),
-        }
+        let vram_array: Box<VramArray> = vram.to_vec().into_boxed_slice().try_into().unwrap();
+        Self { vram: vram_array.into(), renderer: SoftwareRenderer::new(device) }
     }
 }
 
@@ -521,7 +518,7 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
     }
 
-    fn clone_vram(&self) -> Box<Vram> {
+    fn clone_vram(&self) -> Vram {
         self.vram.clone()
     }
 }

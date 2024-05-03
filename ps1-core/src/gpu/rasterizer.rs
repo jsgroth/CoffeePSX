@@ -138,7 +138,7 @@ pub trait RasterizerInterface {
         wgpu_resources: &WgpuResources,
     ) -> &wgpu::Texture;
 
-    fn clone_vram(&self) -> Box<Vram>;
+    fn clone_vram(&self) -> Vram;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,7 +211,7 @@ impl Rasterizer {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct RasterizerState {
-    pub vram: Box<Vram>,
+    pub vram: Vram,
 }
 
 impl DrawSettings {

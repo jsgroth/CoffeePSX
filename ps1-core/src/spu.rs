@@ -8,6 +8,7 @@ mod noise;
 mod reverb;
 mod voice;
 
+use crate::boxedarray::BoxedArray;
 use crate::cd::CdController;
 use crate::cpu::OpSize;
 use crate::interrupts::{InterruptRegisters, InterruptType};
@@ -28,7 +29,7 @@ const NUM_VOICES: usize = 24;
 
 #[derive(Debug, Clone, Encode, Decode)]
 struct SoundRam {
-    ram: Box<[u8; SOUND_RAM_LEN]>,
+    ram: BoxedArray<u8, SOUND_RAM_LEN>,
     irq_enabled: bool,
     irq_address: usize,
     irq: Cell<bool>,
@@ -37,7 +38,7 @@ struct SoundRam {
 impl SoundRam {
     fn new() -> Self {
         Self {
-            ram: vec![0; SOUND_RAM_LEN].into_boxed_slice().try_into().unwrap(),
+            ram: BoxedArray::<u8, SOUND_RAM_LEN>::new(),
             irq_enabled: false,
             irq_address: 0,
             irq: Cell::new(false),
