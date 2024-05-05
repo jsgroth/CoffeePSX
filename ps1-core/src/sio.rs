@@ -103,7 +103,7 @@ enum PortState {
     SendingZeroes,
 }
 
-const CONTROLLER_TRANSFER_CYCLES: u32 = 400;
+const CONTROLLER_TRANSFER_CYCLES: u32 = 500;
 const ACK_LOW_CYCLES: u64 = 100;
 
 #[derive(Debug, Clone, Encode, Decode)]

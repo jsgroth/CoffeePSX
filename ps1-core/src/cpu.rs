@@ -274,13 +274,15 @@ impl R3000 {
             return opcode;
         }
 
+        // The hardware seems to be able to read cache lines much faster than it would take to read
+        // the 4 individual words; not accounting for this will cause slowdown in some games
+        self.instruction_cycles += 3 + memory_access_cycles_u32(address);
+
         // If opcode not found in I-cache, fetch the full current cache line
         self.i_cache.update_tag(address);
 
         let mut cache_addr = address & !0xF;
         for _ in 0..4 {
-            self.instruction_cycles += memory_access_cycles_u32(cache_addr);
-
             let opcode = bus.read_u32(cache_addr);
             self.i_cache.write_opcode(cache_addr, opcode);
             cache_addr += 4;
@@ -342,9 +344,7 @@ macro_rules! impl_memory_access_cycles {
         fn $name(address: u32) -> u32 {
             match address & 0x1FFFFFFF {
                 // Main RAM
-                // TODO I think this is supposed to be 5 or 6 cycles, but that causes slowdown in some
-                // games; possibly varies based on 8-bit/16-bit/32-bit
-                0x00000000..=0x007FFFFF => 3,
+                0x00000000..=0x007FFFFF => 5,
                 // Scratchpad RAM
                 0x1F800000..=0x1F8003FF => 0,
                 // BIOS ROM
