@@ -49,8 +49,9 @@ impl Args {
     }
 }
 
-const AUDIO_SYNC_THRESHOLD_SAMPLES: u32 = 1024;
-const AUDIO_SYNC_THRESHOLD_BYTES: u32 = 1024 * 4 * 2;
+// TODO: make configurable
+const AUDIO_SYNC_THRESHOLD_SAMPLES: u32 = 1024 + 512;
+const AUDIO_SYNC_THRESHOLD_BYTES: u32 = AUDIO_SYNC_THRESHOLD_SAMPLES * 4 * 2;
 
 struct SdlAudioOutput {
     audio_queue: AudioQueue<f32>,
