@@ -355,6 +355,9 @@ fn main() -> anyhow::Result<()> {
 
     event_loop.run(move |event, elwt| match event {
         Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+            if let Err(err) = renderer.block_until_done() {
+                log::error!("{err}");
+            }
             elwt.exit();
         }
         Event::WindowEvent {

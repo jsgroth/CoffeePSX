@@ -2,7 +2,10 @@ use anyhow::anyhow;
 use ps1_core::api::Renderer;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::{cmp, iter};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use std::{cmp, iter, thread};
 use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
@@ -309,6 +312,28 @@ impl WgpuRenderer {
 
     pub fn queue(&self) -> Rc<Queue> {
         Rc::clone(&self.queue)
+    }
+
+    pub fn block_until_done(&self) -> anyhow::Result<()> {
+        let done = Arc::new(AtomicBool::new(false));
+        let done_clone = Arc::clone(&done);
+        self.queue.on_submitted_work_done(move || done_clone.store(true, Ordering::Relaxed));
+
+        // Just in case there is not any active GPU work
+        self.queue.submit(iter::empty());
+
+        let start = Instant::now();
+        while !done.load(Ordering::Relaxed)
+            && Instant::now().duration_since(start) < Duration::from_secs(1)
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        if !done.load(Ordering::Relaxed) {
+            return Err(anyhow!("Timed out waiting for wgpu queue work to finish"));
+        }
+
+        Ok(())
     }
 }
 
