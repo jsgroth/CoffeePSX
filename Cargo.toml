@@ -23,7 +23,7 @@ rand = "0.8"
 regex = "1"
 sdl2 = "0.36"
 thiserror = "1"
-wgpu = "0.19"
+wgpu = "0.20"
 winit = "0.29"
 
 [profile.dev-fast]

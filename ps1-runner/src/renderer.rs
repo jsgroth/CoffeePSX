@@ -11,13 +11,13 @@ use wgpu::{
     BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, CommandEncoder,
     CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor, Extent3d, Features,
     FilterMode, FragmentState, FrontFace, Instance, InstanceDescriptor, Limits, LoadOp,
-    MultisampleState, Operations, PipelineLayoutDescriptor, PolygonMode, PowerPreference,
-    PresentMode, PrimitiveState, PrimitiveTopology, Queue, RenderPassColorAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler,
-    SamplerBindingType, SamplerDescriptor, ShaderModule, ShaderStages, StoreOp, Surface,
-    SurfaceConfiguration, SurfaceTargetUnsafe, Texture, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension,
-    VertexState,
+    MultisampleState, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor,
+    PolygonMode, PowerPreference, PresentMode, PrimitiveState, PrimitiveTopology, Queue,
+    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
+    RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModule,
+    ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceTargetUnsafe, Texture,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 
 struct PrescalePipeline {
@@ -125,7 +125,12 @@ impl PrescalePipeline {
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: "prescale_pipeline".into(),
             layout: Some(&pipeline_layout),
-            vertex: VertexState { module: scale_shader, entry_point: "vs_main", buffers: &[] },
+            vertex: VertexState {
+                module: scale_shader,
+                entry_point: "vs_main",
+                compilation_options: PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleStrip,
                 strip_index_format: None,
@@ -140,6 +145,7 @@ impl PrescalePipeline {
             fragment: Some(FragmentState {
                 module: scale_shader,
                 entry_point: "fs_main",
+                compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(ColorTargetState {
                     format: TextureFormat::Rgba8UnormSrgb,
                     blend: Some(BlendState::REPLACE),
@@ -437,7 +443,12 @@ fn create_render_pipeline(
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: "render_pipeline".into(),
         layout: Some(&pipeline_layout),
-        vertex: VertexState { module: shader_module, entry_point: "vs_main", buffers: &[] },
+        vertex: VertexState {
+            module: shader_module,
+            entry_point: "vs_main",
+            compilation_options: PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
         primitive: PrimitiveState {
             topology: PrimitiveTopology::TriangleStrip,
             strip_index_format: None,
@@ -452,6 +463,7 @@ fn create_render_pipeline(
         fragment: Some(FragmentState {
             module: shader_module,
             entry_point: "fs_main",
+            compilation_options: PipelineCompilationOptions::default(),
             targets: &[Some(ColorTargetState {
                 format: output_format,
                 blend: Some(BlendState::REPLACE),

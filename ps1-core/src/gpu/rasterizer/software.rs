@@ -6,6 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::{cmp, iter};
+use wgpu::PipelineCompilationOptions;
 
 struct ScreenSize {
     left: i32,
@@ -312,7 +313,12 @@ fn create_clear_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: "clear_pipeline".into(),
         layout: None,
-        vertex: wgpu::VertexState { module: &clear_module, entry_point: "vs_main", buffers: &[] },
+        vertex: wgpu::VertexState {
+            module: &clear_module,
+            entry_point: "vs_main",
+            compilation_options: PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleStrip,
             strip_index_format: None,
@@ -327,6 +333,7 @@ fn create_clear_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
         fragment: Some(wgpu::FragmentState {
             module: &clear_module,
             entry_point: "fs_main",
+            compilation_options: PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 blend: Some(wgpu::BlendState::REPLACE),
