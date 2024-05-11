@@ -2,7 +2,6 @@
 
 #![allow(clippy::many_single_char_names)]
 
-#[cfg(target_arch = "x86_64")]
 mod avx2;
 
 use crate::gpu::gp0::DrawSettings;
@@ -78,7 +77,6 @@ impl SimdSoftwareRasterizer {
 }
 
 impl RasterizerInterface for SimdSoftwareRasterizer {
-    #[cfg(target_arch = "x86_64")]
     fn draw_triangle(
         &mut self,
         DrawTriangleArgs {
@@ -139,10 +137,6 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
-    fn draw_triangle(&mut self, _args: DrawTriangleArgs, _draw_settings: &DrawSettings) {}
-
-    #[cfg(target_arch = "x86_64")]
     fn draw_line(
         &mut self,
         DrawLineArgs { vertices, shading, semi_transparent, semi_transparency_mode }: DrawLineArgs,
@@ -182,10 +176,6 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
-    fn draw_line(&mut self, _args: DrawLineArgs, _draw_settings: &DrawSettings) {}
-
-    #[cfg(target_arch = "x86_64")]
     fn draw_rectangle(
         &mut self,
         DrawRectangleArgs {
@@ -221,9 +211,6 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             );
         }
     }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    fn draw_rectangle(&mut self, _args: DrawRectangleArgs, _draw_settings: &DrawSettings) {}
 
     fn vram_fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Color) {
         software::vram_fill(&mut self.vram, x, y, width, height, color);
