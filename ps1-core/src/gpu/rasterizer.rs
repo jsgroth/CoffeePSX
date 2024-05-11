@@ -7,7 +7,7 @@ use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TexturePage, TextureWi
 use crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
 use crate::gpu::rasterizer::simd::SimdSoftwareRasterizer;
 use crate::gpu::registers::Registers;
-use crate::gpu::{Vram, WgpuResources};
+use crate::gpu::{Color, Vertex, Vram, WgpuResources};
 
 pub mod naive;
 #[cfg(target_arch = "x86_64")]
@@ -17,25 +17,6 @@ mod software;
 #[cfg(not(target_arch = "x86_64"))]
 pub mod simd {
     pub type SimdSoftwareRasterizer = crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Vertex {
-    pub x: i32,
-    pub y: i32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
-pub struct Color {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-impl Color {
-    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -216,15 +197,13 @@ pub struct RasterizerState {
 
 impl DrawSettings {
     fn is_drawing_area_valid(&self) -> bool {
-        self.draw_area_top_left.0 <= self.draw_area_bottom_right.0
-            && self.draw_area_top_left.1 <= self.draw_area_bottom_right.1
+        self.draw_area_top_left.x <= self.draw_area_bottom_right.x
+            && self.draw_area_top_left.y <= self.draw_area_bottom_right.y
     }
 
     fn drawing_area_contains_vertex(&self, vertex: Vertex) -> bool {
-        (self.draw_area_top_left.0 as i32..=self.draw_area_bottom_right.0 as i32)
-            .contains(&vertex.x)
-            && (self.draw_area_top_left.1 as i32..=self.draw_area_bottom_right.1 as i32)
-                .contains(&vertex.y)
+        (self.draw_area_top_left.x..=self.draw_area_bottom_right.x).contains(&vertex.x)
+            && (self.draw_area_top_left.y..=self.draw_area_bottom_right.y).contains(&vertex.y)
     }
 }
 

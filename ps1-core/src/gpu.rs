@@ -16,6 +16,7 @@ use crate::gpu::gp0::{Gp0CommandState, Gp0State};
 use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::scheduler::Scheduler;
 use crate::timers::Timers;
+use bincode::{Decode, Encode};
 use cfg_if::cfg_if;
 use proc_macros::SaveState;
 use std::rc::Rc;
@@ -215,5 +216,24 @@ impl Gpu {
             },
             rasterizer,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
+pub struct Vertex {
+    pub x: i32,
+    pub y: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Color {
+    pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
     }
 }

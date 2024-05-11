@@ -1,12 +1,14 @@
 #![allow(clippy::many_single_char_names)]
 
-use crate::gpu::gp0::{SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow};
-use crate::gpu::rasterizer;
+use crate::gpu::gp0::{
+    DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
+};
 use crate::gpu::rasterizer::simd::AlignedVram;
 use crate::gpu::rasterizer::{
-    Color, LineShading, RectangleTextureMapping, Shading, TextureMappingMode, TriangleShading,
-    TriangleTextureMapping, Vertex,
+    LineShading, RectangleTextureMapping, Shading, TextureMappingMode, TriangleShading,
+    TriangleTextureMapping,
 };
+use crate::gpu::{rasterizer, Color, Vertex};
 #[allow(clippy::wildcard_imports)]
 use std::arch::x86_64::*;
 use std::{cmp, mem};
@@ -190,19 +192,34 @@ unsafe fn mask_epi32_to_u8(v: __m256i) -> __m256i {
     _mm256_and_si256(v, _mm256_set1_epi32(0xFF))
 }
 
+fn i11(value: i32) -> i32 {
+    (value << 21) >> 21
+}
+
+#[target_feature(enable = "avx2")]
+unsafe fn i11_epi16(value: __m256i) -> __m256i {
+    _mm256_srai_epi16::<5>(_mm256_slli_epi16::<5>(value))
+}
+
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "avx2")]
 pub unsafe fn rasterize_triangle(
     vram: &mut AlignedVram,
+    &DrawSettings {
+        dithering_enabled,
+        draw_offset,
+        draw_area_top_left,
+        draw_area_bottom_right,
+        force_mask_bit,
+        check_mask_bit,
+        ..
+    }: &DrawSettings,
     x_bounds: (i32, i32),
     y_bounds: (i32, i32),
     vertices: [Vertex; 3],
     shading: TriangleShading,
     texture_mapping: Option<TriangleTextureMapping>,
     semi_transparency_mode: Option<SemiTransparencyMode>,
-    dithering_enabled: bool,
-    force_mask_bit: bool,
-    check_mask_bit: bool,
 ) {
     let vram_ptr = vram.as_mut_ptr();
 
@@ -213,8 +230,8 @@ pub unsafe fn rasterize_triangle(
     let v20_is_not_bottom_right = is_not_bottom_right_edge(vertices[2], vertices[0]);
 
     // AVX2 loads/stores must be aligned to a 16-halfword/32-byte boundary
-    let min_x_aligned = x_bounds.0 / 16 * 16;
-    let max_x_aligned = x_bounds.1 / 16 * 16;
+    let min_x_aligned = ((x_bounds.0 + draw_offset.x) & !0xF) - draw_offset.x;
+    let max_x_aligned = ((x_bounds.1 + draw_offset.x) & !0xF) - draw_offset.x;
 
     let interpolation_denominator =
         rasterizer::cross_product_z(vertices[0], vertices[1], vertices[2]);
@@ -227,9 +244,19 @@ pub unsafe fn rasterize_triangle(
         Interpolator::new(vertices, interpolation_denominator, shading, texture_mapping.as_ref());
 
     for y in y_bounds.0..=y_bounds.1 {
+        let y_offset = i11(y + draw_offset.y);
+        if y_offset < draw_area_top_left.y || y_offset > draw_area_bottom_right.y {
+            continue;
+        }
+
         let py = _mm256_set1_epi32(y);
 
         for x in (min_x_aligned..=max_x_aligned).step_by(16) {
+            let x_offset = i11(x + draw_offset.x);
+            if !(0..1024).contains(&x_offset) {
+                continue;
+            }
+
             // Determine which X coordinates are inside the triangle.
             // The 16 X coordinates are split up such that vectors can later be converted from
             // two i32x8 vectors to a single i16x16 vector using _mm256_packs_epi32
@@ -258,6 +285,25 @@ pub unsafe fn rasterize_triangle(
             let mut inside_mask = _mm256_packs_epi32(inside_mask_1, inside_mask_2);
 
             // If no points are inside the triangle, bail out early
+            if _mm256_testz_si256(inside_mask, _mm256_set1_epi16(!0)) != 0 {
+                continue;
+            }
+
+            // Check if inside draw area X coordinate range
+            let px = _mm256_packs_epi32(px1, px2);
+            let px_offset =
+                i11_epi16(_mm256_add_epi16(px, _mm256_set1_epi16(draw_offset.x as i16)));
+            inside_mask = _mm256_and_si256(
+                inside_mask,
+                _mm256_andnot_si256(
+                    _mm256_cmpgt_epi16(_mm256_set1_epi16(draw_area_top_left.x as i16), px_offset),
+                    _mm256_cmpgt_epi16(
+                        _mm256_set1_epi16(draw_area_bottom_right.x as i16 + 1),
+                        px_offset,
+                    ),
+                ),
+            );
+
             if _mm256_testz_si256(inside_mask, _mm256_set1_epi16(!0)) != 0 {
                 continue;
             }
@@ -332,7 +378,8 @@ pub unsafe fn rasterize_triangle(
             }
 
             // Load the existing row of 16 pixels
-            let vram_addr = vram_ptr.add(1024 * y as usize + x as usize).cast::<__m256i>();
+            let vram_addr =
+                vram_ptr.add(1024 * y_offset as usize + x_offset as usize).cast::<__m256i>();
             let existing = _mm256_load_si256(vram_addr);
 
             if check_mask_bit {
@@ -758,27 +805,28 @@ unsafe fn convert_15bit_to_24bit(texels: __m256i) -> (__m256i, __m256i, __m256i)
 #[target_feature(enable = "avx2")]
 pub unsafe fn rasterize_rectangle(
     vram: &mut AlignedVram,
-    x_range: (i32, i32),
-    y_range: (i32, i32),
+    &DrawSettings {
+        draw_offset,
+        draw_area_top_left,
+        draw_area_bottom_right,
+        force_mask_bit,
+        check_mask_bit,
+        ..
+    }: &DrawSettings,
+    top_left: Vertex,
+    width: i32,
+    height: i32,
     color: Color,
     texture_mapping: Option<RectangleTextureMapping>,
     semi_transparency_mode: Option<SemiTransparencyMode>,
-    force_mask_bit: bool,
-    check_mask_bit: bool,
 ) {
     let vram_ptr = vram.as_mut_ptr();
 
     let forced_mask_bit = i16::from(force_mask_bit) << 15;
 
-    let min_x = x_range.0 as i16;
-    let max_x = x_range.1 as i16;
-
     // AVX2 loads/stores must be aligned to a 16-halfword/32-byte boundary
-    let min_x_aligned = min_x / 16 * 16;
-    let max_x_aligned = max_x / 16 * 16;
-
-    let min_y = y_range.0 as i16;
-    let max_y = y_range.1 as i16;
+    let min_x_aligned = ((top_left.x + draw_offset.x) & !0xF) - draw_offset.x;
+    let max_x_aligned = ((top_left.x + width + draw_offset.x) & !0xF) - draw_offset.x;
 
     let color_r = _mm256_set1_epi16(color.r.into());
     let color_g = _mm256_set1_epi16(color.g.into());
@@ -786,9 +834,21 @@ pub unsafe fn rasterize_rectangle(
 
     let zero = _mm256_setzero_si256();
 
-    for y in min_y..=max_y {
-        let vram_row_addr = 1024 * y as usize;
+    for dy in 0..height {
+        let y_offset = i11(top_left.y + dy + draw_offset.y);
+        if y_offset < draw_area_top_left.y || y_offset > draw_area_bottom_right.y {
+            continue;
+        }
+
+        let vram_row_addr = 1024 * y_offset as usize;
         for x in (min_x_aligned..=max_x_aligned).step_by(16) {
+            let x_offset = i11(x + draw_offset.x) as i16;
+            if !(0..1024).contains(&x_offset) {
+                continue;
+            }
+
+            let x = x as i16;
+
             let px = _mm256_setr_epi16(
                 x,
                 x + 1,
@@ -810,12 +870,27 @@ pub unsafe fn rasterize_rectangle(
 
             // Mask out pixels that are outside of the rectangle
             let mut write_mask = _mm256_andnot_si256(
-                _mm256_cmpgt_epi16(_mm256_set1_epi16(min_x), px),
-                _mm256_cmpgt_epi16(_mm256_set1_epi16(max_x + 1), px),
+                _mm256_cmpgt_epi16(_mm256_set1_epi16(top_left.x as i16), px),
+                _mm256_cmpgt_epi16(_mm256_set1_epi16((top_left.x + width) as i16), px),
+            );
+
+            // Mask out pixels that are outside of the drawing area
+            let px_offset =
+                i11_epi16(_mm256_add_epi16(px, _mm256_set1_epi16(draw_offset.x as i16)));
+
+            write_mask = _mm256_and_si256(
+                write_mask,
+                _mm256_andnot_si256(
+                    _mm256_cmpgt_epi16(_mm256_set1_epi16(draw_area_top_left.x as i16), px_offset),
+                    _mm256_cmpgt_epi16(
+                        _mm256_set1_epi16((draw_area_bottom_right.x + 1) as i16),
+                        px_offset,
+                    ),
+                ),
             );
 
             // Read existing pixel values from VRAM
-            let vram_addr = vram_ptr.add(vram_row_addr + x as usize).cast::<__m256i>();
+            let vram_addr = vram_ptr.add(vram_row_addr + x_offset as usize).cast::<__m256i>();
             let existing = _mm256_load_si256(vram_addr);
 
             if check_mask_bit {
@@ -846,11 +921,12 @@ pub unsafe fn rasterize_rectangle(
                     _mm256_set1_epi16(0x00FF),
                     _mm256_add_epi16(
                         px,
-                        _mm256_set1_epi16(i16::from(texture_mapping.u[0]) - min_x),
+                        _mm256_set1_epi16(
+                            texture_mapping.u[0].wrapping_sub(top_left.x as u8).into(),
+                        ),
                     ),
                 );
-                let v =
-                    _mm256_set1_epi16(texture_mapping.v[0].wrapping_add((y - min_y) as u8).into());
+                let v = _mm256_set1_epi16(texture_mapping.v[0].wrapping_add(dy as u8).into());
 
                 // Read a row of 16 texels from the texture
                 let texels = read_texture(
@@ -921,8 +997,8 @@ pub unsafe fn rasterize_rectangle(
 pub unsafe fn rasterize_line(
     vram: &mut AlignedVram,
     vertices: [Vertex; 2],
-    drawing_area_x: (i32, i32),
-    drawing_area_y: (i32, i32),
+    draw_area_top_left: Vertex,
+    draw_area_bottom_right: Vertex,
     shading: LineShading,
     semi_transparency_mode: Option<SemiTransparencyMode>,
     dithering_enabled: bool,
@@ -938,8 +1014,8 @@ pub unsafe fn rasterize_line(
             LineShading::Flat(color) | LineShading::Gouraud([color, _]) => color,
         };
 
-        if (drawing_area_x.0..=drawing_area_x.1).contains(&vertices[0].x)
-            && (drawing_area_y.0..=drawing_area_y.1).contains(&vertices[0].y)
+        if (draw_area_top_left.x..=draw_area_bottom_right.x).contains(&vertices[0].x)
+            && (draw_area_top_left.y..=draw_area_bottom_right.y).contains(&vertices[0].y)
         {
             rasterize_line_pixels(
                 vram,
@@ -963,8 +1039,8 @@ pub unsafe fn rasterize_line(
         rasterize_line_h_oriented(
             vram,
             vertices,
-            drawing_area_x,
-            drawing_area_y,
+            draw_area_top_left,
+            draw_area_bottom_right,
             shading,
             semi_transparency_mode,
             dithering_enabled,
@@ -975,8 +1051,8 @@ pub unsafe fn rasterize_line(
         rasterize_line_v_oriented(
             vram,
             vertices,
-            drawing_area_x,
-            drawing_area_y,
+            draw_area_top_left,
+            draw_area_bottom_right,
             shading,
             semi_transparency_mode,
             dithering_enabled,
@@ -991,8 +1067,8 @@ pub unsafe fn rasterize_line(
 unsafe fn rasterize_line_h_oriented(
     vram: &mut AlignedVram,
     mut v: [Vertex; 2],
-    drawing_area_x: (i32, i32),
-    drawing_area_y: (i32, i32),
+    draw_area_top_left: Vertex,
+    draw_area_bottom_right: Vertex,
     mut shading: LineShading,
     semi_transparency_mode: Option<SemiTransparencyMode>,
     dithering_enabled: bool,
@@ -1007,10 +1083,10 @@ unsafe fn rasterize_line_h_oriented(
         }
     }
 
-    let min_x = cmp::max(v[0].x, drawing_area_x.0);
-    let max_x = cmp::min(v[1].x, drawing_area_x.1);
-    let min_y = cmp::max(drawing_area_y.0, cmp::min(v[0].y, v[1].y));
-    let max_y = cmp::min(drawing_area_y.1, cmp::max(v[0].y, v[1].y));
+    let min_x = cmp::max(v[0].x, draw_area_top_left.x);
+    let max_x = cmp::min(v[1].x, draw_area_bottom_right.x);
+    let min_y = cmp::max(draw_area_top_left.y, cmp::min(v[0].y, v[1].y));
+    let max_y = cmp::min(draw_area_bottom_right.y, cmp::max(v[0].y, v[1].y));
 
     let x_interval = v[1].x - v[0].x;
 
@@ -1084,8 +1160,8 @@ unsafe fn rasterize_line_h_oriented(
 unsafe fn rasterize_line_v_oriented(
     vram: &mut AlignedVram,
     mut v: [Vertex; 2],
-    drawing_area_x: (i32, i32),
-    drawing_area_y: (i32, i32),
+    draw_area_top_left: Vertex,
+    draw_area_bottom_right: Vertex,
     mut shading: LineShading,
     semi_transparency_mode: Option<SemiTransparencyMode>,
     dithering_enabled: bool,
@@ -1100,10 +1176,10 @@ unsafe fn rasterize_line_v_oriented(
         }
     }
 
-    let min_x = cmp::max(drawing_area_x.0, cmp::min(v[0].x, v[1].x));
-    let max_x = cmp::min(drawing_area_x.1, cmp::max(v[0].x, v[1].x));
-    let min_y = cmp::max(v[0].y, drawing_area_y.0);
-    let max_y = cmp::min(v[1].y, drawing_area_y.1);
+    let min_x = cmp::max(draw_area_top_left.x, cmp::min(v[0].x, v[1].x));
+    let max_x = cmp::min(draw_area_bottom_right.x, cmp::max(v[0].x, v[1].x));
+    let min_y = cmp::max(v[0].y, draw_area_top_left.y);
+    let max_y = cmp::min(v[1].y, draw_area_bottom_right.y);
     if min_x > max_x || min_y > max_y {
         return;
     }
@@ -1295,8 +1371,17 @@ mod tests {
         unsafe {
             rasterize_triangle(
                 &mut vram,
-                (0, 1023),
-                (0, 511),
+                &DrawSettings {
+                    drawing_in_display_allowed: true,
+                    dithering_enabled: true,
+                    draw_area_top_left: Vertex { x: 0, y: 0 },
+                    draw_area_bottom_right: Vertex { x: 1023, y: 511 },
+                    draw_offset: Vertex { x: 0, y: 0 },
+                    force_mask_bit: false,
+                    check_mask_bit: true,
+                },
+                (450, 550),
+                (0, 60),
                 [Vertex { x: 500, y: 0 }, Vertex { x: 520, y: 20 }, Vertex { x: 480, y: 20 }],
                 TriangleShading::Gouraud([
                     Color::rgb(0, 0, 0),
@@ -1305,9 +1390,6 @@ mod tests {
                 ]),
                 None,
                 Some(SemiTransparencyMode::Add),
-                true,
-                false,
-                false,
             );
         }
     }
@@ -1318,8 +1400,17 @@ mod tests {
         unsafe {
             rasterize_triangle(
                 &mut vram,
-                (0, 1023),
-                (0, 511),
+                &DrawSettings {
+                    drawing_in_display_allowed: true,
+                    dithering_enabled: true,
+                    draw_area_top_left: Vertex { x: 0, y: 0 },
+                    draw_area_bottom_right: Vertex { x: 1023, y: 511 },
+                    draw_offset: Vertex { x: 0, y: 0 },
+                    force_mask_bit: false,
+                    check_mask_bit: true,
+                },
+                (450, 550),
+                (0, 60),
                 [Vertex { x: 500, y: 0 }, Vertex { x: 520, y: 20 }, Vertex { x: 480, y: 20 }],
                 TriangleShading::Gouraud([
                     Color::rgb(0, 0, 0),
@@ -1343,9 +1434,6 @@ mod tests {
                     v: [20, 10, 0],
                 }),
                 Some(SemiTransparencyMode::Add),
-                true,
-                false,
-                false,
             );
         }
     }
@@ -1372,13 +1460,21 @@ mod tests {
         unsafe {
             rasterize_rectangle(
                 &mut vram,
-                (30, 50),
-                (70, 90),
+                &DrawSettings {
+                    drawing_in_display_allowed: true,
+                    dithering_enabled: true,
+                    draw_area_top_left: Vertex { x: 0, y: 0 },
+                    draw_area_bottom_right: Vertex { x: 1023, y: 511 },
+                    draw_offset: Vertex { x: 0, y: 0 },
+                    force_mask_bit: false,
+                    check_mask_bit: true,
+                },
+                Vertex { x: 450, y: 550 },
+                60,
+                60,
                 Color::rgb(0, 0, 255),
                 None,
                 Some(SemiTransparencyMode::Add),
-                false,
-                false,
             );
         }
     }
@@ -1389,8 +1485,18 @@ mod tests {
         unsafe {
             rasterize_rectangle(
                 &mut vram,
-                (30, 50),
-                (70, 90),
+                &DrawSettings {
+                    drawing_in_display_allowed: true,
+                    dithering_enabled: true,
+                    draw_area_top_left: Vertex { x: 0, y: 0 },
+                    draw_area_bottom_right: Vertex { x: 1023, y: 511 },
+                    draw_offset: Vertex { x: 0, y: 0 },
+                    force_mask_bit: false,
+                    check_mask_bit: true,
+                },
+                Vertex { x: 450, y: 550 },
+                60,
+                60,
                 Color::rgb(0, 0, 255),
                 Some(RectangleTextureMapping {
                     mode: TextureMappingMode::Modulated,
@@ -1409,8 +1515,6 @@ mod tests {
                     v: [20],
                 }),
                 Some(SemiTransparencyMode::Add),
-                false,
-                false,
             );
         }
     }
@@ -1438,8 +1542,8 @@ mod tests {
             rasterize_line(
                 &mut vram,
                 [Vertex { x: 10, y: 20 }, Vertex { x: 30, y: 10 }],
-                (0, 1023),
-                (0, 511),
+                Vertex { x: 0, y: 0 },
+                Vertex { x: 1023, y: 511 },
                 LineShading::Gouraud([Color::rgb(255, 0, 0), Color::rgb(0, 255, 0)]),
                 Some(SemiTransparencyMode::Add),
                 true,

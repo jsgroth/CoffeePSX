@@ -9,6 +9,7 @@ use crate::gpu::registers::{
     DEFAULT_Y_DISPLAY_RANGE,
 };
 use crate::gpu::Gpu;
+use crate::gpu::Vertex;
 use crate::interrupts::InterruptRegisters;
 use crate::num::U32Ext;
 use crate::scheduler::Scheduler;
@@ -197,17 +198,17 @@ impl Gpu {
             0x2 => self.gp0.texture_window.to_word(),
             // Drawing area top left
             0x3 => {
-                let (x, y) = self.gp0.draw_settings.draw_area_top_left;
-                x | (y << 10)
+                let Vertex { x, y } = self.gp0.draw_settings.draw_area_top_left;
+                (x | (y << 10)) as u32
             }
             // Drawing area bottom right
             0x4 => {
-                let (x, y) = self.gp0.draw_settings.draw_area_bottom_right;
-                x | (y << 10)
+                let Vertex { x, y } = self.gp0.draw_settings.draw_area_bottom_right;
+                (x | (y << 10)) as u32
             }
             // Drawing offset
             0x5 => {
-                let (x, y) = self.gp0.draw_settings.draw_offset;
+                let Vertex { x, y } = self.gp0.draw_settings.draw_offset;
                 let x = (x & 0x7FF) as u32;
                 let y = (y & 0x7FF) as u32;
                 x | (y << 11)

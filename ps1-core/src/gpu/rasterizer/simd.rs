@@ -8,12 +8,11 @@ mod avx2;
 use crate::gpu::gp0::DrawSettings;
 use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
-    cross_product_z, software, swap_vertices, vertices_valid, Color, CpuVramBlitArgs, DrawLineArgs,
-    DrawRectangleArgs, DrawTriangleArgs, RasterizerInterface, RectangleTextureMapping, Vertex,
-    VramVramBlitArgs,
+    cross_product_z, software, swap_vertices, vertices_valid, CpuVramBlitArgs, DrawLineArgs,
+    DrawRectangleArgs, DrawTriangleArgs, RasterizerInterface, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{Vram, VramArray, WgpuResources};
+use crate::gpu::{Color, Vertex, Vram, VramArray, WgpuResources};
 use std::alloc::Layout;
 use std::ops::{Deref, DerefMut};
 use std::{alloc, cmp};
@@ -110,25 +109,13 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             swap_vertices(&mut v, &mut shading, texture_mapping.as_mut());
         }
 
-        let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
-        let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
-
-        let (x_offset, y_offset) = draw_settings.draw_offset;
-
-        // Apply drawing offset to vertices
-        let v = v.map(|vertex| Vertex { x: vertex.x + x_offset, y: vertex.y + y_offset });
-
         log::trace!("Triangle vertices: {v:?}");
 
         // Compute bounding box, clamped to display area
-        let min_x =
-            cmp::min(v[0].x, cmp::min(v[1].x, v[2].x)).clamp(draw_min_x as i32, draw_max_x as i32);
-        let max_x =
-            cmp::max(v[0].x, cmp::max(v[1].x, v[2].x)).clamp(draw_min_x as i32, draw_max_x as i32);
-        let min_y =
-            cmp::min(v[0].y, cmp::min(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
-        let max_y =
-            cmp::max(v[0].y, cmp::max(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
+        let min_x = cmp::min(v[0].x, cmp::min(v[1].x, v[2].x));
+        let max_x = cmp::max(v[0].x, cmp::max(v[1].x, v[2].x));
+        let min_y = cmp::min(v[0].y, cmp::min(v[1].y, v[2].y));
+        let max_y = cmp::max(v[0].y, cmp::max(v[1].y, v[2].y));
 
         if min_x > max_x || min_y > max_y {
             // Bounding box is empty, which can happen if the natural bounding box is entirely outside
@@ -141,15 +128,13 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         unsafe {
             avx2::rasterize_triangle(
                 &mut self.vram,
+                draw_settings,
                 (min_x, max_x),
                 (min_y, max_y),
                 v,
                 shading,
                 texture_mapping,
                 semi_transparent.then_some(semi_transparency_mode),
-                draw_settings.dithering_enabled,
-                draw_settings.force_mask_bit,
-                draw_settings.check_mask_bit,
             );
         }
     }
@@ -178,22 +163,16 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
 
         // Apply drawing offset
         let vertices = vertices.map(|vertex| Vertex {
-            x: vertex.x + draw_settings.draw_offset.0,
-            y: vertex.y + draw_settings.draw_offset.1,
+            x: vertex.x + draw_settings.draw_offset.x,
+            y: vertex.y + draw_settings.draw_offset.y,
         });
 
         unsafe {
             avx2::rasterize_line(
                 &mut self.vram,
                 vertices,
-                (
-                    draw_settings.draw_area_top_left.0 as i32,
-                    draw_settings.draw_area_bottom_right.0 as i32,
-                ),
-                (
-                    draw_settings.draw_area_top_left.1 as i32,
-                    draw_settings.draw_area_bottom_right.1 as i32,
-                ),
+                draw_settings.draw_area_top_left,
+                draw_settings.draw_area_bottom_right,
                 shading,
                 semi_transparent.then_some(semi_transparency_mode),
                 draw_settings.dithering_enabled,
@@ -203,7 +182,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         }
     }
 
-    #[cfg(not_target_arch = "x86_64")]
+    #[cfg(not(target_arch = "x86_64"))]
     fn draw_line(&mut self, _args: DrawLineArgs, _draw_settings: &DrawSettings) {}
 
     #[cfg(target_arch = "x86_64")]
@@ -225,37 +204,20 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             return;
         }
 
-        let position = Vertex {
-            x: top_left.x + draw_settings.draw_offset.0,
-            y: top_left.y + draw_settings.draw_offset.1,
-        };
-
-        let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
-        let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
-
-        let min_x = cmp::max(draw_min_x as i32, position.x);
-        let max_x = cmp::min(draw_max_x as i32, position.x + width as i32 - 1);
-        let min_y = cmp::max(draw_min_y as i32, position.y);
-        let max_y = cmp::min(draw_max_y as i32, position.y + height as i32 - 1);
-        if min_x > max_x || min_y > max_y {
-            // Drawing area is invalid
+        if !draw_settings.is_drawing_area_valid() {
             return;
         }
 
         unsafe {
             avx2::rasterize_rectangle(
                 &mut self.vram,
-                (min_x, max_x),
-                (min_y, max_y),
+                draw_settings,
+                top_left,
+                width as i32,
+                height as i32,
                 color,
-                texture_mapping.map(|mapping| RectangleTextureMapping {
-                    u: [mapping.u[0].wrapping_add((min_x - position.x) as u8)],
-                    v: [mapping.v[0].wrapping_add((min_y - position.y) as u8)],
-                    ..mapping
-                }),
+                texture_mapping,
                 semi_transparent.then_some(semi_transparency_mode),
-                draw_settings.force_mask_bit,
-                draw_settings.check_mask_bit,
             );
         }
     }

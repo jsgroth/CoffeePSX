@@ -7,12 +7,12 @@ use crate::gpu::gp0::{
 };
 use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
-    cross_product_z, software, swap_vertices, vertices_valid, Color, CpuVramBlitArgs, DrawLineArgs,
+    cross_product_z, software, swap_vertices, vertices_valid, CpuVramBlitArgs, DrawLineArgs,
     DrawRectangleArgs, DrawTriangleArgs, LineShading, RasterizerInterface, RectangleTextureMapping,
-    TextureMappingMode, TriangleShading, TriangleTextureMapping, Vertex, VramVramBlitArgs,
+    TextureMappingMode, TriangleShading, TriangleTextureMapping, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{Vram, VramArray, WgpuResources};
+use crate::gpu::{Color, Vertex, Vram, VramArray, WgpuResources};
 use std::cmp;
 use wgpu::Texture;
 
@@ -283,31 +283,13 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
             return;
         }
 
-        let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
-        let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
-
-        let (x_offset, y_offset) = draw_settings.draw_offset;
-
-        // Apply drawing offset to vertices
-        let v = v.map(|vertex| Vertex { x: vertex.x + x_offset, y: vertex.y + y_offset });
-
         log::trace!("Triangle vertices: {v:?}");
 
-        // Compute bounding box, clamped to display area
-        let min_x =
-            cmp::min(v[0].x, cmp::min(v[1].x, v[2].x)).clamp(draw_min_x as i32, draw_max_x as i32);
-        let max_x =
-            cmp::max(v[0].x, cmp::max(v[1].x, v[2].x)).clamp(draw_min_x as i32, draw_max_x as i32);
-        let min_y =
-            cmp::min(v[0].y, cmp::min(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
-        let max_y =
-            cmp::max(v[0].y, cmp::max(v[1].y, v[2].y)).clamp(draw_min_y as i32, draw_max_y as i32);
-
-        if min_x > max_x || min_y > max_y {
-            // Bounding box is empty, which can happen if the natural bounding box is entirely outside
-            // of the drawing area
-            return;
-        }
+        // Compute bounding box
+        let min_x = cmp::min(v[0].x, cmp::min(v[1].x, v[2].x));
+        let max_x = cmp::max(v[0].x, cmp::max(v[1].x, v[2].x));
+        let min_y = cmp::min(v[0].y, cmp::min(v[1].y, v[2].y));
+        let max_y = cmp::max(v[0].y, cmp::max(v[1].y, v[2].y));
 
         log::trace!("Bounding box: ({min_x}, {min_y}) to ({max_x}, {max_y})");
 
@@ -319,6 +301,7 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
                 draw_triangle_pixel(
                     px,
                     py,
+                    draw_settings,
                     &interpolator,
                     &mut self.vram,
                     DrawTrianglePixelArgs {
@@ -327,9 +310,6 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
                         semi_transparent,
                         semi_transparency_mode,
                         texture_mapping,
-                        dithering: draw_settings.dithering_enabled,
-                        force_mask_bit: draw_settings.force_mask_bit,
-                        check_mask_bit: draw_settings.check_mask_bit,
                     },
                 );
             }
@@ -351,8 +331,8 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
 
         // Apply drawing offset
         let vertices = vertices.map(|vertex| Vertex {
-            x: vertex.x + draw_settings.draw_offset.0,
-            y: vertex.y + draw_settings.draw_offset.1,
+            x: vertex.x + draw_settings.draw_offset.x,
+            y: vertex.y + draw_settings.draw_offset.y,
         });
 
         let x_diff = vertices[1].x - vertices[0].x;
@@ -450,30 +430,17 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
         }: DrawRectangleArgs,
         draw_settings: &DrawSettings,
     ) {
-        let (draw_min_x, draw_min_y) = draw_settings.draw_area_top_left;
-        let (draw_max_x, draw_max_y) = draw_settings.draw_area_bottom_right;
-        if draw_min_x > draw_max_x || draw_min_y > draw_max_y {
-            return;
-        }
-
-        // Apply drawing offset
-        let position = Vertex {
-            x: top_left.x + draw_settings.draw_offset.0,
-            y: top_left.y + draw_settings.draw_offset.1,
-        };
-
-        let min_x = cmp::max(draw_min_x as i32, position.x);
-        let max_x = cmp::min(draw_max_x as i32, position.x + width as i32 - 1);
-        let min_y = cmp::max(draw_min_y as i32, position.y);
-        let max_y = cmp::min(draw_max_y as i32, position.y + height as i32 - 1);
-        if min_x > max_x || min_y > max_y {
-            // Drawing area is invalid (or size is 0 in one or both dimensions); do nothing
+        if !draw_settings.is_drawing_area_valid() || width == 0 || height == 0 {
             return;
         }
 
         let args = SoftwareRectangleArgs {
-            x_range: (min_x as u32, max_x as u32),
-            y_range: (min_y as u32, max_y as u32),
+            top_left,
+            width: width as i32,
+            height: height as i32,
+            draw_area_top_left: draw_settings.draw_area_top_left,
+            draw_area_bottom_right: draw_settings.draw_area_bottom_right,
+            draw_offset: draw_settings.draw_offset,
             color,
             semi_transparent,
             semi_transparency_mode,
@@ -482,15 +449,7 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
         };
         match texture_mapping {
             None => draw_solid_rectangle(args, &mut self.vram),
-            Some(texture_mapping) => draw_textured_rectangle(
-                args,
-                RectangleTextureMapping {
-                    u: [texture_mapping.u[0].wrapping_add((min_x - position.x) as u8)],
-                    v: [texture_mapping.v[0].wrapping_add((min_y - position.y) as u8)],
-                    ..texture_mapping
-                },
-                &mut self.vram,
-            ),
+            Some(texture_mapping) => draw_textured_rectangle(args, texture_mapping, &mut self.vram),
         }
     }
 
@@ -529,14 +488,12 @@ struct DrawTrianglePixelArgs {
     semi_transparent: bool,
     semi_transparency_mode: SemiTransparencyMode,
     texture_mapping: Option<TriangleTextureMapping>,
-    dithering: bool,
-    force_mask_bit: bool,
-    check_mask_bit: bool,
 }
 
 fn draw_triangle_pixel(
     px: i32,
     py: i32,
+    draw_settings: &DrawSettings,
     interpolator: &Interpolator,
     vram: &mut Vram,
     DrawTrianglePixelArgs {
@@ -545,13 +502,17 @@ fn draw_triangle_pixel(
         semi_transparent,
         semi_transparency_mode,
         texture_mapping,
-        dithering,
-        force_mask_bit,
-        check_mask_bit,
     }: DrawTrianglePixelArgs,
 ) {
-    let vram_addr = (1024 * py + px) as usize;
-    if check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
+    let px_offset = i11(px + draw_settings.draw_offset.x);
+    let py_offset = i11(py + draw_settings.draw_offset.y);
+    let p_offset = Vertex { x: px_offset, y: py_offset };
+    if !draw_settings.drawing_area_contains_vertex(p_offset) {
+        return;
+    }
+
+    let vram_addr = (1024 * py_offset + px_offset) as usize;
+    if draw_settings.check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
         return;
     }
 
@@ -633,7 +594,7 @@ fn draw_triangle_pixel(
 
     // Dithering is applied if the dither flag is set and either Gouraud shading or texture
     // modulation is used
-    let dithered_color = if dithering
+    let dithered_color = if draw_settings.dithering_enabled
         && (matches!(shading, TriangleShading::Gouraud(..))
             || texture_mapping.as_ref().is_some_and(|texture_mapping| {
                 texture_mapping.mode == TextureMappingMode::Modulated
@@ -644,8 +605,8 @@ fn draw_triangle_pixel(
         masked_color
     };
 
-    vram[vram_addr] =
-        dithered_color.truncate_to_15_bit() | (u16::from(mask_bit || force_mask_bit) << 15);
+    vram[vram_addr] = dithered_color.truncate_to_15_bit()
+        | (u16::from(mask_bit || draw_settings.force_mask_bit) << 15);
 }
 
 pub(super) fn draw_line_pixel(
@@ -684,8 +645,12 @@ pub(super) fn draw_line_pixel(
 }
 
 struct SoftwareRectangleArgs {
-    x_range: (u32, u32),
-    y_range: (u32, u32),
+    top_left: Vertex,
+    width: i32,
+    height: i32,
+    draw_area_top_left: Vertex,
+    draw_area_bottom_right: Vertex,
+    draw_offset: Vertex,
     color: Color,
     semi_transparent: bool,
     semi_transparency_mode: SemiTransparencyMode,
@@ -695,8 +660,12 @@ struct SoftwareRectangleArgs {
 
 fn draw_solid_rectangle(
     SoftwareRectangleArgs {
-        x_range,
-        y_range,
+        top_left,
+        width,
+        height,
+        draw_area_top_left,
+        draw_area_bottom_right,
+        draw_offset,
         color,
         semi_transparent,
         semi_transparency_mode,
@@ -707,8 +676,18 @@ fn draw_solid_rectangle(
 ) {
     let forced_mask_bit = u16::from(force_mask_bit) << 15;
 
-    for y in y_range.0..=y_range.1 {
-        for x in x_range.0..=x_range.1 {
+    for dy in 0..height {
+        let y = i11(top_left.y + dy + draw_offset.y);
+        if y < draw_area_top_left.y || y > draw_area_bottom_right.y {
+            continue;
+        }
+
+        for dx in 0..width {
+            let x = i11(top_left.x + dx + draw_offset.x);
+            if x < draw_area_top_left.x || x > draw_area_bottom_right.x {
+                continue;
+            }
+
             let vram_addr = (1024 * y + x) as usize;
             if check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
                 continue;
@@ -728,8 +707,12 @@ fn draw_solid_rectangle(
 
 fn draw_textured_rectangle(
     SoftwareRectangleArgs {
-        x_range,
-        y_range,
+        top_left,
+        width,
+        height,
+        draw_area_top_left,
+        draw_area_bottom_right,
+        draw_offset,
         color: rectangle_color,
         semi_transparent,
         semi_transparency_mode,
@@ -742,15 +725,25 @@ fn draw_textured_rectangle(
     let base_u = texture_mapping.u[0];
     let base_v = texture_mapping.v[0];
 
-    for y in y_range.0..=y_range.1 {
-        let v = base_v.wrapping_add((y - y_range.0) as u8);
-        for x in x_range.0..=x_range.1 {
+    for dy in 0..height {
+        let y = i11(top_left.y + dy + draw_offset.y);
+        if y < draw_area_top_left.y || y > draw_area_bottom_right.y {
+            continue;
+        }
+
+        let v = base_v.wrapping_add(dy as u8);
+        for dx in 0..width {
+            let x = i11(top_left.x + dx + draw_offset.x);
+            if x < draw_area_top_left.x || x > draw_area_bottom_right.x {
+                continue;
+            }
+
             let vram_addr = (1024 * y + x) as usize;
             if check_mask_bit && vram[vram_addr] & 0x8000 != 0 {
                 continue;
             }
 
-            let u = base_u.wrapping_add((x - x_range.0) as u8);
+            let u = base_u.wrapping_add(dx as u8);
             let texture_pixel = sample_texture(
                 vram,
                 &texture_mapping.texpage,
@@ -841,4 +834,8 @@ fn sample_texture(
             vram[vram_addr]
         }
     }
+}
+
+fn i11(value: i32) -> i32 {
+    (value << 21) >> 21
 }

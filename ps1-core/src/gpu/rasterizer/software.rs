@@ -1,7 +1,7 @@
 use crate::api::{ColorDepthBits, DisplayConfig};
-use crate::gpu::rasterizer::{Color, CpuVramBlitArgs, VramVramBlitArgs};
+use crate::gpu::rasterizer::{CpuVramBlitArgs, VramVramBlitArgs};
 use crate::gpu::registers::{Registers, VerticalResolution};
-use crate::gpu::{VideoMode, VramArray, WgpuResources};
+use crate::gpu::{Color, VideoMode, VramArray, WgpuResources};
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};

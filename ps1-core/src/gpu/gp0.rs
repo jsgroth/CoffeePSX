@@ -3,11 +3,11 @@
 //! GP0 commands are primarily related to drawing graphics
 
 use crate::gpu::rasterizer::{
-    Color, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading,
-    RectangleTextureMapping, TextureMappingMode, TriangleShading, TriangleTextureMapping, Vertex,
+    CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading,
+    RectangleTextureMapping, TextureMappingMode, TriangleShading, TriangleTextureMapping,
     VramVramBlitArgs,
 };
-use crate::gpu::Gpu;
+use crate::gpu::{Color, Gpu, Vertex};
 use crate::num::U32Ext;
 use bincode::{Decode, Encode};
 use std::array;
@@ -300,9 +300,9 @@ impl TextureWindow {
 pub struct DrawSettings {
     pub drawing_in_display_allowed: bool,
     pub dithering_enabled: bool,
-    pub draw_area_top_left: (u32, u32),
-    pub draw_area_bottom_right: (u32, u32),
-    pub draw_offset: (i32, i32),
+    pub draw_area_top_left: Vertex,
+    pub draw_area_bottom_right: Vertex,
+    pub draw_offset: Vertex,
     pub force_mask_bit: bool,
     pub check_mask_bit: bool,
 }
@@ -534,18 +534,18 @@ impl Gpu {
             }
             0xE3 => {
                 // GP0($E3): Drawing area top-left coordinates
-                let x1 = command & 0x3FF;
-                let y1 = (command >> 10) & 0x1FF;
-                self.gp0.draw_settings.draw_area_top_left = (x1, y1);
+                let x1 = (command & 0x3FF) as i32;
+                let y1 = ((command >> 10) & 0x1FF) as i32;
+                self.gp0.draw_settings.draw_area_top_left = Vertex { x: x1, y: y1 };
 
                 log::debug!("Executed drawing area top-left command: {command:08X}");
                 log::debug!("  (X1, Y1) = {:?}", self.gp0.draw_settings.draw_area_top_left);
             }
             0xE4 => {
                 // GP0($E4): Drawing area bottom-right coordinates
-                let x2 = command & 0x3FF;
-                let y2 = (command >> 10) & 0x1FF;
-                self.gp0.draw_settings.draw_area_bottom_right = (x2, y2);
+                let x2 = (command & 0x3FF) as i32;
+                let y2 = ((command >> 10) & 0x1FF) as i32;
+                self.gp0.draw_settings.draw_area_bottom_right = Vertex { x: x2, y: y2 };
 
                 log::debug!("Executed drawing area bottom-right command: {command:08X}");
                 log::debug!("  (X2, Y2) = {:?}", self.gp0.draw_settings.draw_area_bottom_right);
@@ -555,7 +555,7 @@ impl Gpu {
                 // Both values are signed 11-bit integers (-1024 to +1023)
                 let x_offset = parse_signed_11_bit(command);
                 let y_offset = parse_signed_11_bit(command >> 11);
-                self.gp0.draw_settings.draw_offset = (x_offset, y_offset);
+                self.gp0.draw_settings.draw_offset = Vertex { x: x_offset, y: y_offset };
 
                 log::debug!("Executed draw offset command: {command:08X}");
                 log::debug!("  (X offset, Y offset) = {:?}", self.gp0.draw_settings.draw_offset);
