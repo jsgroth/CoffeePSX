@@ -3,10 +3,10 @@ use crate::gpu::rasterizer::{CpuVramBlitArgs, VramVramBlitArgs};
 use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::gpu::{Color, VideoMode, VramArray, WgpuResources};
 use bytemuck::{Pod, Zeroable};
+use std::cmp;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::{cmp, iter};
-use wgpu::PipelineCompilationOptions;
+use wgpu::{CommandBuffer, PipelineCompilationOptions};
 
 struct ScreenSize {
     left: i32,
@@ -96,7 +96,7 @@ impl SoftwareRenderer {
     pub fn generate_frame_texture(
         &mut self,
         registers: &Registers,
-        wgpu_resources: &WgpuResources,
+        wgpu_resources: &mut WgpuResources,
         vram: &VramArray,
     ) -> &wgpu::Texture {
         if wgpu_resources.display_config.dump_vram {
@@ -122,7 +122,11 @@ impl SoftwareRenderer {
         let (frame_coords, frame_size) =
             compute_frame_location(registers, wgpu_resources.display_config);
         let Some(frame_coords) = frame_coords else {
-            return self.clear_frame(&wgpu_resources.device, &wgpu_resources.queue, frame_size);
+            return self.clear_frame(
+                &wgpu_resources.device,
+                &mut wgpu_resources.queued_command_buffers,
+                frame_size,
+            );
         };
 
         log::debug!(
@@ -137,7 +141,11 @@ impl SoftwareRenderer {
         );
 
         if !registers.display_enabled {
-            return self.clear_frame(&wgpu_resources.device, &wgpu_resources.queue, frame_size);
+            return self.clear_frame(
+                &wgpu_resources.device,
+                &mut wgpu_resources.queued_command_buffers,
+                frame_size,
+            );
         }
 
         return self.write_frame(
@@ -153,7 +161,7 @@ impl SoftwareRenderer {
     fn clear_frame(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        command_buffers: &mut Vec<CommandBuffer>,
         frame_size: FrameSize,
     ) -> &wgpu::Texture {
         let texture = get_or_create_frame_texture(device, frame_size, &mut self.frame_textures);
@@ -184,7 +192,7 @@ impl SoftwareRenderer {
             render_pass.draw(0..4, 0..1);
         }
 
-        queue.submit(iter::once(encoder.finish()));
+        command_buffers.push(encoder.finish());
 
         texture
     }

@@ -54,6 +54,7 @@ pub trait Renderer {
     /// Should propagate any error encountered while rendering the frame.
     fn render_frame(
         &mut self,
+        command_buffers: impl Iterator<Item = wgpu::CommandBuffer>,
         frame: &wgpu::Texture,
         pixel_aspect_ratio: f64,
     ) -> Result<(), Self::Err>;
@@ -383,8 +384,10 @@ impl Ps1Emulator {
         self.last_render_cycles = self.scheduler.cpu_cycle_counter();
 
         let pixel_aspect_ratio = self.gpu.pixel_aspect_ratio();
-        let frame = self.gpu.generate_frame_texture();
-        renderer.render_frame(frame, pixel_aspect_ratio).map_err(TickError::Render)?;
+        let (frame, command_buffers) = self.gpu.generate_frame_texture();
+        renderer
+            .render_frame(command_buffers, frame, pixel_aspect_ratio)
+            .map_err(TickError::Render)?;
 
         audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
         self.audio_buffer.clear();

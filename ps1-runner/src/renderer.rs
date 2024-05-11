@@ -11,10 +11,10 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBinding,
-    BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, CommandEncoder,
-    CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor, Extent3d, Features,
-    FilterMode, FragmentState, FrontFace, Instance, InstanceDescriptor, Limits, LoadOp,
-    MultisampleState, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor,
+    BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, CommandBuffer,
+    CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor,
+    Extent3d, Features, FilterMode, FragmentState, FrontFace, Instance, InstanceDescriptor, Limits,
+    LoadOp, MultisampleState, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor,
     PolygonMode, PowerPreference, PresentMode, PrimitiveState, PrimitiveTopology, Queue,
     RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
     RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModule,
@@ -340,7 +340,12 @@ impl WgpuRenderer {
 impl Renderer for WgpuRenderer {
     type Err = anyhow::Error;
 
-    fn render_frame(&mut self, frame: &Texture, pixel_aspect_ratio: f64) -> Result<(), Self::Err> {
+    fn render_frame(
+        &mut self,
+        command_buffers: impl Iterator<Item = CommandBuffer>,
+        frame: &Texture,
+        pixel_aspect_ratio: f64,
+    ) -> Result<(), Self::Err> {
         let output = self.surface.get_current_texture()?;
         let output_view = output.texture.create_view(&TextureViewDescriptor::default());
 
@@ -404,7 +409,7 @@ impl Renderer for WgpuRenderer {
             render_pass.draw(0..4, 0..1);
         }
 
-        self.queue.submit(iter::once(encoder.finish()));
+        self.queue.submit(command_buffers.chain(iter::once(encoder.finish())));
         output.present();
 
         Ok(())

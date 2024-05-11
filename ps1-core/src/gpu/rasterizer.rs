@@ -116,7 +116,7 @@ pub trait RasterizerInterface {
     fn generate_frame_texture(
         &mut self,
         registers: &Registers,
-        wgpu_resources: &WgpuResources,
+        wgpu_resources: &mut WgpuResources,
     ) -> &wgpu::Texture;
 
     fn clone_vram(&self) -> Vram;

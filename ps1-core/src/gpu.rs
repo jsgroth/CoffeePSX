@@ -54,6 +54,7 @@ impl Default for DisplayConfig {
 pub struct WgpuResources {
     pub device: Rc<wgpu::Device>,
     pub queue: Rc<wgpu::Queue>,
+    pub queued_command_buffers: Vec<wgpu::CommandBuffer>,
     pub display_config: DisplayConfig,
 }
 
@@ -102,8 +103,12 @@ impl Gpu {
 
         let rasterizer = Rasterizer::new(&wgpu_device, display_config.rasterizer_type);
 
-        let wgpu_resources =
-            WgpuResources { device: wgpu_device, queue: wgpu_queue, display_config };
+        let wgpu_resources = WgpuResources {
+            device: wgpu_device,
+            queue: wgpu_queue,
+            queued_command_buffers: Vec::with_capacity(64),
+            display_config,
+        };
 
         Self {
             registers: Registers::new(),
@@ -149,8 +154,14 @@ impl Gpu {
         self.handle_gp1_write(value, timers, scheduler, interrupt_registers);
     }
 
-    pub fn generate_frame_texture(&mut self) -> &wgpu::Texture {
-        self.rasterizer.generate_frame_texture(&self.registers, &self.wgpu_resources)
+    pub fn generate_frame_texture(
+        &mut self,
+    ) -> (&wgpu::Texture, impl Iterator<Item = wgpu::CommandBuffer> + '_) {
+        let frame =
+            self.rasterizer.generate_frame_texture(&self.registers, &mut self.wgpu_resources);
+        let command_buffers = self.wgpu_resources.queued_command_buffers.drain(..);
+
+        (frame, command_buffers)
     }
 
     pub fn pixel_aspect_ratio(&self) -> f64 {
@@ -212,6 +223,7 @@ impl Gpu {
             wgpu_resources: WgpuResources {
                 device: wgpu_device,
                 queue: wgpu_queue,
+                queued_command_buffers: Vec::with_capacity(64),
                 display_config,
             },
             rasterizer,

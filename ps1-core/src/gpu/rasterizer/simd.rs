@@ -231,7 +231,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
     fn generate_frame_texture(
         &mut self,
         registers: &Registers,
-        wgpu_resources: &WgpuResources,
+        wgpu_resources: &mut WgpuResources,
     ) -> &wgpu::Texture {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
     }
