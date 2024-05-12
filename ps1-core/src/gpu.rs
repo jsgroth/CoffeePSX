@@ -101,7 +101,7 @@ impl Gpu {
     ) -> Self {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
-        let rasterizer = Rasterizer::new(&wgpu_device, display_config.rasterizer_type);
+        let rasterizer = Rasterizer::new(&wgpu_device, &wgpu_queue, display_config.rasterizer_type);
 
         let wgpu_resources = WgpuResources {
             device: wgpu_device,

@@ -2,10 +2,12 @@
 
 use bincode::{Decode, Encode};
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 
 use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TexturePage, TextureWindow};
 use crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
 use crate::gpu::rasterizer::simd::SimdSoftwareRasterizer;
+use crate::gpu::rasterizer::wgpuhardware::WgpuRasterizer;
 use crate::gpu::registers::Registers;
 use crate::gpu::{Color, Vertex, Vram, WgpuResources};
 
@@ -13,6 +15,7 @@ pub mod naive;
 #[cfg(target_arch = "x86_64")]
 pub mod simd;
 mod software;
+pub mod wgpuhardware;
 
 #[cfg(not(target_arch = "x86_64"))]
 pub mod simd {
@@ -126,6 +129,7 @@ pub trait RasterizerInterface {
 pub enum RasterizerType {
     NaiveSoftware,
     SimdSoftware,
+    WgpuHardware,
 }
 
 impl Default for RasterizerType {
@@ -157,8 +161,14 @@ impl DerefMut for Rasterizer {
     }
 }
 
+const RESOLUTION_SCALE: u32 = 4;
+
 impl Rasterizer {
-    pub fn new(wgpu_device: &wgpu::Device, rasterizer_type: RasterizerType) -> Self {
+    pub fn new(
+        wgpu_device: &Rc<wgpu::Device>,
+        wgpu_queue: &Rc<wgpu::Queue>,
+        rasterizer_type: RasterizerType,
+    ) -> Self {
         match rasterizer_type {
             RasterizerType::NaiveSoftware => {
                 Self(Box::new(NaiveSoftwareRasterizer::new(wgpu_device)))
@@ -166,6 +176,11 @@ impl Rasterizer {
             RasterizerType::SimdSoftware => {
                 Self(Box::new(SimdSoftwareRasterizer::new(wgpu_device)))
             }
+            RasterizerType::WgpuHardware => Self(Box::new(WgpuRasterizer::new(
+                Rc::clone(wgpu_device),
+                Rc::clone(wgpu_queue),
+                RESOLUTION_SCALE,
+            ))),
         }
     }
 
@@ -186,6 +201,7 @@ impl Rasterizer {
             RasterizerType::SimdSoftware => {
                 Self(Box::new(SimdSoftwareRasterizer::from_vram(wgpu_device, &state.vram)))
             }
+            RasterizerType::WgpuHardware => todo!("HW rasterizer load state"),
         }
     }
 }

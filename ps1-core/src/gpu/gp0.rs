@@ -340,7 +340,8 @@ impl Gpu {
     ) -> u32 {
         let mut word = 0_u32;
         for i in 0..2 {
-            let halfword = self.gp0.blit_buffer[(buffer_idx + i) as usize];
+            let halfword =
+                self.gp0.blit_buffer.get((buffer_idx + i) as usize).copied().unwrap_or(0);
             word |= u32::from(halfword) << (16 * i);
 
             halfwords_remaining -= 1;

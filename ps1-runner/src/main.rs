@@ -42,6 +42,8 @@ struct Args {
     audio_sync: bool,
     #[arg(long = "no-simd", default_value_t = true, action = clap::ArgAction::SetFalse)]
     simd: bool,
+    #[arg(long = "hardware", default_value_t)]
+    hardware_rasterizer: bool,
 }
 
 impl Args {
@@ -328,7 +330,9 @@ fn main() -> anyhow::Result<()> {
     })?;
 
     let mut display_config = DisplayConfig {
-        rasterizer_type: if !args.simd {
+        rasterizer_type: if args.hardware_rasterizer {
+            RasterizerType::WgpuHardware
+        } else if !args.simd {
             RasterizerType::NaiveSoftware
         } else {
             RasterizerType::default()
