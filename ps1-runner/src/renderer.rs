@@ -201,6 +201,8 @@ impl WgpuRenderer {
         window: &W,
         window_size: (u32, u32),
         present_mode: PresentMode,
+        required_features: Features,
+        required_limits: Limits,
     ) -> anyhow::Result<Self>
     where
         W: HasWindowHandle + HasDisplayHandle,
@@ -220,11 +222,7 @@ impl WgpuRenderer {
 
         let (device, queue) = adapter
             .request_device(
-                &DeviceDescriptor {
-                    label: "device".into(),
-                    required_features: Features::default(),
-                    required_limits: Limits::default(),
-                },
+                &DeviceDescriptor { label: "device".into(), required_features, required_limits },
                 None,
             )
             .await?;
@@ -446,7 +444,10 @@ fn create_render_bind_group(
     frame: &Texture,
     sampler: &Sampler,
 ) -> BindGroup {
-    let frame_view = frame.create_view(&TextureViewDescriptor::default());
+    let frame_view = frame.create_view(&TextureViewDescriptor {
+        format: Some(TextureFormat::Rgba8UnormSrgb),
+        ..TextureViewDescriptor::default()
+    });
 
     device.create_bind_group(&BindGroupDescriptor {
         label: "render_bind_group".into(),
@@ -556,7 +557,10 @@ fn execute_prescale_pipeline(
     frame: &Texture,
     encoder: &mut CommandEncoder,
 ) {
-    let frame_view = frame.create_view(&TextureViewDescriptor::default());
+    let frame_view = frame.create_view(&TextureViewDescriptor {
+        format: Some(TextureFormat::Rgba8UnormSrgb),
+        ..TextureViewDescriptor::default()
+    });
 
     let bind_group = device.create_bind_group(&BindGroupDescriptor {
         label: "prescale_bind_group".into(),

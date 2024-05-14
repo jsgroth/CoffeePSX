@@ -1,54 +1,14 @@
-use crate::api::{ColorDepthBits, DisplayConfig};
-use crate::gpu::rasterizer::{CpuVramBlitArgs, VramVramBlitArgs};
-use crate::gpu::registers::{Registers, VerticalResolution};
-use crate::gpu::{Color, VideoMode, VramArray, WgpuResources};
+use crate::api::ColorDepthBits;
+use crate::gpu::rasterizer::{
+    ClearPipeline, CpuVramBlitArgs, FrameCoords, FrameSize, ScreenSize, VramVramBlitArgs,
+};
+use crate::gpu::registers::Registers;
+use crate::gpu::{rasterizer, Color, VideoMode, VramArray, WgpuResources};
 use bytemuck::{Pod, Zeroable};
 use std::cmp;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use wgpu::{CommandBuffer, PipelineCompilationOptions};
-
-struct ScreenSize {
-    left: i32,
-    right: i32,
-    top: i32,
-    bottom: i32,
-    v_overscan_rows: i32,
-}
-
-impl ScreenSize {
-    const NTSC: Self = Self { left: 0x260, right: 0xC60, top: 16, bottom: 256, v_overscan_rows: 8 };
-
-    const PAL: Self = Self { left: 0x274, right: 0xC74, top: 20, bottom: 308, v_overscan_rows: 10 };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FrameCoords {
-    // Frame buffer coordinates
-    frame_x: u32,
-    frame_y: u32,
-    // Pixel offsets to apply to the frame buffer coordinates (if X1/Y1 are less than standard values)
-    display_x_offset: u32,
-    display_y_offset: u32,
-    // First X/Y pixel values to display (if X1/Y1 are greater than standard values)
-    display_x_start: u32,
-    display_y_start: u32,
-    // Number of pixels to render from the frame buffer in each dimension
-    display_width: u32,
-    display_height: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct FrameSize {
-    width: u32,
-    height: u32,
-}
-
-impl Display for FrameSize {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ width: {}, height: {} }}", self.width, self.height)
-    }
-}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
@@ -76,12 +36,12 @@ type FrameBuffer = [RgbaColor; FRAME_BUFFER_LEN];
 pub struct SoftwareRenderer {
     frame_buffer: Box<FrameBuffer>,
     frame_textures: HashMap<FrameSize, wgpu::Texture>,
-    clear_pipeline: wgpu::RenderPipeline,
+    clear_pipeline: ClearPipeline,
 }
 
 impl SoftwareRenderer {
     pub fn new(device: &wgpu::Device) -> Self {
-        let clear_pipeline = create_clear_pipeline(device);
+        let clear_pipeline = ClearPipeline::new(device, wgpu::TextureFormat::Rgba8UnormSrgb);
 
         Self {
             frame_buffer: vec![RgbaColor::BLACK; FRAME_BUFFER_LEN]
@@ -120,7 +80,7 @@ impl SoftwareRenderer {
         }
 
         let (frame_coords, frame_size) =
-            compute_frame_location(registers, wgpu_resources.display_config);
+            rasterizer::compute_frame_location(registers, wgpu_resources.display_config);
         let Some(frame_coords) = frame_coords else {
             return self.clear_frame(
                 &wgpu_resources.device,
@@ -165,32 +125,12 @@ impl SoftwareRenderer {
         frame_size: FrameSize,
     ) -> &wgpu::Texture {
         let texture = get_or_create_frame_texture(device, frame_size, &mut self.frame_textures);
-        let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: "clear_encoder".into(),
         });
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: "clear_render_pass".into(),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &texture_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            render_pass.set_pipeline(&self.clear_pipeline);
-
-            render_pass.draw(0..4, 0..1);
-        }
+        self.clear_pipeline.draw(&texture, &mut encoder);
 
         command_buffers.push(encoder.finish());
 
@@ -224,132 +164,6 @@ impl SoftwareRenderer {
 
         frame_texture
     }
-}
-
-fn compute_frame_location(
-    registers: &Registers,
-    display_config: DisplayConfig,
-) -> (Option<FrameCoords>, FrameSize) {
-    let crop_v_overscan = display_config.crop_vertical_overscan;
-    let screen_size = match registers.video_mode {
-        VideoMode::Ntsc => ScreenSize::NTSC,
-        VideoMode::Pal => ScreenSize::PAL,
-    };
-
-    let screen_top = if crop_v_overscan {
-        screen_size.top + screen_size.v_overscan_rows
-    } else {
-        screen_size.top
-    };
-    let screen_bottom = if crop_v_overscan {
-        screen_size.bottom - screen_size.v_overscan_rows
-    } else {
-        screen_size.bottom
-    };
-
-    let dot_clock_divider: i32 = registers.dot_clock_divider().into();
-    let frame_width = (screen_size.right - screen_size.left) / dot_clock_divider;
-
-    let height_multipler =
-        if registers.interlaced && registers.v_resolution == VerticalResolution::Double {
-            2
-        } else {
-            1
-        };
-    let frame_height = (if crop_v_overscan {
-        screen_size.bottom - screen_size.top - 2 * screen_size.v_overscan_rows
-    } else {
-        screen_size.bottom - screen_size.top
-    }) * height_multipler;
-
-    let frame_size = FrameSize { width: frame_width as u32, height: frame_height as u32 };
-
-    let x1 = registers.x_display_range.0 as i32;
-    let x2 = cmp::min(screen_size.right, registers.x_display_range.1 as i32);
-    let y1 = registers.y_display_range.0 as i32;
-    let y2 = cmp::min(screen_bottom, registers.y_display_range.1 as i32);
-
-    let mut display_width_clocks = x2 - x1;
-    let mut display_height = (y2 - y1) * height_multipler;
-
-    let mut display_x_offset = 0;
-    if x1 < screen_size.left {
-        display_x_offset = (screen_size.left - x1) / dot_clock_divider;
-        display_width_clocks -= screen_size.left - x1;
-    }
-
-    let mut display_y_offset = 0;
-    if y1 < screen_top {
-        display_y_offset = (screen_top - y1) * height_multipler;
-        display_height -= (screen_top - y1) * height_multipler;
-    }
-
-    let mut display_width = display_width_clocks / dot_clock_divider;
-    if display_width <= 0 || display_height <= 0 {
-        return (None, frame_size);
-    }
-
-    let display_x_start = cmp::max(0, (x1 - screen_size.left) / dot_clock_divider);
-    let display_y_start = cmp::max(0, (y1 - screen_top) * height_multipler);
-
-    // Clamp display width in case of errors caused by dot clock division
-    display_width = cmp::min(display_width, frame_width - display_x_start);
-
-    assert!(
-        display_y_start + display_height <= frame_height,
-        "Vertical display range: {display_y_start} + {display_height} <= {frame_height}"
-    );
-
-    (
-        Some(FrameCoords {
-            frame_x: registers.display_area_x,
-            frame_y: registers.display_area_y,
-            display_x_offset: display_x_offset as u32,
-            display_y_offset: display_y_offset as u32,
-            display_x_start: display_x_start as u32,
-            display_y_start: display_y_start as u32,
-            display_width: display_width as u32,
-            display_height: display_height as u32,
-        }),
-        frame_size,
-    )
-}
-
-fn create_clear_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
-    let clear_module = device.create_shader_module(wgpu::include_wgsl!("clear.wgsl"));
-
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: "clear_pipeline".into(),
-        layout: None,
-        vertex: wgpu::VertexState {
-            module: &clear_module,
-            entry_point: "vs_main",
-            compilation_options: PipelineCompilationOptions::default(),
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleStrip,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: None,
-            unclipped_depth: false,
-            polygon_mode: wgpu::PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &clear_module,
-            entry_point: "fs_main",
-            compilation_options: PipelineCompilationOptions::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        multiview: None,
-    })
 }
 
 fn get_or_create_frame_texture<'a>(

@@ -38,6 +38,7 @@ pub struct DisplayConfig {
     pub crop_vertical_overscan: bool,
     pub dump_vram: bool,
     pub rasterizer_type: RasterizerType,
+    pub hardware_resolution_scale: u32,
 }
 
 impl Default for DisplayConfig {
@@ -46,6 +47,7 @@ impl Default for DisplayConfig {
             crop_vertical_overscan: true,
             dump_vram: false,
             rasterizer_type: RasterizerType::default(),
+            hardware_resolution_scale: 4,
         }
     }
 }
@@ -101,7 +103,12 @@ impl Gpu {
     ) -> Self {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
-        let rasterizer = Rasterizer::new(&wgpu_device, &wgpu_queue, display_config.rasterizer_type);
+        let rasterizer = Rasterizer::new(
+            &wgpu_device,
+            &wgpu_queue,
+            display_config.rasterizer_type,
+            display_config.hardware_resolution_scale,
+        );
 
         let wgpu_resources = WgpuResources {
             device: wgpu_device,

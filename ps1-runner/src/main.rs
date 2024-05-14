@@ -44,6 +44,8 @@ struct Args {
     simd: bool,
     #[arg(long = "hardware", default_value_t)]
     hardware_rasterizer: bool,
+    #[arg(long, default_value_t = 4)]
+    resolution_scale: u32,
 }
 
 impl Args {
@@ -326,6 +328,8 @@ fn main() -> anyhow::Result<()> {
             &window,
             (window.inner_size().width, window.inner_size().height),
             args.present_mode(),
+            wgpu::Features::default(),
+            wgpu::Limits { max_texture_dimension_2d: 16 * 1024, ..wgpu::Limits::default() },
         )
     })?;
 
@@ -337,6 +341,7 @@ fn main() -> anyhow::Result<()> {
         } else {
             RasterizerType::default()
         },
+        hardware_resolution_scale: args.resolution_scale,
         ..DisplayConfig::default()
     };
 
