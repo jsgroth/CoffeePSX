@@ -9,18 +9,18 @@ use std::{cmp, iter, thread};
 use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBinding,
-    BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites, CommandBuffer,
-    CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode, Device, DeviceDescriptor,
-    Extent3d, Features, FilterMode, FragmentState, FrontFace, Instance, InstanceDescriptor, Limits,
-    LoadOp, MultisampleState, Operations, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PolygonMode, PowerPreference, PresentMode, PrimitiveState, PrimitiveTopology, Queue,
-    RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor,
-    RequestAdapterOptions, Sampler, SamplerBindingType, SamplerDescriptor, ShaderModule,
-    ShaderStages, StoreOp, Surface, SurfaceConfiguration, SurfaceTargetUnsafe, Texture,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureViewDescriptor, TextureViewDimension, VertexState,
+    Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
+    Buffer, BufferBinding, BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites,
+    CommandBuffer, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode, Device,
+    DeviceDescriptor, Extent3d, Features, FilterMode, FragmentState, FrontFace, Instance,
+    InstanceDescriptor, Limits, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PolygonMode, PowerPreference, PresentMode, PrimitiveState,
+    PrimitiveTopology, Queue, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType,
+    SamplerDescriptor, ShaderModule, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
+    SurfaceTargetUnsafe, Texture, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 
 struct PrescalePipeline {
@@ -207,7 +207,10 @@ impl WgpuRenderer {
     where
         W: HasWindowHandle + HasDisplayHandle,
     {
-        let instance = Instance::new(InstanceDescriptor::default());
+        let instance = Instance::new(InstanceDescriptor {
+            backends: Backends::PRIMARY,
+            ..InstanceDescriptor::default()
+        });
 
         let surface = instance.create_surface_unsafe(SurfaceTargetUnsafe::from_window(window)?)?;
 
