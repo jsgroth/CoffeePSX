@@ -183,11 +183,18 @@ impl UntexturedOpaqueTrianglePipeline {
     }
 
     fn prepare(&mut self, queue: &Queue) {
+        log::debug!(
+            "Preparing to draw {} untextured opaque triangle vertices",
+            self.ram_vertex_buffer.len()
+        );
+
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.ram_vertex_buffer));
         self.ram_vertex_buffer.clear();
     }
 
     fn draw<'rpass>(&'rpass mut self, resolution_scale: u32, render_pass: &mut RenderPass<'rpass>) {
+        log::debug!("Executing {} untextured opaque triangle batches", self.batches.len());
+
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
 
@@ -346,6 +353,98 @@ impl CpuVramBlitPipeline {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
+struct ShaderVramFillArgs {
+    position: [u32; 2],
+    size: [u32; 2],
+    color: u32,
+}
+
+#[derive(Debug)]
+struct VramFillPipeline {
+    bind_group: BindGroup,
+    pipeline: ComputePipeline,
+}
+
+impl VramFillPipeline {
+    const WORKGROUP_SIZE: u32 = 16;
+
+    fn new(device: &Device, native_vram: &Texture) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: "vram_fill_bind_group_layout".into(),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::StorageTexture {
+                    access: StorageTextureAccess::WriteOnly,
+                    format: native_vram.format(),
+                    view_dimension: TextureViewDimension::D2,
+                },
+                count: None,
+            }],
+        });
+
+        let native_vram_view = native_vram.create_view(&TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: "vram_fill_bind_group".into(),
+            layout: &bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&native_vram_view),
+            }],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: "vram_fill_pipeline_layout".into(),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::COMPUTE,
+                range: 0..mem::size_of::<ShaderVramFillArgs>() as u32,
+            }],
+        });
+
+        let shader = device.create_shader_module(wgpu::include_wgsl!("wgpuhardware/vramfill.wgsl"));
+        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: "vram_fill_pipeline".into(),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "vram_fill",
+            compilation_options: PipelineCompilationOptions::default(),
+        });
+
+        Self { bind_group, pipeline }
+    }
+
+    fn dispatch<'cpass>(
+        &'cpass self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        color: Color,
+        compute_pass: &mut ComputePass<'cpass>,
+    ) {
+        let args = ShaderVramFillArgs {
+            position: [x, y],
+            size: [width, height],
+            color: u32::from(color.r >> 3)
+                | (u32::from(color.g >> 3) << 5)
+                | (u32::from(color.b >> 3) << 10),
+        };
+
+        compute_pass.set_pipeline(&self.pipeline);
+        compute_pass.set_bind_group(0, &self.bind_group, &[]);
+        compute_pass.set_push_constants(0, bytemuck::cast_slice(&[args]));
+
+        let x_workgroups =
+            width / Self::WORKGROUP_SIZE + u32::from(width % Self::WORKGROUP_SIZE != 0);
+        let y_workgroups =
+            height / Self::WORKGROUP_SIZE + u32::from(height % Self::WORKGROUP_SIZE != 0);
+        compute_pass.dispatch_workgroups(x_workgroups, y_workgroups, 1);
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
 struct VramSyncVertex {
     position: [i32; 2],
 }
@@ -492,6 +591,13 @@ impl NativeScaledSyncPipeline {
 enum DrawCommand {
     DrawTriangle { args: DrawTriangleArgs, draw_settings: DrawSettings },
     CpuVramBlit { args: CpuVramBlitArgs, buffer_bind_group: BindGroup, sync_vertex_buffer: Buffer },
+    VramFill { x: u32, y: u32, width: u32, height: u32, color: Color, sync_vertex_buffer: Buffer },
+}
+
+impl DrawCommand {
+    fn can_share_compute_pass(&self) -> bool {
+        matches!(self, Self::CpuVramBlit { .. } | Self::VramFill { .. })
+    }
 }
 
 #[derive(Debug)]
@@ -505,6 +611,7 @@ pub struct WgpuRasterizer {
     clear_pipeline: ClearPipeline,
     untextured_opaque_triangle_pipeline: UntexturedOpaqueTrianglePipeline,
     cpu_vram_blit_pipeline: CpuVramBlitPipeline,
+    vram_fill_pipeline: VramFillPipeline,
     native_scaled_sync_pipeline: NativeScaledSyncPipeline,
     draw_commands: Vec<DrawCommand>,
 }
@@ -554,6 +661,8 @@ impl WgpuRasterizer {
 
         let cpu_vram_blit_pipeline = CpuVramBlitPipeline::new(&device, &native_vram);
 
+        let vram_fill_pipeline = VramFillPipeline::new(&device, &native_vram);
+
         let native_scaled_sync_pipeline =
             NativeScaledSyncPipeline::new(&device, &native_vram, resolution_scale);
 
@@ -567,6 +676,7 @@ impl WgpuRasterizer {
             clear_pipeline,
             untextured_opaque_triangle_pipeline,
             cpu_vram_blit_pipeline,
+            vram_fill_pipeline,
             native_scaled_sync_pipeline,
             draw_commands: Vec::with_capacity(2000),
         }
@@ -613,10 +723,10 @@ impl WgpuRasterizer {
 
                     i = j;
                 }
-                DrawCommand::CpuVramBlit { .. } => {
+                DrawCommand::CpuVramBlit { .. } | DrawCommand::VramFill { .. } => {
                     let mut j = i + 1;
                     while j < self.draw_commands.len()
-                        && matches!(&self.draw_commands[j], DrawCommand::CpuVramBlit { .. })
+                        && self.draw_commands[j].can_share_compute_pass()
                     {
                         j += 1;
                     }
@@ -683,11 +793,26 @@ impl WgpuRasterizer {
             });
 
             for draw_command in &self.draw_commands[draw_command_range.clone()] {
-                let DrawCommand::CpuVramBlit { args, buffer_bind_group, .. } = draw_command else {
-                    continue;
-                };
-
-                self.cpu_vram_blit_pipeline.dispatch(args, buffer_bind_group, &mut compute_pass);
+                match draw_command {
+                    DrawCommand::CpuVramBlit { args, buffer_bind_group, .. } => {
+                        self.cpu_vram_blit_pipeline.dispatch(
+                            args,
+                            buffer_bind_group,
+                            &mut compute_pass,
+                        );
+                    }
+                    &DrawCommand::VramFill { x, y, width, height, color, .. } => {
+                        self.vram_fill_pipeline.dispatch(
+                            x,
+                            y,
+                            width,
+                            height,
+                            color,
+                            &mut compute_pass,
+                        );
+                    }
+                    DrawCommand::DrawTriangle { .. } => {}
+                }
             }
         }
 
@@ -704,11 +829,13 @@ impl WgpuRasterizer {
             });
 
             for draw_command in &self.draw_commands[draw_command_range] {
-                let DrawCommand::CpuVramBlit { sync_vertex_buffer, .. } = draw_command else {
-                    continue;
-                };
-
-                self.native_scaled_sync_pipeline.draw(sync_vertex_buffer, &mut render_pass);
+                match draw_command {
+                    DrawCommand::CpuVramBlit { sync_vertex_buffer, .. }
+                    | DrawCommand::VramFill { sync_vertex_buffer, .. } => {
+                        self.native_scaled_sync_pipeline.draw(sync_vertex_buffer, &mut render_pass);
+                    }
+                    DrawCommand::DrawTriangle { .. } => {}
+                }
             }
         }
     }
@@ -724,7 +851,21 @@ impl RasterizerInterface for WgpuRasterizer {
 
     fn draw_rectangle(&mut self, _args: DrawRectangleArgs, _draw_settings: &DrawSettings) {}
 
-    fn vram_fill(&mut self, _x: u32, _y: u32, _width: u32, _height: u32, _color: Color) {}
+    fn vram_fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Color) {
+        // TODO scaled/native sync
+
+        let sync_vertex_buffer =
+            self.native_scaled_sync_pipeline.prepare(&self.device, [x, y], [width, height]);
+
+        self.draw_commands.push(DrawCommand::VramFill {
+            x,
+            y,
+            width,
+            height,
+            color,
+            sync_vertex_buffer,
+        });
+    }
 
     fn cpu_to_vram_blit(&mut self, args: CpuVramBlitArgs, data: &[u16]) {
         // TODO scaled/native sync
@@ -819,8 +960,8 @@ impl RasterizerInterface for WgpuRasterizer {
                 aspect: TextureAspect::All,
             },
             Extent3d {
-                width: frame_coords.display_width,
-                height: frame_coords.display_height,
+                width: self.resolution_scale * frame_coords.display_width,
+                height: self.resolution_scale * frame_coords.display_height,
                 depth_or_array_layers: 1,
             },
         );
