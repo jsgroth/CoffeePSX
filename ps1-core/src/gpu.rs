@@ -238,7 +238,7 @@ impl Gpu {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, Encode, Decode)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub struct Vertex {
     pub x: i32,
     pub y: i32,
