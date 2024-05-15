@@ -1,7 +1,8 @@
-use crate::gpu::gp0::DrawSettings;
+use crate::gpu::gp0::{DrawSettings, TextureColorDepthBits};
 use crate::gpu::rasterizer::{
     ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, FrameSize,
-    RasterizerInterface, TriangleShading, VramVramBlitArgs,
+    RasterizerInterface, TextureMappingMode, TriangleShading, TriangleTextureMapping,
+    VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{rasterizer, Color, Vertex, Vram, WgpuResources};
@@ -32,8 +33,8 @@ const VRAM_HEIGHT: u32 = 512;
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 struct ShaderDrawSettings {
-    draw_area_top_left: [i32; 2],
-    draw_area_bottom_right: [i32; 2],
+    draw_area_top_left: [f32; 2],
+    draw_area_bottom_right: [f32; 2],
     force_mask_bit: u32,
 }
 
@@ -43,12 +44,12 @@ impl ShaderDrawSettings {
 
         Self {
             draw_area_top_left: [
-                resolution_scale * draw_settings.draw_area_top_left.x,
-                resolution_scale * draw_settings.draw_area_top_left.y,
+                (resolution_scale * draw_settings.draw_area_top_left.x) as f32,
+                (resolution_scale * draw_settings.draw_area_top_left.y) as f32,
             ],
             draw_area_bottom_right: [
-                resolution_scale * (draw_settings.draw_area_bottom_right.x + 1),
-                resolution_scale * (draw_settings.draw_area_bottom_right.y + 1),
+                (resolution_scale * (draw_settings.draw_area_bottom_right.x + 1)) as f32,
+                (resolution_scale * (draw_settings.draw_area_bottom_right.y + 1)) as f32,
             ],
             force_mask_bit: draw_settings.force_mask_bit.into(),
         }
@@ -72,26 +73,110 @@ impl UntexturedVertex {
     };
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+struct TexturedVertex {
+    position: [i32; 2],
+    color: [u32; 3],
+    uv: [u32; 2],
+    texpage: [u32; 2],
+    tex_window_mask: [u32; 2],
+    tex_window_offset: [u32; 2],
+    clut: [u32; 2],
+    color_depth: u32,
+    modulated: u32,
+}
+
+impl TexturedVertex {
+    const ATTRIBUTES: [VertexAttribute; 9] = wgpu::vertex_attr_array![
+        0 => Sint32x2,
+        1 => Uint32x3,
+        2 => Uint32x2,
+        3 => Uint32x2,
+        4 => Uint32x2,
+        5 => Uint32x2,
+        6 => Uint32x2,
+        7 => Uint32,
+        8 => Uint32,
+    ];
+
+    const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
+        array_stride: mem::size_of::<Self>() as u64,
+        step_mode: VertexStepMode::Vertex,
+        attributes: &Self::ATTRIBUTES,
+    };
+
+    fn new(
+        position: [i32; 2],
+        color: Color,
+        u: u8,
+        v: u8,
+        texture_mapping: &TriangleTextureMapping,
+    ) -> Self {
+        Self {
+            position,
+            color: [color.r.into(), color.g.into(), color.b.into()],
+            uv: [u.into(), v.into()],
+            texpage: [64 * texture_mapping.texpage.x_base, texture_mapping.texpage.y_base],
+            tex_window_mask: [
+                texture_mapping.window.x_mask << 3,
+                texture_mapping.window.y_mask << 3,
+            ],
+            tex_window_offset: [
+                texture_mapping.window.x_offset << 3,
+                texture_mapping.window.y_offset << 3,
+            ],
+            clut: [(16 * texture_mapping.clut_x).into(), texture_mapping.clut_y.into()],
+            color_depth: match texture_mapping.texpage.color_depth {
+                TextureColorDepthBits::Four => 0,
+                TextureColorDepthBits::Eight => 1,
+                TextureColorDepthBits::Fifteen => 2,
+            },
+            modulated: (texture_mapping.mode == TextureMappingMode::Modulated).into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrianglePipeline {
+    UntexturedOpaque,
+    TexturedOpaque,
+}
+
+impl TrianglePipeline {
+    fn from_args(args: &DrawTriangleArgs) -> Self {
+        match &args.texture_mapping {
+            Some(_) => Self::TexturedOpaque,
+            None => Self::UntexturedOpaque,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct DrawBatch {
     draw_settings: DrawSettings,
+    pipeline: TrianglePipeline,
     start: u32,
     end: u32,
 }
 
 #[derive(Debug)]
-struct UntexturedOpaqueTrianglePipeline {
-    ram_vertex_buffer: Vec<UntexturedVertex>,
-    vertex_buffer: Buffer,
-    pipeline: RenderPipeline,
+struct TrianglePipelines {
+    ram_untextured_buffer: Vec<UntexturedVertex>,
+    untextured_buffer: Buffer,
+    untextured_pipeline: RenderPipeline,
+    ram_textured_buffer: Vec<TexturedVertex>,
+    textured_buffer: Buffer,
+    textured_bind_group: BindGroup,
+    textured_pipeline: RenderPipeline,
     batches: Vec<DrawBatch>,
 }
 
-impl UntexturedOpaqueTrianglePipeline {
+impl TrianglePipelines {
     const MAX_VERTICES: u64 = 15000;
 
-    fn new(device: &Device, draw_shader: &ShaderModule) -> Self {
-        let vertex_buffer = device.create_buffer(&BufferDescriptor {
+    fn new(device: &Device, draw_shader: &ShaderModule, native_vram: &Texture) -> Self {
+        let untextured_buffer = device.create_buffer(&BufferDescriptor {
             label: "untextured_opaque_triangle_vertex_buffer".into(),
             size: Self::MAX_VERTICES * mem::size_of::<UntexturedVertex>() as u64,
             usage: BufferUsages::COPY_DST | BufferUsages::VERTEX,
@@ -107,7 +192,7 @@ impl UntexturedOpaqueTrianglePipeline {
             }],
         });
 
-        let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+        let untextured_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: "untextured_opaque_triangle_pipeline".into(),
             layout: Some(&pipeline_layout),
             vertex: VertexState {
@@ -140,31 +225,112 @@ impl UntexturedOpaqueTrianglePipeline {
             multiview: None,
         });
 
+        let textured_buffer = device.create_buffer(&BufferDescriptor {
+            label: "textured_opaque_triangle_vertex_buffer".into(),
+            size: Self::MAX_VERTICES * mem::size_of::<TexturedVertex>() as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::VERTEX,
+            mapped_at_creation: false,
+        });
+
+        let textured_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: "textured_opaque_triangle_bind_group_layout".into(),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::StorageTexture {
+                        access: StorageTextureAccess::ReadOnly,
+                        format: native_vram.format(),
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                }],
+            });
+
+        let native_vram_view = native_vram.create_view(&TextureViewDescriptor::default());
+        let textured_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: "textured_opaque_triangle_bind_group".into(),
+            layout: &textured_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&native_vram_view),
+            }],
+        });
+
+        let textured_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: "textured_opaque_triangle_pipeline_layout".into(),
+            bind_group_layouts: &[&textured_bind_group_layout],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::FRAGMENT,
+                range: 0..mem::size_of::<ShaderDrawSettings>() as u32,
+            }],
+        });
+
+        let textured_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "textured_opaque_triangle_pipeline".into(),
+            layout: Some(&textured_pipeline_layout),
+            vertex: VertexState {
+                module: draw_shader,
+                entry_point: "vs_textured",
+                compilation_options: PipelineCompilationOptions::default(),
+                buffers: &[TexturedVertex::LAYOUT],
+            },
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: None,
+                unclipped_depth: false,
+                polygon_mode: PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: draw_shader,
+                entry_point: "fs_textured_opaque",
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(ColorTargetState {
+                    format: TextureFormat::Rgba8Unorm,
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+        });
+
         Self {
-            ram_vertex_buffer: Vec::with_capacity(Self::MAX_VERTICES as usize),
-            vertex_buffer,
-            pipeline,
+            ram_untextured_buffer: Vec::with_capacity(Self::MAX_VERTICES as usize),
+            untextured_buffer,
+            untextured_pipeline,
+            ram_textured_buffer: Vec::with_capacity(Self::MAX_VERTICES as usize),
+            textured_buffer,
+            textured_bind_group,
+            textured_pipeline,
             batches: Vec::with_capacity(Self::MAX_VERTICES as usize),
         }
     }
 
-    fn add_triangle(
+    fn add_untextured_triangle(
         &mut self,
         vertices: [Vertex; 3],
         shading: TriangleShading,
         draw_settings: &DrawSettings,
     ) {
-        let draw_offset = draw_settings.draw_offset;
-
-        if !self.batches.last().is_some_and(|batch| &batch.draw_settings == draw_settings) {
-            let start = self.batches.last().map_or(0, |batch| batch.end);
+        if !self.batches.last().is_some_and(|batch| {
+            &batch.draw_settings == draw_settings
+                && batch.pipeline == TrianglePipeline::UntexturedOpaque
+        }) {
+            let start = self.ram_untextured_buffer.len() as u32;
             self.batches.push(DrawBatch {
                 draw_settings: draw_settings.clone(),
+                pipeline: TrianglePipeline::UntexturedOpaque,
                 start,
                 end: start,
             });
         }
 
+        let draw_offset = draw_settings.draw_offset;
         let positions = vertices.map(|vertex| [vertex.x + draw_offset.x, vertex.y + draw_offset.y]);
 
         let colors = match shading {
@@ -173,7 +339,7 @@ impl UntexturedOpaqueTrianglePipeline {
         };
 
         for (position, color) in positions.into_iter().zip(colors) {
-            self.ram_vertex_buffer.push(UntexturedVertex {
+            self.ram_untextured_buffer.push(UntexturedVertex {
                 position,
                 color: [color.r.into(), color.g.into(), color.b.into()],
             });
@@ -182,31 +348,103 @@ impl UntexturedOpaqueTrianglePipeline {
         self.batches.last_mut().unwrap().end += 3;
     }
 
+    fn add_textured_triangle(
+        &mut self,
+        vertices: [Vertex; 3],
+        shading: TriangleShading,
+        texture_mapping: &TriangleTextureMapping,
+        draw_settings: &DrawSettings,
+    ) {
+        if !self.batches.last().is_some_and(|batch| {
+            &batch.draw_settings == draw_settings
+                && batch.pipeline == TrianglePipeline::TexturedOpaque
+        }) {
+            let start = self.ram_textured_buffer.len() as u32;
+            self.batches.push(DrawBatch {
+                draw_settings: draw_settings.clone(),
+                pipeline: TrianglePipeline::TexturedOpaque,
+                start,
+                end: start,
+            });
+        }
+
+        let draw_offset = draw_settings.draw_offset;
+        let positions = vertices.map(|vertex| [vertex.x + draw_offset.x, vertex.y + draw_offset.y]);
+
+        let colors = match shading {
+            TriangleShading::Flat(color) => [color; 3],
+            TriangleShading::Gouraud(colors) => colors,
+        };
+
+        for (i, position) in positions.into_iter().enumerate() {
+            self.ram_textured_buffer.push(TexturedVertex::new(
+                position,
+                colors[i],
+                texture_mapping.u[i],
+                texture_mapping.v[i],
+                texture_mapping,
+            ));
+        }
+
+        self.batches.last_mut().unwrap().end += 3;
+    }
+
     fn prepare(&mut self, queue: &Queue) {
         log::debug!(
             "Preparing to draw {} untextured opaque triangle vertices",
-            self.ram_vertex_buffer.len()
+            self.ram_untextured_buffer.len()
+        );
+        log::debug!(
+            "Preparing to draw {} textured opaque triangle vertices",
+            self.ram_textured_buffer.len()
         );
 
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.ram_vertex_buffer));
-        self.ram_vertex_buffer.clear();
+        queue.write_buffer(
+            &self.untextured_buffer,
+            0,
+            bytemuck::cast_slice(&self.ram_untextured_buffer),
+        );
+        queue.write_buffer(
+            &self.textured_buffer,
+            0,
+            bytemuck::cast_slice(&self.ram_textured_buffer),
+        );
+
+        self.ram_untextured_buffer.clear();
+        self.ram_textured_buffer.clear();
     }
 
     fn draw<'rpass>(&'rpass mut self, resolution_scale: u32, render_pass: &mut RenderPass<'rpass>) {
         log::debug!("Executing {} untextured opaque triangle batches", self.batches.len());
 
-        render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-
         for batch in self.batches.drain(..) {
             let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
 
-            render_pass.set_push_constants(
-                ShaderStages::FRAGMENT,
-                0,
-                bytemuck::cast_slice(&[draw_settings]),
-            );
-            render_pass.draw(batch.start..batch.end, 0..1);
+            match batch.pipeline {
+                TrianglePipeline::UntexturedOpaque => {
+                    render_pass.set_pipeline(&self.untextured_pipeline);
+                    render_pass.set_vertex_buffer(0, self.untextured_buffer.slice(..));
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+
+                    render_pass.draw(batch.start..batch.end, 0..1);
+                }
+                TrianglePipeline::TexturedOpaque => {
+                    render_pass.set_pipeline(&self.textured_pipeline);
+                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, self.textured_buffer.slice(..));
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+
+                    render_pass.draw(batch.start..batch.end, 0..1);
+                }
+            }
         }
     }
 }
@@ -609,7 +847,7 @@ pub struct WgpuRasterizer {
     native_vram: Texture,
     frame_textures: HashMap<FrameSize, Texture>,
     clear_pipeline: ClearPipeline,
-    untextured_opaque_triangle_pipeline: UntexturedOpaqueTrianglePipeline,
+    triangle_pipelines: TrianglePipelines,
     cpu_vram_blit_pipeline: CpuVramBlitPipeline,
     vram_fill_pipeline: VramFillPipeline,
     native_scaled_sync_pipeline: NativeScaledSyncPipeline,
@@ -657,7 +895,7 @@ impl WgpuRasterizer {
         let draw_shader =
             device.create_shader_module(wgpu::include_wgsl!("wgpuhardware/draw.wgsl"));
         let untextured_opaque_triangle_pipeline =
-            UntexturedOpaqueTrianglePipeline::new(&device, &draw_shader);
+            TrianglePipelines::new(&device, &draw_shader, &native_vram);
 
         let cpu_vram_blit_pipeline = CpuVramBlitPipeline::new(&device, &native_vram);
 
@@ -674,7 +912,7 @@ impl WgpuRasterizer {
             native_vram,
             frame_textures: HashMap::with_capacity(20),
             clear_pipeline,
-            untextured_opaque_triangle_pipeline,
+            triangle_pipelines: untextured_opaque_triangle_pipeline,
             cpu_vram_blit_pipeline,
             vram_fill_pipeline,
             native_scaled_sync_pipeline,
@@ -756,14 +994,26 @@ impl WgpuRasterizer {
         for draw_command in &self.draw_commands[draw_command_range.clone()] {
             let DrawCommand::DrawTriangle { args, draw_settings } = draw_command else { continue };
 
-            self.untextured_opaque_triangle_pipeline.add_triangle(
-                args.vertices,
-                args.shading,
-                draw_settings,
-            );
+            match &args.texture_mapping {
+                Some(texture_mapping) => {
+                    self.triangle_pipelines.add_textured_triangle(
+                        args.vertices,
+                        args.shading,
+                        texture_mapping,
+                        draw_settings,
+                    );
+                }
+                None => {
+                    self.triangle_pipelines.add_untextured_triangle(
+                        args.vertices,
+                        args.shading,
+                        draw_settings,
+                    );
+                }
+            }
         }
 
-        self.untextured_opaque_triangle_pipeline.prepare(&self.queue);
+        self.triangle_pipelines.prepare(&self.queue);
 
         let scaled_vram_view = self.scaled_vram.create_view(&TextureViewDescriptor::default());
         {
@@ -777,7 +1027,7 @@ impl WgpuRasterizer {
                 ..RenderPassDescriptor::default()
             });
 
-            self.untextured_opaque_triangle_pipeline.draw(self.resolution_scale, &mut render_pass);
+            self.triangle_pipelines.draw(self.resolution_scale, &mut render_pass);
         }
     }
 
