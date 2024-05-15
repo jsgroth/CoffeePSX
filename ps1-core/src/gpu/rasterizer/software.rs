@@ -3,12 +3,10 @@ use crate::gpu::rasterizer::{
     ClearPipeline, CpuVramBlitArgs, FrameCoords, FrameSize, ScreenSize, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{rasterizer, Color, VideoMode, VramArray, WgpuResources};
+use crate::gpu::{rasterizer, Color, VramArray, WgpuResources};
 use bytemuck::{Pod, Zeroable};
-use std::cmp;
 use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use wgpu::{CommandBuffer, PipelineCompilationOptions};
+use wgpu::CommandBuffer;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]

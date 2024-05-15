@@ -24,16 +24,13 @@ fn cpu_vram_blit(@builtin(global_invocation_id) invocation: vec3u) {
     let tex_y = (invocation.y + args.position.y) & 511;
     if args.check_mask_bit != 0 {
         let texel = textureLoad(native_vram, vec2u(tex_x, tex_y)).r;
-        if (texel & (1u << 15)) != 0 {
+        if (texel & 0x8000) != 0 {
             return;
         }
     }
 
     let buffer_idx = args.size.x * invocation.y + invocation.x;
-    var value = blit_buffer[buffer_idx];
-    if args.force_mask_bit != 0 {
-        value |= 1u << 15;
-    }
+    let value = blit_buffer[buffer_idx] | (args.force_mask_bit << 15);
 
     textureStore(native_vram, vec2u(tex_x, tex_y), vec4u(value, 0, 0, 0));
 }
