@@ -296,7 +296,7 @@ impl TextureWindow {
     }
 }
 
-#[derive(Debug, Clone, Default, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Encode, Decode)]
 pub struct DrawSettings {
     pub drawing_in_display_allowed: bool,
     pub dithering_enabled: bool,
