@@ -30,8 +30,7 @@ winit = "0.29"
 # dev profile with debug symbols disabled, which results in significantly faster compile times
 inherits = "dev"
 debug = false
-# set opt-level=2 because most of the emulators are unusably slow without optimizations
-opt-level = 2
+opt-level = 1
 
 [profile.release-lto]
 inherits = "release"
