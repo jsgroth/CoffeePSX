@@ -276,7 +276,7 @@ impl WgpuRenderer {
             render_pipeline,
             sampler,
             filter_mode,
-            auto_prescale: true,
+            auto_prescale: false,
             prescale_shader,
             prescale_pipelines: HashMap::new(),
         })
