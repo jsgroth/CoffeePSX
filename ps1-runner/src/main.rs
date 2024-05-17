@@ -328,8 +328,10 @@ fn main() -> anyhow::Result<()> {
             &window,
             (window.inner_size().width, window.inner_size().height),
             args.present_mode(),
-            wgpu::Features::PUSH_CONSTANTS
-                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+            wgpu::Features::default()
+                | wgpu::Features::PUSH_CONSTANTS
+                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                | wgpu::Features::DUAL_SOURCE_BLENDING,
             wgpu::Limits {
                 max_texture_dimension_2d: 16 * 1024,
                 max_push_constant_size: 128,

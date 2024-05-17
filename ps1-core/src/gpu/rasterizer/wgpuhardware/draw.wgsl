@@ -96,6 +96,33 @@ fn fs_untextured_opaque(input: UntexturedVertexOutput) -> @location(0) vec4f {
     return vec4f(input.color, f32(draw_settings.force_mask_bit));
 }
 
+struct SemiTransparentOutput {
+    @location(0) color: vec4f,
+    @location(0) @second_blend_source blend: vec4f,
+}
+
+@fragment
+fn fs_untextured_average(input: UntexturedVertexOutput) -> SemiTransparentOutput {
+    if is_out_of_bounds(input.position.xy) {
+        discard;
+    }
+
+    let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
+    let blend = vec4f(0.5, 0.5, 0.5, 0.5);
+    return SemiTransparentOutput(color, blend);
+}
+
+@fragment
+fn fs_untextured_add_quarter(input: UntexturedVertexOutput) -> SemiTransparentOutput {
+    if is_out_of_bounds(input.position.xy) {
+        discard;
+    }
+
+    let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
+    let blend = vec4f(0.25, 0.25, 0.25, 0.25);
+    return SemiTransparentOutput(color, blend);
+}
+
 @group(0) @binding(0)
 var native_vram: texture_storage_2d<r32uint, read>;
 
@@ -127,8 +154,7 @@ fn read_15bpp_texture(uv: vec2u, texpage: vec2u) -> u32 {
     return textureLoad(native_vram, vec2u(x, y)).r;
 }
 
-@fragment
-fn fs_textured_opaque(input: TexturedVertexOutput) -> @location(0) vec4f {
+fn sample_texture(input: TexturedVertexOutput) -> vec4f {
     if is_out_of_bounds(input.position.xy) {
         discard;
     }
@@ -159,6 +185,67 @@ fn fs_textured_opaque(input: TexturedVertexOutput) -> @location(0) vec4f {
         b *= 1.9921875 * input.color.b;
     }
 
-    let a = f32(((color >> 15) & 1) | draw_settings.force_mask_bit);
+    let a = f32((color >> 15) & 1);
     return vec4f(r, g, b, a);
+}
+
+@fragment
+fn fs_textured_opaque(input: TexturedVertexOutput) -> @location(0) vec4f {
+    var color = sample_texture(input);
+    color.a = max(color.a, f32(draw_settings.force_mask_bit));
+    return color;
+}
+
+@fragment
+fn fs_textured_average(input: TexturedVertexOutput) -> SemiTransparentOutput {
+    let texel = sample_texture(input);
+    let color = vec4f(texel.rgb, max(texel.a, f32(draw_settings.force_mask_bit)));
+
+    let blend_factor = select(1.0, 0.5, texel.a != 0.0);
+    let blend = vec4f(blend_factor, blend_factor, blend_factor, blend_factor);
+
+    return SemiTransparentOutput(color, blend);
+}
+
+@fragment
+fn fs_textured_add(input: TexturedVertexOutput) -> SemiTransparentOutput {
+    let texel = sample_texture(input);
+    let color = vec4f(texel.rgb, max(texel.a, f32(draw_settings.force_mask_bit)));
+
+    let blend_factor = select(0.0, 1.0, texel.a != 0.0);
+    let blend = vec4f(blend_factor, blend_factor, blend_factor, blend_factor);
+
+    return SemiTransparentOutput(color, blend);
+}
+
+@fragment
+fn fs_textured_subtract_opaque_texels(input: TexturedVertexOutput) -> @location(0) vec4f {
+    let color = sample_texture(input);
+    if color.a != 0.0 {
+        discard;
+    }
+
+    return vec4f(color.rgb, f32(draw_settings.force_mask_bit));
+}
+
+@fragment
+fn fs_textured_subtract_transparent_texels(input: TexturedVertexOutput) -> @location(0) vec4f {
+    let color = sample_texture(input);
+    if color.a == 0.0 {
+        discard;
+    }
+
+    return vec4f(color.rgb, 1.0);
+}
+
+@fragment
+fn fs_textured_add_quarter(input: TexturedVertexOutput) -> SemiTransparentOutput {
+    let texel = sample_texture(input);
+    let premultiplied_color = select(texel.rgb, texel.rgb * 0.25, texel.a != 0.0);
+    let color = vec4f(premultiplied_color, max(texel.a, f32(draw_settings.force_mask_bit)));
+
+    let blend_factor = select(0.0, 1.0, texel.a != 0.0);
+    let blend = vec4f(blend_factor, blend_factor, blend_factor, blend_factor);
+
+    return SemiTransparentOutput(color, blend);
 }

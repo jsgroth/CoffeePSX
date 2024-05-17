@@ -1,4 +1,4 @@
-use crate::gpu::gp0::{DrawSettings, TextureColorDepthBits};
+use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TextureColorDepthBits};
 use crate::gpu::rasterizer::{
     ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, FrameSize,
     RasterizerInterface, TextureMappingMode, TriangleShading, TriangleTextureMapping,
@@ -14,11 +14,12 @@ use std::rc::Rc;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, Buffer, BufferBinding,
-    BufferBindingType, BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites,
-    CommandBuffer, CommandEncoder, CommandEncoderDescriptor, ComputePass, ComputePassDescriptor,
-    ComputePipeline, ComputePipelineDescriptor, Device, Extent3d, FragmentState, FrontFace,
-    ImageCopyTexture, LoadOp, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
+    BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendFactor,
+    BlendOperation, BlendState, Buffer, BufferBinding, BufferBindingType, BufferDescriptor,
+    BufferUsages, ColorTargetState, ColorWrites, CommandBuffer, CommandEncoder,
+    CommandEncoderDescriptor, ComputePass, ComputePassDescriptor, ComputePipeline,
+    ComputePipelineDescriptor, Device, Extent3d, FragmentState, FrontFace, ImageCopyTexture,
+    LoadOp, MultisampleState, Operations, Origin3d, PipelineCompilationOptions, PipelineLayout,
     PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, PushConstantRange,
     Queue, RenderPass, RenderPassColorAttachment, RenderPassDescriptor, RenderPipeline,
     RenderPipelineDescriptor, ShaderModule, ShaderStages, StorageTextureAccess, StoreOp, Texture,
@@ -139,17 +140,8 @@ impl TexturedVertex {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrianglePipeline {
-    UntexturedOpaque,
-    TexturedOpaque,
-}
-
-impl TrianglePipeline {
-    fn from_args(args: &DrawTriangleArgs) -> Self {
-        match &args.texture_mapping {
-            Some(_) => Self::TexturedOpaque,
-            None => Self::UntexturedOpaque,
-        }
-    }
+    Untextured(Option<SemiTransparencyMode>),
+    Textured(Option<SemiTransparencyMode>),
 }
 
 #[derive(Debug)]
@@ -164,12 +156,103 @@ struct DrawBatch {
 struct TrianglePipelines {
     ram_untextured_buffer: Vec<UntexturedVertex>,
     untextured_buffer: Buffer,
-    untextured_pipeline: RenderPipeline,
+    untextured_opaque_pipeline: RenderPipeline,
+    untextured_average_pipeline: RenderPipeline,
+    untextured_add_pipeline: RenderPipeline,
+    untextured_subtract_pipeline: RenderPipeline,
+    untextured_add_quarter_pipeline: RenderPipeline,
     ram_textured_buffer: Vec<TexturedVertex>,
     textured_buffer: Buffer,
     textured_bind_group: BindGroup,
-    textured_pipeline: RenderPipeline,
+    textured_opaque_pipeline: RenderPipeline,
+    textured_average_pipeline: RenderPipeline,
+    textured_add_pipeline: RenderPipeline,
+    textured_subtract_pipeline_opaque: RenderPipeline,
+    textured_subtract_pipeline_transparent: RenderPipeline,
+    textured_add_quarter_pipeline: RenderPipeline,
     batches: Vec<DrawBatch>,
+}
+
+fn create_untextured_triangle_pipeline(
+    device: &Device,
+    draw_shader: &ShaderModule,
+    fs_entry_point: &str,
+    pipeline_layout: &PipelineLayout,
+    blend: BlendState,
+) -> RenderPipeline {
+    device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: "untextured_opaque_triangle_pipeline".into(),
+        layout: Some(&pipeline_layout),
+        vertex: VertexState {
+            module: draw_shader,
+            entry_point: "vs_untextured",
+            compilation_options: PipelineCompilationOptions::default(),
+            buffers: &[UntexturedVertex::LAYOUT],
+        },
+        primitive: PrimitiveState {
+            topology: PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        fragment: Some(FragmentState {
+            module: draw_shader,
+            entry_point: fs_entry_point,
+            compilation_options: PipelineCompilationOptions::default(),
+            targets: &[Some(ColorTargetState {
+                format: TextureFormat::Rgba8Unorm,
+                blend: Some(blend),
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        multiview: None,
+    })
+}
+
+fn create_textured_triangle_pipeline(
+    device: &Device,
+    draw_shader: &ShaderModule,
+    fs_entry_point: &str,
+    pipeline_layout: &PipelineLayout,
+    blend: BlendState,
+) -> RenderPipeline {
+    device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: "textured_opaque_triangle_pipeline".into(),
+        layout: Some(&pipeline_layout),
+        vertex: VertexState {
+            module: draw_shader,
+            entry_point: "vs_textured",
+            compilation_options: PipelineCompilationOptions::default(),
+            buffers: &[TexturedVertex::LAYOUT],
+        },
+        primitive: PrimitiveState {
+            topology: PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: PolygonMode::Fill,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: MultisampleState::default(),
+        fragment: Some(FragmentState {
+            module: draw_shader,
+            entry_point: fs_entry_point,
+            compilation_options: PipelineCompilationOptions::default(),
+            targets: &[Some(ColorTargetState {
+                format: TextureFormat::Rgba8Unorm,
+                blend: Some(blend),
+                write_mask: ColorWrites::ALL,
+            })],
+        }),
+        multiview: None,
+    })
 }
 
 impl TrianglePipelines {
@@ -183,7 +266,7 @@ impl TrianglePipelines {
             mapped_at_creation: false,
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+        let untextured_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: "untextured_opaque_triangle_pipeline_layout".into(),
             bind_group_layouts: &[],
             push_constant_ranges: &[PushConstantRange {
@@ -192,38 +275,73 @@ impl TrianglePipelines {
             }],
         });
 
-        let untextured_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: "untextured_opaque_triangle_pipeline".into(),
-            layout: Some(&pipeline_layout),
-            vertex: VertexState {
-                module: draw_shader,
-                entry_point: "vs_untextured",
-                compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[UntexturedVertex::LAYOUT],
+        let untextured_opaque_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_opaque",
+            &untextured_layout,
+            BlendState::REPLACE,
+        );
+
+        let untextured_average_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_average",
+            &untextured_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::Src1Alpha,
+                    dst_factor: BlendFactor::OneMinusSrc1Alpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent::REPLACE,
             },
-            primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: PolygonMode::Fill,
-                conservative: false,
+        );
+
+        let untextured_add_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_opaque",
+            &untextured_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent::REPLACE,
             },
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            fragment: Some(FragmentState {
-                module: draw_shader,
-                entry_point: "fs_untextured_opaque",
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(ColorTargetState {
-                    format: TextureFormat::Rgba8Unorm,
-                    blend: Some(BlendState::REPLACE),
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            multiview: None,
-        });
+        );
+
+        let untextured_subtract_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_opaque",
+            &untextured_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::ReverseSubtract,
+                },
+                alpha: BlendComponent::REPLACE,
+            },
+        );
+
+        let untextured_add_quarter_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_add_quarter",
+            &untextured_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::Src1Alpha,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent::REPLACE,
+            },
+        );
 
         let textured_buffer = device.create_buffer(&BufferDescriptor {
             label: "textured_opaque_triangle_vertex_buffer".into(),
@@ -266,47 +384,99 @@ impl TrianglePipelines {
             }],
         });
 
-        let textured_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: "textured_opaque_triangle_pipeline".into(),
-            layout: Some(&textured_pipeline_layout),
-            vertex: VertexState {
-                module: draw_shader,
-                entry_point: "vs_textured",
-                compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[TexturedVertex::LAYOUT],
+        let textured_opaque_pipeline = create_textured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_textured_opaque",
+            &textured_pipeline_layout,
+            BlendState::REPLACE,
+        );
+
+        let textured_average_pipeline = create_textured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_textured_average",
+            &textured_pipeline_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::Src1Alpha,
+                    dst_factor: BlendFactor::OneMinusSrc1Alpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent::REPLACE,
             },
-            primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: FrontFace::Ccw,
-                cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: PolygonMode::Fill,
-                conservative: false,
+        );
+
+        let textured_add_pipeline = create_textured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_textured_add",
+            &textured_pipeline_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::Src1Alpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent::REPLACE,
             },
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            fragment: Some(FragmentState {
-                module: draw_shader,
-                entry_point: "fs_textured_opaque",
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(ColorTargetState {
-                    format: TextureFormat::Rgba8Unorm,
-                    blend: Some(BlendState::REPLACE),
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            multiview: None,
-        });
+        );
+
+        let textured_subtract_pipeline_opaque = create_textured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_textured_subtract_opaque_texels",
+            &textured_pipeline_layout,
+            BlendState::REPLACE,
+        );
+
+        let textured_subtract_pipeline_transparent = create_textured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_textured_subtract_transparent_texels",
+            &textured_pipeline_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::One,
+                    operation: BlendOperation::ReverseSubtract,
+                },
+                alpha: BlendComponent::REPLACE,
+            },
+        );
+
+        let textured_add_quarter_pipeline = create_textured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_textured_add_quarter",
+            &textured_pipeline_layout,
+            BlendState {
+                color: BlendComponent {
+                    src_factor: BlendFactor::One,
+                    dst_factor: BlendFactor::Src1Alpha,
+                    operation: BlendOperation::Add,
+                },
+                alpha: BlendComponent::REPLACE,
+            },
+        );
 
         Self {
             ram_untextured_buffer: Vec::with_capacity(Self::MAX_VERTICES as usize),
             untextured_buffer,
-            untextured_pipeline,
+            untextured_opaque_pipeline,
+            untextured_average_pipeline,
+            untextured_add_pipeline,
+            untextured_subtract_pipeline,
+            untextured_add_quarter_pipeline,
             ram_textured_buffer: Vec::with_capacity(Self::MAX_VERTICES as usize),
             textured_buffer,
             textured_bind_group,
-            textured_pipeline,
+            textured_opaque_pipeline,
+            textured_average_pipeline,
+            textured_add_pipeline,
+            textured_subtract_pipeline_opaque,
+            textured_subtract_pipeline_transparent,
+            textured_add_quarter_pipeline,
             batches: Vec::with_capacity(Self::MAX_VERTICES as usize),
         }
     }
@@ -315,16 +485,18 @@ impl TrianglePipelines {
         &mut self,
         vertices: [Vertex; 3],
         shading: TriangleShading,
+        semi_transparency_mode: Option<SemiTransparencyMode>,
         draw_settings: &DrawSettings,
     ) {
+        let pipeline = TrianglePipeline::Untextured(semi_transparency_mode);
+
         if !self.batches.last().is_some_and(|batch| {
-            &batch.draw_settings == draw_settings
-                && batch.pipeline == TrianglePipeline::UntexturedOpaque
+            &batch.draw_settings == draw_settings && batch.pipeline == pipeline
         }) {
             let start = self.ram_untextured_buffer.len() as u32;
             self.batches.push(DrawBatch {
                 draw_settings: draw_settings.clone(),
-                pipeline: TrianglePipeline::UntexturedOpaque,
+                pipeline,
                 start,
                 end: start,
             });
@@ -352,17 +524,21 @@ impl TrianglePipelines {
         &mut self,
         vertices: [Vertex; 3],
         shading: TriangleShading,
+        semi_transparency_mode: Option<SemiTransparencyMode>,
         texture_mapping: &TriangleTextureMapping,
         draw_settings: &DrawSettings,
     ) {
-        if !self.batches.last().is_some_and(|batch| {
-            &batch.draw_settings == draw_settings
-                && batch.pipeline == TrianglePipeline::TexturedOpaque
-        }) {
+        let pipeline = TrianglePipeline::Textured(semi_transparency_mode);
+
+        if semi_transparency_mode == Some(SemiTransparencyMode::Subtract)
+            || !self.batches.last().is_some_and(|batch| {
+                &batch.draw_settings == draw_settings && batch.pipeline == pipeline
+            })
+        {
             let start = self.ram_textured_buffer.len() as u32;
             self.batches.push(DrawBatch {
                 draw_settings: draw_settings.clone(),
-                pipeline: TrianglePipeline::TexturedOpaque,
+                pipeline,
                 start,
                 end: start,
             });
@@ -421,9 +597,40 @@ impl TrianglePipelines {
             let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
 
             match batch.pipeline {
-                TrianglePipeline::UntexturedOpaque => {
-                    render_pass.set_pipeline(&self.untextured_pipeline);
+                TrianglePipeline::Untextured(semi_transparency_mode) => {
+                    let pipeline = match semi_transparency_mode {
+                        Some(SemiTransparencyMode::Average) => &self.untextured_average_pipeline,
+                        Some(SemiTransparencyMode::Add) => &self.untextured_add_pipeline,
+                        Some(SemiTransparencyMode::Subtract) => &self.untextured_subtract_pipeline,
+                        Some(SemiTransparencyMode::AddQuarter) => {
+                            &self.untextured_add_quarter_pipeline
+                        }
+                        None => &self.untextured_opaque_pipeline,
+                    };
+
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
                     render_pass.set_vertex_buffer(0, self.untextured_buffer.slice(..));
+
+                    render_pass.draw(batch.start..batch.end, 0..1);
+                }
+                TrianglePipeline::Textured(Some(SemiTransparencyMode::Subtract)) => {
+                    render_pass.set_pipeline(&self.textured_subtract_pipeline_opaque);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, self.textured_buffer.slice(..));
+
+                    render_pass.draw(batch.start..batch.end, 0..1);
+
+                    render_pass.set_pipeline(&self.textured_subtract_pipeline_transparent);
                     render_pass.set_push_constants(
                         ShaderStages::FRAGMENT,
                         0,
@@ -432,15 +639,25 @@ impl TrianglePipelines {
 
                     render_pass.draw(batch.start..batch.end, 0..1);
                 }
-                TrianglePipeline::TexturedOpaque => {
-                    render_pass.set_pipeline(&self.textured_pipeline);
-                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, self.textured_buffer.slice(..));
+                TrianglePipeline::Textured(semi_transparency_mode) => {
+                    let pipeline = match semi_transparency_mode {
+                        Some(SemiTransparencyMode::Average) => &self.textured_average_pipeline,
+                        Some(SemiTransparencyMode::Add) => &self.textured_add_pipeline,
+                        Some(SemiTransparencyMode::Subtract) => unreachable!(),
+                        Some(SemiTransparencyMode::AddQuarter) => {
+                            &self.textured_add_quarter_pipeline
+                        }
+                        None => &self.textured_opaque_pipeline,
+                    };
+
+                    render_pass.set_pipeline(pipeline);
                     render_pass.set_push_constants(
                         ShaderStages::FRAGMENT,
                         0,
                         bytemuck::cast_slice(&[draw_settings]),
                     );
+                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, self.textured_buffer.slice(..));
 
                     render_pass.draw(batch.start..batch.end, 0..1);
                 }
@@ -999,6 +1216,7 @@ impl WgpuRasterizer {
                     self.triangle_pipelines.add_textured_triangle(
                         args.vertices,
                         args.shading,
+                        args.semi_transparent.then_some(args.semi_transparency_mode),
                         texture_mapping,
                         draw_settings,
                     );
@@ -1007,6 +1225,7 @@ impl WgpuRasterizer {
                     self.triangle_pipelines.add_untextured_triangle(
                         args.vertices,
                         args.shading,
+                        args.semi_transparent.then_some(args.semi_transparency_mode),
                         draw_settings,
                     );
                 }
