@@ -133,7 +133,7 @@ fn fs_textured_opaque(input: TexturedVertexOutput) -> @location(0) vec4f {
         discard;
     }
 
-    let uv = (vec2u(round(input.uv)) & ~input.tex_window_mask)
+    let uv = (vec2u(floor(input.uv)) & ~input.tex_window_mask)
         | (input.tex_window_offset & input.tex_window_mask);
 
     var color: u32;
