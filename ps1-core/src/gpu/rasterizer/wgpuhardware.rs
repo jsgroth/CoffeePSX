@@ -808,6 +808,100 @@ impl CpuVramBlitPipeline {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
+struct ShaderVramCopyArgs {
+    source: [u32; 2],
+    destination: [u32; 2],
+    size: [u32; 2],
+    force_mask_bit: u32,
+    check_mask_bit: u32,
+}
+
+impl ShaderVramCopyArgs {
+    fn new(args: &VramVramBlitArgs) -> Self {
+        Self {
+            source: [args.source_x, args.source_y],
+            destination: [args.dest_x, args.dest_y],
+            size: [args.width, args.height],
+            force_mask_bit: args.force_mask_bit.into(),
+            check_mask_bit: args.check_mask_bit.into(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct VramCopyPipeline {
+    bind_group: BindGroup,
+    pipeline: ComputePipeline,
+}
+
+impl VramCopyPipeline {
+    const X_WORKGROUP_SIZE: u32 = 16;
+
+    fn new(device: &Device, native_vram: &Texture) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: "vram_copy_bind_group_layout".into(),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::StorageTexture {
+                    access: StorageTextureAccess::ReadWrite,
+                    format: native_vram.format(),
+                    view_dimension: TextureViewDimension::D2,
+                },
+                count: None,
+            }],
+        });
+
+        let native_vram_view = native_vram.create_view(&TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: "vram_copy_bind_group".into(),
+            layout: &bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&native_vram_view),
+            }],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: "vram_copy_pipeline_layout".into(),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::COMPUTE,
+                range: 0..mem::size_of::<ShaderVramCopyArgs>() as u32,
+            }],
+        });
+
+        let shader = device.create_shader_module(wgpu::include_wgsl!("wgpuhardware/vramcopy.wgsl"));
+        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: "vram_copy_pipeline".into(),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: "vram_copy",
+            compilation_options: PipelineCompilationOptions::default(),
+        });
+
+        Self { bind_group, pipeline }
+    }
+
+    fn dispatch<'cpass>(
+        &'cpass self,
+        args: &VramVramBlitArgs,
+        compute_pass: &mut ComputePass<'cpass>,
+    ) {
+        let vram_copy_args = ShaderVramCopyArgs::new(args);
+
+        compute_pass.set_pipeline(&self.pipeline);
+        compute_pass.set_push_constants(0, bytemuck::cast_slice(&[vram_copy_args]));
+        compute_pass.set_bind_group(0, &self.bind_group, &[]);
+
+        let x_workgroups = args.width / Self::X_WORKGROUP_SIZE
+            + u32::from(args.width % Self::X_WORKGROUP_SIZE != 0);
+        compute_pass.dispatch_workgroups(x_workgroups, args.height, 1);
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
 struct ShaderVramFillArgs {
     position: [u32; 2],
     size: [u32; 2],
@@ -1046,12 +1140,13 @@ impl NativeScaledSyncPipeline {
 enum DrawCommand {
     DrawTriangle { args: DrawTriangleArgs, draw_settings: DrawSettings },
     CpuVramBlit { args: CpuVramBlitArgs, buffer_bind_group: BindGroup, sync_vertex_buffer: Buffer },
+    VramCopy { args: VramVramBlitArgs, sync_vertex_buffer: Buffer },
     VramFill { x: u32, y: u32, width: u32, height: u32, color: Color, sync_vertex_buffer: Buffer },
 }
 
 impl DrawCommand {
     fn can_share_compute_pass(&self) -> bool {
-        matches!(self, Self::CpuVramBlit { .. } | Self::VramFill { .. })
+        matches!(self, Self::CpuVramBlit { .. } | Self::VramCopy { .. } | Self::VramFill { .. })
     }
 }
 
@@ -1066,6 +1161,7 @@ pub struct WgpuRasterizer {
     clear_pipeline: ClearPipeline,
     triangle_pipelines: TrianglePipelines,
     cpu_vram_blit_pipeline: CpuVramBlitPipeline,
+    vram_copy_pipeline: VramCopyPipeline,
     vram_fill_pipeline: VramFillPipeline,
     native_scaled_sync_pipeline: NativeScaledSyncPipeline,
     draw_commands: Vec<DrawCommand>,
@@ -1116,6 +1212,8 @@ impl WgpuRasterizer {
 
         let cpu_vram_blit_pipeline = CpuVramBlitPipeline::new(&device, &native_vram);
 
+        let vram_copy_pipeline = VramCopyPipeline::new(&device, &native_vram);
+
         let vram_fill_pipeline = VramFillPipeline::new(&device, &native_vram);
 
         let native_scaled_sync_pipeline =
@@ -1131,6 +1229,7 @@ impl WgpuRasterizer {
             clear_pipeline,
             triangle_pipelines: untextured_opaque_triangle_pipeline,
             cpu_vram_blit_pipeline,
+            vram_copy_pipeline,
             vram_fill_pipeline,
             native_scaled_sync_pipeline,
             draw_commands: Vec::with_capacity(2000),
@@ -1178,7 +1277,9 @@ impl WgpuRasterizer {
 
                     i = j;
                 }
-                DrawCommand::CpuVramBlit { .. } | DrawCommand::VramFill { .. } => {
+                DrawCommand::CpuVramBlit { .. }
+                | DrawCommand::VramCopy { .. }
+                | DrawCommand::VramFill { .. } => {
                     let mut j = i + 1;
                     while j < self.draw_commands.len()
                         && self.draw_commands[j].can_share_compute_pass()
@@ -1270,6 +1371,9 @@ impl WgpuRasterizer {
                             &mut compute_pass,
                         );
                     }
+                    DrawCommand::VramCopy { args, .. } => {
+                        self.vram_copy_pipeline.dispatch(args, &mut compute_pass);
+                    }
                     &DrawCommand::VramFill { x, y, width, height, color, .. } => {
                         self.vram_fill_pipeline.dispatch(
                             x,
@@ -1300,6 +1404,7 @@ impl WgpuRasterizer {
             for draw_command in &self.draw_commands[draw_command_range] {
                 match draw_command {
                     DrawCommand::CpuVramBlit { sync_vertex_buffer, .. }
+                    | DrawCommand::VramCopy { sync_vertex_buffer, .. }
                     | DrawCommand::VramFill { sync_vertex_buffer, .. } => {
                         self.native_scaled_sync_pipeline.draw(sync_vertex_buffer, &mut render_pass);
                     }
@@ -1358,15 +1463,15 @@ impl RasterizerInterface for WgpuRasterizer {
     }
 
     fn vram_to_vram_blit(&mut self, args: VramVramBlitArgs) {
-        log::warn!(
-            "VRAM-to-VRAM blit: ({}, {}) to ({}, {}) size ({}, {})",
-            args.source_x,
-            args.source_y,
-            args.dest_x,
-            args.dest_y,
-            args.width,
-            args.height
+        // TODO scaled/native sync
+
+        let sync_vertex_buffer = self.native_scaled_sync_pipeline.prepare(
+            &self.device,
+            [args.dest_x, args.dest_y],
+            [args.width, args.height],
         );
+
+        self.draw_commands.push(DrawCommand::VramCopy { args, sync_vertex_buffer });
     }
 
     fn generate_frame_texture(
