@@ -210,9 +210,9 @@ fn sample_texture(
         discard;
     }
 
-    var r = f32((color & 0x1F) << 3) / 255.0;
-    var g = f32(((color >> 5) & 0x1F) << 3) / 255.0;
-    var b = f32(((color >> 10) & 0x1F) << 3) / 255.0;
+    var r = f32(color & 0x1F) / 31.0;
+    var g = f32((color >> 5) & 0x1F) / 31.0;
+    var b = f32((color >> 10) & 0x1F) / 31.0;
 
     if modulated != 0 {
         r *= 1.9921875 * input_color.r;

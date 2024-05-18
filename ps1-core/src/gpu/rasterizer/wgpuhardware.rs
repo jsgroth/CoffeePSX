@@ -296,13 +296,23 @@ impl WgpuRasterizer {
 
 impl RasterizerInterface for WgpuRasterizer {
     fn draw_triangle(&mut self, args: DrawTriangleArgs, draw_settings: &DrawSettings) {
+        if draw_settings.check_mask_bit {
+            log::warn!("Draw triangle with mask bit {args:?}");
+        }
+
         self.draw_commands
             .push(DrawCommand::DrawTriangle { args, draw_settings: draw_settings.clone() });
     }
 
-    fn draw_line(&mut self, _args: DrawLineArgs, _draw_settings: &DrawSettings) {}
+    fn draw_line(&mut self, _args: DrawLineArgs, _draw_settings: &DrawSettings) {
+        log::warn!("Draw line {_args:?} {_draw_settings:?}");
+    }
 
     fn draw_rectangle(&mut self, args: DrawRectangleArgs, draw_settings: &DrawSettings) {
+        if draw_settings.check_mask_bit {
+            log::warn!("Draw rectangle with mask bit {args:?}");
+        }
+
         self.draw_commands
             .push(DrawCommand::DrawRectangle { args, draw_settings: draw_settings.clone() });
     }
