@@ -1,28 +1,30 @@
-use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TextureColorDepthBits};
+use crate::gpu::gp0::{
+    DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
+};
 use crate::gpu::rasterizer::{
-    DrawRectangleArgs, DrawTriangleArgs, TextureMappingMode, TriangleShading,
-    TriangleTextureMapping,
+    DrawRectangleArgs, DrawTriangleArgs, RectangleTextureMapping, TextureMapping,
+    TextureMappingMode, TriangleShading, TriangleTextureMapping,
 };
 use crate::gpu::{Color, Vertex};
 use bytemuck::{Pod, Zeroable};
-use std::mem;
+use std::{array, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendFactor,
     BlendOperation, BlendState, Buffer, BufferUsages, ColorTargetState, ColorWrites, Device,
-    FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions, PipelineLayout,
-    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, PushConstantRange,
-    RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderStages,
-    StorageTextureAccess, Texture, TextureFormat, TextureViewDescriptor, TextureViewDimension,
-    VertexAttribute, VertexBufferLayout, VertexState, VertexStepMode,
+    FragmentState, FrontFace, IndexFormat, MultisampleState, PipelineCompilationOptions,
+    PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
+    PushConstantRange, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModule,
+    ShaderStages, StorageTextureAccess, Texture, TextureFormat, TextureViewDescriptor,
+    TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexState, VertexStepMode,
 };
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
-pub struct ShaderDrawSettings {
-    pub force_mask_bit: u32,
-    pub resolution_scale: u32,
+struct ShaderDrawSettings {
+    force_mask_bit: u32,
+    resolution_scale: u32,
 }
 
 impl ShaderDrawSettings {
@@ -33,16 +35,15 @@ impl ShaderDrawSettings {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
-pub struct UntexturedVertex {
-    pub position: [i32; 2],
-    pub color: [u32; 3],
+struct UntexturedVertex {
+    position: [i32; 2],
+    color: [u32; 3],
 }
 
 impl UntexturedVertex {
-    pub const ATTRIBUTES: [VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Sint32x2, 1 => Uint32x3];
+    const ATTRIBUTES: [VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Sint32x2, 1 => Uint32x3];
 
-    pub const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
+    const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
         array_stride: mem::size_of::<Self>() as u64,
         step_mode: VertexStepMode::Vertex,
         attributes: &Self::ATTRIBUTES,
@@ -51,20 +52,44 @@ impl UntexturedVertex {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
-pub struct TexturedVertex {
-    pub position: [i32; 2],
-    pub color: [u32; 3],
-    pub uv: [u32; 2],
-    pub texpage: [u32; 2],
-    pub tex_window_mask: [u32; 2],
-    pub tex_window_offset: [u32; 2],
-    pub clut: [u32; 2],
-    pub color_depth: u32,
-    pub modulated: u32,
+struct TexturedVertex {
+    position: [i32; 2],
+    color: [u32; 3],
+    uv: [u32; 2],
+    texpage: [u32; 2],
+    tex_window_mask: [u32; 2],
+    tex_window_offset: [u32; 2],
+    clut: [u32; 2],
+    color_depth: u32,
+    modulated: u32,
+}
+
+fn vertex_texpage(texpage: &TexturePage) -> [u32; 2] {
+    [64 * texpage.x_base, texpage.y_base]
+}
+
+fn vertex_tex_window_mask(window: TextureWindow) -> [u32; 2] {
+    [window.x_mask << 3, window.y_mask << 3]
+}
+
+fn vertex_tex_window_offset(window: TextureWindow) -> [u32; 2] {
+    [window.x_offset << 3, window.y_offset << 3]
+}
+
+fn vertex_clut<const N: usize>(mapping: &TextureMapping<N>) -> [u32; 2] {
+    [(16 * mapping.clut_x).into(), mapping.clut_y.into()]
+}
+
+fn vertex_color_depth(color_depth: TextureColorDepthBits) -> u32 {
+    match color_depth {
+        TextureColorDepthBits::Four => 0,
+        TextureColorDepthBits::Eight => 1,
+        TextureColorDepthBits::Fifteen => 2,
+    }
 }
 
 impl TexturedVertex {
-    pub const ATTRIBUTES: [VertexAttribute; 9] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [VertexAttribute; 9] = wgpu::vertex_attr_array![
         0 => Sint32x2,
         1 => Uint32x3,
         2 => Uint32x2,
@@ -76,13 +101,13 @@ impl TexturedVertex {
         8 => Uint32,
     ];
 
-    pub const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
+    const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
         array_stride: mem::size_of::<Self>() as u64,
         step_mode: VertexStepMode::Vertex,
         attributes: &Self::ATTRIBUTES,
     };
 
-    pub fn new(
+    fn new(
         position: [i32; 2],
         color: Color,
         u: u8,
@@ -93,23 +118,71 @@ impl TexturedVertex {
             position,
             color: [color.r.into(), color.g.into(), color.b.into()],
             uv: [u.into(), v.into()],
-            texpage: [64 * texture_mapping.texpage.x_base, texture_mapping.texpage.y_base],
-            tex_window_mask: [
-                texture_mapping.window.x_mask << 3,
-                texture_mapping.window.y_mask << 3,
-            ],
-            tex_window_offset: [
-                texture_mapping.window.x_offset << 3,
-                texture_mapping.window.y_offset << 3,
-            ],
-            clut: [(16 * texture_mapping.clut_x).into(), texture_mapping.clut_y.into()],
-            color_depth: match texture_mapping.texpage.color_depth {
-                TextureColorDepthBits::Four => 0,
-                TextureColorDepthBits::Eight => 1,
-                TextureColorDepthBits::Fifteen => 2,
-            },
+            texpage: vertex_texpage(&texture_mapping.texpage),
+            tex_window_mask: vertex_tex_window_mask(texture_mapping.window),
+            tex_window_offset: vertex_tex_window_offset(texture_mapping.window),
+            clut: vertex_clut(texture_mapping),
+            color_depth: vertex_color_depth(texture_mapping.texpage.color_depth),
             modulated: (texture_mapping.mode == TextureMappingMode::Modulated).into(),
         }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod)]
+struct TexturedRectVertex {
+    position: [i32; 2],
+    color: [u32; 3],
+    texpage: [u32; 2],
+    tex_window_mask: [u32; 2],
+    tex_window_offset: [u32; 2],
+    clut: [u32; 2],
+    color_depth: u32,
+    modulated: u32,
+    base_position: [i32; 2],
+    base_uv: [u32; 2],
+}
+
+impl TexturedRectVertex {
+    const ATTRIBUTES: [VertexAttribute; 10] = wgpu::vertex_attr_array![
+        0 => Sint32x2,
+        1 => Uint32x3,
+        2 => Uint32x2,
+        3 => Uint32x2,
+        4 => Uint32x2,
+        5 => Uint32x2,
+        6 => Uint32,
+        7 => Uint32,
+        8 => Sint32x2,
+        9 => Uint32x2,
+    ];
+
+    const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
+        array_stride: mem::size_of::<Self>() as u64,
+        step_mode: VertexStepMode::Vertex,
+        attributes: &Self::ATTRIBUTES,
+    };
+
+    fn new_vertices(
+        args: &DrawRectangleArgs,
+        texture_mapping: &RectangleTextureMapping,
+        draw_settings: &DrawSettings,
+    ) -> [Self; 4] {
+        let top_left = args.top_left + draw_settings.draw_offset;
+        let vertices = rect_vertices(args, draw_settings.draw_offset);
+
+        array::from_fn(|i| Self {
+            position: [vertices[i].x, vertices[i].y],
+            color: [args.color.r.into(), args.color.g.into(), args.color.b.into()],
+            texpage: vertex_texpage(&texture_mapping.texpage),
+            tex_window_mask: vertex_tex_window_mask(texture_mapping.window),
+            tex_window_offset: vertex_tex_window_offset(texture_mapping.window),
+            clut: vertex_clut(texture_mapping),
+            color_depth: vertex_color_depth(texture_mapping.texpage.color_depth),
+            modulated: (texture_mapping.mode == TextureMappingMode::Modulated).into(),
+            base_position: [top_left.x, top_left.y],
+            base_uv: [texture_mapping.u[0].into(), texture_mapping.v[0].into()],
+        })
     }
 }
 
@@ -117,6 +190,7 @@ impl TexturedVertex {
 enum DrawPipeline {
     UntexturedTriangle(Option<SemiTransparencyMode>),
     TexturedTriangle(Option<SemiTransparencyMode>),
+    TexturedRectangle(Option<SemiTransparencyMode>),
 }
 
 #[derive(Debug)]
@@ -127,10 +201,18 @@ struct DrawBatch {
     end: u32,
 }
 
+impl DrawBatch {
+    fn matches(&self, draw_settings: &DrawSettings, pipeline: DrawPipeline) -> bool {
+        draw_settings == &self.draw_settings && pipeline == self.pipeline
+    }
+}
+
 #[derive(Debug)]
 pub struct DrawBuffers {
     untextured_triangle: Buffer,
     textured_triangle: Buffer,
+    textured_rectangle_vertex: Buffer,
+    textured_rectangle_index: Buffer,
 }
 
 #[derive(Debug)]
@@ -149,6 +231,14 @@ pub struct DrawPipelines {
     textured_subtract_pipeline_opaque: RenderPipeline,
     textured_subtract_pipeline_transparent: RenderPipeline,
     textured_add_quarter_pipeline: RenderPipeline,
+    textured_rect_buffer: Vec<TexturedRectVertex>,
+    textured_rect_indices: Vec<u32>,
+    textured_opaque_rect_pipeline: RenderPipeline,
+    textured_average_rect_pipeline: RenderPipeline,
+    textured_add_rect_pipeline: RenderPipeline,
+    textured_subtract_rect_pipeline_opaque: RenderPipeline,
+    textured_subtract_rect_pipeline_transparent: RenderPipeline,
+    textured_add_quarter_rect_pipeline: RenderPipeline,
     batches: Vec<DrawBatch>,
 }
 
@@ -160,8 +250,8 @@ fn create_untextured_triangle_pipeline(
     blend: BlendState,
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: "untextured_opaque_triangle_pipeline".into(),
-        layout: Some(&pipeline_layout),
+        label: format!("untextured_triangle_pipeline_{fs_entry_point}").as_str().into(),
+        layout: Some(pipeline_layout),
         vertex: VertexState {
             module: draw_shader,
             entry_point: "vs_untextured",
@@ -193,21 +283,23 @@ fn create_untextured_triangle_pipeline(
     })
 }
 
-fn create_textured_triangle_pipeline(
+fn create_textured_pipeline(
     device: &Device,
     draw_shader: &ShaderModule,
+    vertex_buffer_layout: VertexBufferLayout<'_>,
+    vs_entry_point: &str,
     fs_entry_point: &str,
     pipeline_layout: &PipelineLayout,
     blend: BlendState,
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: "textured_opaque_triangle_pipeline".into(),
-        layout: Some(&pipeline_layout),
+        label: format!("textured_draw_pipeline_{fs_entry_point}").as_str().into(),
+        layout: Some(pipeline_layout),
         vertex: VertexState {
             module: draw_shader,
-            entry_point: "vs_textured",
+            entry_point: vs_entry_point,
             compilation_options: PipelineCompilationOptions::default(),
-            buffers: &[TexturedVertex::LAYOUT],
+            buffers: &[vertex_buffer_layout],
         },
         primitive: PrimitiveState {
             topology: PrimitiveTopology::TriangleList,
@@ -248,6 +340,51 @@ fn rect_vertices(args: &DrawRectangleArgs, draw_offset: Vertex) -> [Vertex; 4] {
 impl DrawPipelines {
     const INITIAL_BUFFER_CAPACITY: u64 = 15000;
 
+    const AVERAGE_BLEND: BlendState = BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::Src1Alpha,
+            dst_factor: BlendFactor::OneMinusSrc1Alpha,
+            operation: BlendOperation::Add,
+        },
+        alpha: BlendComponent::REPLACE,
+    };
+
+    const ADDITIVE_BLEND_SINGLE_SOURCE: BlendState = BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::One,
+            dst_factor: BlendFactor::One,
+            operation: BlendOperation::Add,
+        },
+        alpha: BlendComponent::REPLACE,
+    };
+
+    const ADDITIVE_BLEND_DUAL_SOURCE: BlendState = BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::One,
+            dst_factor: BlendFactor::Src1Alpha,
+            operation: BlendOperation::Add,
+        },
+        alpha: BlendComponent::REPLACE,
+    };
+
+    const SUBTRACTIVE_BLEND: BlendState = BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::One,
+            dst_factor: BlendFactor::One,
+            operation: BlendOperation::ReverseSubtract,
+        },
+        alpha: BlendComponent::REPLACE,
+    };
+
+    const ADD_QUARTER_BLEND: BlendState = BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::Src1Alpha,
+            dst_factor: BlendFactor::One,
+            operation: BlendOperation::Add,
+        },
+        alpha: BlendComponent::REPLACE,
+    };
+
     pub fn new(device: &Device, draw_shader: &ShaderModule, native_vram: &Texture) -> Self {
         let untextured_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: "untextured_opaque_triangle_pipeline_layout".into(),
@@ -271,14 +408,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_average",
             &untextured_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::Src1Alpha,
-                    dst_factor: BlendFactor::OneMinusSrc1Alpha,
-                    operation: BlendOperation::Add,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::AVERAGE_BLEND,
         );
 
         let untextured_add_pipeline = create_untextured_triangle_pipeline(
@@ -286,14 +416,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_opaque",
             &untextured_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::One,
-                    operation: BlendOperation::Add,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::ADDITIVE_BLEND_SINGLE_SOURCE,
         );
 
         let untextured_subtract_pipeline = create_untextured_triangle_pipeline(
@@ -301,14 +424,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_opaque",
             &untextured_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::One,
-                    operation: BlendOperation::ReverseSubtract,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::SUBTRACTIVE_BLEND,
         );
 
         let untextured_add_quarter_pipeline = create_untextured_triangle_pipeline(
@@ -316,14 +432,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_add_quarter",
             &untextured_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::Src1Alpha,
-                    dst_factor: BlendFactor::One,
-                    operation: BlendOperation::Add,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::ADD_QUARTER_BLEND,
         );
 
         let textured_bind_group_layout =
@@ -360,80 +469,124 @@ impl DrawPipelines {
             }],
         });
 
-        let textured_opaque_pipeline = create_textured_triangle_pipeline(
+        let textured_opaque_pipeline = create_textured_pipeline(
             device,
             draw_shader,
+            TexturedVertex::LAYOUT,
+            "vs_textured",
             "fs_textured_opaque",
             &textured_pipeline_layout,
             BlendState::REPLACE,
         );
 
-        let textured_average_pipeline = create_textured_triangle_pipeline(
+        let textured_average_pipeline = create_textured_pipeline(
             device,
             draw_shader,
+            TexturedVertex::LAYOUT,
+            "vs_textured",
             "fs_textured_average",
             &textured_pipeline_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::Src1Alpha,
-                    dst_factor: BlendFactor::OneMinusSrc1Alpha,
-                    operation: BlendOperation::Add,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::AVERAGE_BLEND,
         );
 
-        let textured_add_pipeline = create_textured_triangle_pipeline(
+        let textured_add_pipeline = create_textured_pipeline(
             device,
             draw_shader,
+            TexturedVertex::LAYOUT,
+            "vs_textured",
             "fs_textured_add",
             &textured_pipeline_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::Src1Alpha,
-                    operation: BlendOperation::Add,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::ADDITIVE_BLEND_DUAL_SOURCE,
         );
 
-        let textured_subtract_pipeline_opaque = create_textured_triangle_pipeline(
+        let textured_subtract_pipeline_opaque = create_textured_pipeline(
             device,
             draw_shader,
+            TexturedVertex::LAYOUT,
+            "vs_textured",
             "fs_textured_subtract_opaque_texels",
             &textured_pipeline_layout,
             BlendState::REPLACE,
         );
 
-        let textured_subtract_pipeline_transparent = create_textured_triangle_pipeline(
+        let textured_subtract_pipeline_transparent = create_textured_pipeline(
             device,
             draw_shader,
+            TexturedVertex::LAYOUT,
+            "vs_textured",
             "fs_textured_subtract_transparent_texels",
             &textured_pipeline_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::One,
-                    operation: BlendOperation::ReverseSubtract,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::SUBTRACTIVE_BLEND,
         );
 
-        let textured_add_quarter_pipeline = create_textured_triangle_pipeline(
+        let textured_add_quarter_pipeline = create_textured_pipeline(
             device,
             draw_shader,
+            TexturedVertex::LAYOUT,
+            "vs_textured",
             "fs_textured_add_quarter",
             &textured_pipeline_layout,
-            BlendState {
-                color: BlendComponent {
-                    src_factor: BlendFactor::One,
-                    dst_factor: BlendFactor::Src1Alpha,
-                    operation: BlendOperation::Add,
-                },
-                alpha: BlendComponent::REPLACE,
-            },
+            Self::ADD_QUARTER_BLEND,
+        );
+
+        let textured_opaque_rect_pipeline = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedRectVertex::LAYOUT,
+            "vs_textured_rect",
+            "fs_textured_rect_opaque",
+            &textured_pipeline_layout,
+            BlendState::REPLACE,
+        );
+
+        let textured_average_rect_pipeline = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedRectVertex::LAYOUT,
+            "vs_textured_rect",
+            "fs_textured_rect_average",
+            &textured_pipeline_layout,
+            Self::AVERAGE_BLEND,
+        );
+
+        let textured_add_rect_pipeline = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedRectVertex::LAYOUT,
+            "vs_textured_rect",
+            "fs_textured_rect_add",
+            &textured_pipeline_layout,
+            Self::ADDITIVE_BLEND_DUAL_SOURCE,
+        );
+
+        let textured_subtract_rect_pipeline_opaque = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedRectVertex::LAYOUT,
+            "vs_textured_rect",
+            "fs_textured_rect_subtract_opaque_texels",
+            &textured_pipeline_layout,
+            BlendState::REPLACE,
+        );
+
+        let textured_subtract_rect_pipeline_transparent = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedRectVertex::LAYOUT,
+            "vs_textured_rect",
+            "fs_textured_rect_subtract_transparent_texels",
+            &textured_pipeline_layout,
+            Self::SUBTRACTIVE_BLEND,
+        );
+
+        let textured_add_quarter_rect_pipeline = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedRectVertex::LAYOUT,
+            "vs_textured_rect",
+            "fs_textured_rect_add_quarter",
+            &textured_pipeline_layout,
+            Self::ADD_QUARTER_BLEND,
         );
 
         Self {
@@ -451,6 +604,14 @@ impl DrawPipelines {
             textured_subtract_pipeline_opaque,
             textured_subtract_pipeline_transparent,
             textured_add_quarter_pipeline,
+            textured_rect_buffer: Vec::with_capacity(Self::INITIAL_BUFFER_CAPACITY as usize),
+            textured_rect_indices: Vec::with_capacity(Self::INITIAL_BUFFER_CAPACITY as usize),
+            textured_opaque_rect_pipeline,
+            textured_average_rect_pipeline,
+            textured_add_rect_pipeline,
+            textured_subtract_rect_pipeline_opaque,
+            textured_subtract_rect_pipeline_transparent,
+            textured_add_quarter_rect_pipeline,
             batches: Vec::with_capacity(Self::INITIAL_BUFFER_CAPACITY as usize),
         }
     }
@@ -464,11 +625,7 @@ impl DrawPipelines {
             DrawPipeline::UntexturedTriangle(semi_transparency_mode)
         };
 
-        if pipeline == DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
-            || !self.batches.last().is_some_and(|batch| {
-                &batch.draw_settings == draw_settings && batch.pipeline == pipeline
-            })
-        {
+        if !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline)) {
             let start =
                 (if textured { self.textured_buffer.len() } else { self.untextured_buffer.len() })
                     as u32;
@@ -515,52 +672,88 @@ impl DrawPipelines {
     }
 
     pub fn add_rectangle(&mut self, args: &DrawRectangleArgs, draw_settings: &DrawSettings) {
-        if args.texture_mapping.is_some() {
-            // TODO textured rectangles
-            return;
-        }
+        match &args.texture_mapping {
+            Some(texture_mapping) => {
+                let semi_transparency_mode =
+                    args.semi_transparent.then_some(args.semi_transparency_mode);
+                let pipeline = DrawPipeline::TexturedRectangle(semi_transparency_mode);
 
-        let v = rect_vertices(args, draw_settings.draw_offset);
-        for vertices in [[v[0], v[1], v[2]], [v[1], v[2], v[3]]] {
-            self.add_triangle(
-                &DrawTriangleArgs {
-                    vertices,
-                    shading: TriangleShading::Flat(args.color),
-                    semi_transparent: args.semi_transparent,
-                    semi_transparency_mode: args.semi_transparency_mode,
-                    texture_mapping: None,
-                },
-                draw_settings,
-            );
+                if !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
+                {
+                    let start = self.textured_rect_buffer.len() as u32;
+                    self.batches.push(DrawBatch {
+                        draw_settings: draw_settings.clone(),
+                        pipeline,
+                        start,
+                        end: start,
+                    });
+                }
+
+                let vertices =
+                    TexturedRectVertex::new_vertices(args, texture_mapping, draw_settings);
+                self.textured_rect_buffer.extend(vertices);
+
+                self.batches.last_mut().unwrap().end += 4;
+            }
+            None => {
+                let v = rect_vertices(args, Vertex::new(0, 0));
+                for vertices in [[v[0], v[1], v[2]], [v[1], v[2], v[3]]] {
+                    self.add_triangle(
+                        &DrawTriangleArgs {
+                            vertices,
+                            shading: TriangleShading::Flat(args.color),
+                            semi_transparent: args.semi_transparent,
+                            semi_transparency_mode: args.semi_transparency_mode,
+                            texture_mapping: None,
+                        },
+                        draw_settings,
+                    );
+                }
+            }
         }
     }
 
     pub fn prepare(&mut self, device: &Device) -> DrawBuffers {
-        log::debug!(
-            "Preparing to draw {} untextured opaque triangle vertices",
-            self.untextured_buffer.len()
-        );
-        log::debug!(
-            "Preparing to draw {} textured opaque triangle vertices",
-            self.textured_buffer.len()
-        );
-
-        let untextured_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        let untextured_triangle = device.create_buffer_init(&BufferInitDescriptor {
             label: "untextured_triangle_vertex_buffer".into(),
             contents: bytemuck::cast_slice(&self.untextured_buffer),
             usage: BufferUsages::VERTEX,
         });
 
-        let textured_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        let textured_triangle = device.create_buffer_init(&BufferInitDescriptor {
             label: "textured_triangle_vertex_buffer".into(),
             contents: bytemuck::cast_slice(&self.textured_buffer),
             usage: BufferUsages::VERTEX,
         });
 
+        let textured_rectangle_vertex = device.create_buffer_init(&BufferInitDescriptor {
+            label: "textured_rectangle_vertex_buffer".into(),
+            contents: bytemuck::cast_slice(&self.textured_rect_buffer),
+            usage: BufferUsages::VERTEX,
+        });
+
+        for i in (0..self.textured_rect_buffer.len()).step_by(4) {
+            let i = i as u32;
+            self.textured_rect_indices.extend([i, i + 1, i + 2, i + 1, i + 2, i + 3]);
+        }
+
+        let textured_rectangle_index = device.create_buffer_init(&BufferInitDescriptor {
+            label: "textured_rectangle_index_buffer".into(),
+            contents: bytemuck::cast_slice(&self.textured_rect_indices),
+            usage: BufferUsages::INDEX,
+        });
+
         self.untextured_buffer.clear();
         self.textured_buffer.clear();
+        self.textured_rect_buffer.clear();
+        self.textured_rect_indices.clear();
 
-        DrawBuffers { untextured_triangle: untextured_buffer, textured_triangle: textured_buffer }
+        DrawBuffers {
+            untextured_triangle,
+            textured_triangle,
+            textured_rectangle_vertex,
+            textured_rectangle_index,
+        }
     }
 
     pub fn draw<'rpass>(
@@ -569,8 +762,6 @@ impl DrawPipelines {
         resolution_scale: u32,
         render_pass: &mut RenderPass<'rpass>,
     ) {
-        log::debug!("Executing {} untextured opaque triangle batches", self.batches.len());
-
         for batch in self.batches.drain(..) {
             let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
             set_scissor_rect(render_pass, &batch.draw_settings, resolution_scale);
@@ -639,6 +830,61 @@ impl DrawPipelines {
                     render_pass.set_vertex_buffer(0, buffers.textured_triangle.slice(..));
 
                     render_pass.draw(batch.start..batch.end, 0..1);
+                }
+                DrawPipeline::TexturedRectangle(Some(SemiTransparencyMode::Subtract)) => {
+                    render_pass.set_pipeline(&self.textured_subtract_rect_pipeline_opaque);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, buffers.textured_rectangle_vertex.slice(..));
+                    render_pass.set_index_buffer(
+                        buffers.textured_rectangle_index.slice(..),
+                        IndexFormat::Uint32,
+                    );
+
+                    let start_indexed = batch.start * 3 / 2;
+                    let end_indexed = batch.end * 3 / 2;
+                    render_pass.draw_indexed(start_indexed..end_indexed, 0, 0..1);
+
+                    render_pass.set_pipeline(&self.textured_subtract_rect_pipeline_transparent);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+
+                    render_pass.draw_indexed(start_indexed..end_indexed, 0, 0..1);
+                }
+                DrawPipeline::TexturedRectangle(semi_transparency_mode) => {
+                    let pipeline = match semi_transparency_mode {
+                        Some(SemiTransparencyMode::Average) => &self.textured_average_rect_pipeline,
+                        Some(SemiTransparencyMode::Add) => &self.textured_add_rect_pipeline,
+                        Some(SemiTransparencyMode::AddQuarter) => {
+                            &self.textured_add_quarter_rect_pipeline
+                        }
+                        None => &self.textured_opaque_rect_pipeline,
+                        Some(SemiTransparencyMode::Subtract) => unreachable!(),
+                    };
+
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, buffers.textured_rectangle_vertex.slice(..));
+                    render_pass.set_index_buffer(
+                        buffers.textured_rectangle_index.slice(..),
+                        IndexFormat::Uint32,
+                    );
+
+                    let start_indexed = batch.start * 3 / 2;
+                    let end_indexed = batch.end * 3 / 2;
+                    render_pass.draw_indexed(start_indexed..end_indexed, 0, 0..1);
                 }
             }
         }

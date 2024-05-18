@@ -148,7 +148,7 @@ impl CpuVramBlitPipeline {
 
         compute_pass.set_pipeline(&self.pipeline);
         compute_pass.set_bind_group(0, &self.bind_group_0, &[]);
-        compute_pass.set_bind_group(1, &bind_group_1, &[]);
+        compute_pass.set_bind_group(1, bind_group_1, &[]);
         compute_pass.set_push_constants(0, bytemuck::cast_slice(&[shader_args]));
 
         let x_groups =
@@ -463,6 +463,7 @@ impl NativeScaledSyncPipeline {
         Self { bind_group, pipeline }
     }
 
+    #[allow(clippy::unused_self)]
     pub fn prepare(&self, device: &Device, position: [u32; 2], size: [u32; 2]) -> Buffer {
         let position = position.map(|n| n as i32);
         let size = size.map(|n| n as i32);

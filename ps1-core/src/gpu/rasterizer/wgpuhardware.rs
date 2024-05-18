@@ -1,6 +1,7 @@
 mod blit;
 mod draw;
 
+use crate::api::ColorDepthBits;
 use crate::gpu::gp0::DrawSettings;
 use crate::gpu::rasterizer::wgpuhardware::blit::{
     CpuVramBlitPipeline, NativeScaledSyncPipeline, VramCopyPipeline, VramFillPipeline,
@@ -138,7 +139,7 @@ impl WgpuRasterizer {
         );
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
-        self.clear_pipeline.draw(&frame, &mut encoder);
+        self.clear_pipeline.draw(frame, &mut encoder);
         command_buffers.push(encoder.finish());
 
         frame
@@ -368,6 +369,10 @@ impl RasterizerInterface for WgpuRasterizer {
             return &self.scaled_vram;
         }
 
+        if registers.display_area_color_depth == ColorDepthBits::TwentyFour {
+            log::warn!("24bpp display not yet implemented");
+        }
+
         let (frame_coords, frame_size) =
             rasterizer::compute_frame_location(registers, wgpu_resources.display_config);
         let Some(frame_coords) = frame_coords else {
@@ -388,7 +393,7 @@ impl RasterizerInterface for WgpuRasterizer {
         );
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
-        self.clear_pipeline.draw(&frame, &mut encoder);
+        self.clear_pipeline.draw(frame, &mut encoder);
 
         // TODO bounds check
         let source_x = frame_coords.frame_x + frame_coords.display_x_offset;
@@ -405,7 +410,7 @@ impl RasterizerInterface for WgpuRasterizer {
                 aspect: TextureAspect::All,
             },
             ImageCopyTexture {
-                texture: &frame,
+                texture: frame,
                 mip_level: 0,
                 origin: Origin3d {
                     x: self.resolution_scale * frame_coords.display_x_start,
@@ -423,7 +428,7 @@ impl RasterizerInterface for WgpuRasterizer {
 
         wgpu_resources.queued_command_buffers.push(encoder.finish());
 
-        &frame
+        frame
     }
 
     fn clone_vram(&self) -> Vram {
