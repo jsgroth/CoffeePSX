@@ -5,7 +5,8 @@ mod twentyfour;
 use crate::api::ColorDepthBits;
 use crate::gpu::gp0::DrawSettings;
 use crate::gpu::rasterizer::wgpuhardware::blit::{
-    CpuVramBlitPipeline, NativeScaledSyncPipeline, VramCopyPipeline, VramFillPipeline,
+    CpuVramBlitPipeline, NativeScaledSyncPipeline, VramCopyPipeline, VramCpuBlitPipeline,
+    VramFillPipeline,
 };
 use crate::gpu::rasterizer::wgpuhardware::draw::DrawPipelines;
 use crate::gpu::rasterizer::wgpuhardware::twentyfour::TwentyFourBppPipeline;
@@ -57,6 +58,7 @@ pub struct WgpuRasterizer {
     render_24bpp_pipeline: TwentyFourBppPipeline,
     draw_pipelines: DrawPipelines,
     cpu_vram_blit_pipeline: CpuVramBlitPipeline,
+    vram_cpu_blit_pipeline: VramCpuBlitPipeline,
     vram_copy_pipeline: VramCopyPipeline,
     vram_fill_pipeline: VramFillPipeline,
     native_scaled_sync_pipeline: NativeScaledSyncPipeline,
@@ -109,9 +111,8 @@ impl WgpuRasterizer {
         let draw_pipelines = DrawPipelines::new(&device, &draw_shader, &native_vram);
 
         let cpu_vram_blit_pipeline = CpuVramBlitPipeline::new(&device, &native_vram);
-
+        let vram_cpu_blit_pipeline = VramCpuBlitPipeline::new(&device, &native_vram);
         let vram_copy_pipeline = VramCopyPipeline::new(&device, &native_vram);
-
         let vram_fill_pipeline = VramFillPipeline::new(&device, &native_vram);
 
         let native_scaled_sync_pipeline =
@@ -128,6 +129,7 @@ impl WgpuRasterizer {
             render_24bpp_pipeline,
             draw_pipelines,
             cpu_vram_blit_pipeline,
+            vram_cpu_blit_pipeline,
             vram_copy_pipeline,
             vram_fill_pipeline,
             native_scaled_sync_pipeline,
@@ -432,8 +434,29 @@ impl RasterizerInterface for WgpuRasterizer {
         });
     }
 
-    fn vram_to_cpu_blit(&mut self, x: u32, y: u32, width: u32, height: u32, _out: &mut Vec<u16>) {
-        log::warn!("VRAM-to-CPU blit: ({x}, {y}) size ({width}, {height})");
+    fn vram_to_cpu_blit(&mut self, x: u32, y: u32, width: u32, height: u32, out: &mut Vec<u16>) {
+        // TODO scaled/native sync
+
+        let flush_command_buffer = self.flush_draw_commands();
+
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: "vram_cpu_blit_compute_pass".into(),
+                timestamp_writes: None,
+            });
+            self.vram_cpu_blit_pipeline.dispatch(x, y, width, height, &mut compute_pass);
+        }
+
+        self.vram_cpu_blit_pipeline.copy_blit_output(
+            &self.device,
+            &self.queue,
+            width,
+            height,
+            flush_command_buffer.into_iter().chain(iter::once(encoder.finish())),
+            out,
+        );
     }
 
     fn vram_to_vram_blit(&mut self, args: VramVramBlitArgs) {
