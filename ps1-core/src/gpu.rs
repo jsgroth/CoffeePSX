@@ -19,6 +19,7 @@ use crate::timers::Timers;
 use bincode::{Decode, Encode};
 use cfg_if::cfg_if;
 use proc_macros::SaveState;
+use std::ops::Add;
 use std::rc::Rc;
 
 use crate::gpu::rasterizer::Rasterizer;
@@ -242,6 +243,20 @@ impl Gpu {
 pub struct Vertex {
     pub x: i32,
     pub y: i32,
+}
+
+impl Vertex {
+    pub fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+}
+
+impl Add for Vertex {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self { x: self.x + rhs.x, y: self.y + rhs.y }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
