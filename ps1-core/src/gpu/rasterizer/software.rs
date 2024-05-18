@@ -128,7 +128,7 @@ impl SoftwareRenderer {
             label: "clear_encoder".into(),
         });
 
-        self.clear_pipeline.draw(&texture, &mut encoder);
+        self.clear_pipeline.draw(texture, &mut encoder);
 
         command_buffers.push(encoder.finish());
 
