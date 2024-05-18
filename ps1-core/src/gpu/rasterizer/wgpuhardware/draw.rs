@@ -625,7 +625,10 @@ impl DrawPipelines {
             DrawPipeline::UntexturedTriangle(semi_transparency_mode)
         };
 
-        if !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline)) {
+        // Subtractive semi-transparent textured triangles must go in their own batch
+        if pipeline == DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
+            || !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
+        {
             let start =
                 (if textured { self.textured_buffer.len() } else { self.untextured_buffer.len() })
                     as u32;
@@ -678,7 +681,12 @@ impl DrawPipelines {
                     args.semi_transparent.then_some(args.semi_transparency_mode);
                 let pipeline = DrawPipeline::TexturedRectangle(semi_transparency_mode);
 
-                if !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
+                // Subtractive semi-transparent textured rectangles must go in their own batch
+                if semi_transparency_mode == Some(SemiTransparencyMode::Subtract)
+                    || !self
+                        .batches
+                        .last()
+                        .is_some_and(|batch| batch.matches(draw_settings, pipeline))
                 {
                     let start = self.textured_rect_buffer.len() as u32;
                     self.batches.push(DrawBatch {
