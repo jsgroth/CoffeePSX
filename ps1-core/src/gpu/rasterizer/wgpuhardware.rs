@@ -1,5 +1,6 @@
 mod blit;
 mod draw;
+mod twentyfour;
 
 use crate::api::ColorDepthBits;
 use crate::gpu::gp0::DrawSettings;
@@ -7,9 +8,10 @@ use crate::gpu::rasterizer::wgpuhardware::blit::{
     CpuVramBlitPipeline, NativeScaledSyncPipeline, VramCopyPipeline, VramFillPipeline,
 };
 use crate::gpu::rasterizer::wgpuhardware::draw::DrawPipelines;
+use crate::gpu::rasterizer::wgpuhardware::twentyfour::TwentyFourBppPipeline;
 use crate::gpu::rasterizer::{
-    ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, FrameSize,
-    RasterizerInterface, VramVramBlitArgs,
+    ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, FrameCoords,
+    FrameSize, RasterizerInterface, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{rasterizer, Color, Vram, WgpuResources};
@@ -17,8 +19,6 @@ use std::collections::HashMap;
 use std::iter;
 use std::ops::Range;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use wgpu::{
     BindGroup, Buffer, BufferDescriptor, BufferUsages, CommandBuffer, CommandEncoder,
     CommandEncoderDescriptor, ComputePassDescriptor, Device, Extent3d, ImageCopyBuffer,
@@ -52,8 +52,9 @@ pub struct WgpuRasterizer {
     resolution_scale: u32,
     scaled_vram: Texture,
     native_vram: Texture,
-    frame_textures: HashMap<FrameSize, Texture>,
+    frame_textures: HashMap<(FrameSize, u32), Texture>,
     clear_pipeline: ClearPipeline,
+    render_24bpp_pipeline: TwentyFourBppPipeline,
     draw_pipelines: DrawPipelines,
     cpu_vram_blit_pipeline: CpuVramBlitPipeline,
     vram_copy_pipeline: VramCopyPipeline,
@@ -101,6 +102,8 @@ impl WgpuRasterizer {
 
         let clear_pipeline = ClearPipeline::new(&device, TextureFormat::Rgba8Unorm);
 
+        let render_24bpp_pipeline = TwentyFourBppPipeline::new(&device, &native_vram);
+
         let draw_shader =
             device.create_shader_module(wgpu::include_wgsl!("wgpuhardware/draw.wgsl"));
         let draw_pipelines = DrawPipelines::new(&device, &draw_shader, &native_vram);
@@ -122,6 +125,7 @@ impl WgpuRasterizer {
             native_vram,
             frame_textures: HashMap::with_capacity(20),
             clear_pipeline,
+            render_24bpp_pipeline,
             draw_pipelines,
             cpu_vram_blit_pipeline,
             vram_copy_pipeline,
@@ -184,6 +188,40 @@ impl WgpuRasterizer {
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
         self.clear_pipeline.draw(frame, &mut encoder);
+        command_buffers.push(encoder.finish());
+
+        frame
+    }
+
+    fn render_24bpp(
+        &mut self,
+        frame_coords: FrameCoords,
+        frame_size: FrameSize,
+        command_buffers: &mut Vec<CommandBuffer>,
+    ) -> &Texture {
+        let frame =
+            get_or_create_frame_texture(&self.device, frame_size, 1, &mut self.frame_textures);
+        let frame_view = frame.create_view(&TextureViewDescriptor::default());
+
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: "render_24bpp_render_pass".into(),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &frame_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::BLACK),
+                        store: StoreOp::Store,
+                    },
+                })],
+                ..RenderPassDescriptor::default()
+            });
+
+            self.render_24bpp_pipeline.draw(frame_coords, &mut render_pass);
+        }
+
         command_buffers.push(encoder.finish());
 
         frame
@@ -423,10 +461,6 @@ impl RasterizerInterface for WgpuRasterizer {
             return &self.scaled_vram;
         }
 
-        if registers.display_area_color_depth == ColorDepthBits::TwentyFour {
-            log::warn!("24bpp display not yet implemented");
-        }
-
         let (frame_coords, frame_size) =
             rasterizer::compute_frame_location(registers, wgpu_resources.display_config);
         let Some(frame_coords) = frame_coords else {
@@ -437,6 +471,14 @@ impl RasterizerInterface for WgpuRasterizer {
         if !registers.display_enabled {
             return self
                 .get_and_clear_frame(frame_size, &mut wgpu_resources.queued_command_buffers);
+        }
+
+        if registers.display_area_color_depth == ColorDepthBits::TwentyFour {
+            return self.render_24bpp(
+                frame_coords,
+                frame_size,
+                &mut wgpu_resources.queued_command_buffers,
+            );
         }
 
         let frame = get_or_create_frame_texture(
@@ -530,9 +572,9 @@ fn get_or_create_frame_texture<'a>(
     device: &Device,
     frame_size: FrameSize,
     resolution_scale: u32,
-    frame_textures: &'a mut HashMap<FrameSize, Texture>,
+    frame_textures: &'a mut HashMap<(FrameSize, u32), Texture>,
 ) -> &'a Texture {
-    frame_textures.entry(frame_size).or_insert_with(|| {
+    frame_textures.entry((frame_size, resolution_scale)).or_insert_with(|| {
         device.create_texture(&TextureDescriptor {
             label: "frame_texture".into(),
             size: Extent3d {
