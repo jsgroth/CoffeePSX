@@ -202,7 +202,9 @@ impl Gpu {
             self.rasterizer = Rasterizer::from_state(
                 RasterizerState { vram },
                 &self.wgpu_resources.device,
+                &self.wgpu_resources.queue,
                 display_config.rasterizer_type,
+                display_config.hardware_resolution_scale,
             );
         }
     }
@@ -221,8 +223,13 @@ impl Gpu {
         wgpu_queue: Rc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
-        let rasterizer =
-            Rasterizer::from_state(state.rasterizer, &wgpu_device, display_config.rasterizer_type);
+        let rasterizer = Rasterizer::from_state(
+            state.rasterizer,
+            &wgpu_device,
+            &wgpu_queue,
+            display_config.rasterizer_type,
+            display_config.hardware_resolution_scale,
+        );
 
         Self {
             registers: state.registers,

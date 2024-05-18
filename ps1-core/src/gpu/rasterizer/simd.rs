@@ -236,7 +236,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
     }
 
-    fn clone_vram(&self) -> Vram {
+    fn clone_vram(&mut self) -> Vram {
         let vram_array: Box<VramArray> =
             self.vram.0.to_vec().into_boxed_slice().try_into().unwrap();
         vram_array.into()

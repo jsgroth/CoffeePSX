@@ -34,7 +34,7 @@ impl Eq for FooState {}
 
 #[test]
 fn foo_state() {
-    let foo = Foo { a: 0, b: 1, c: -1, d: Bar { z: 2 } };
+    let mut foo = Foo { a: 0, b: 1, c: -1, d: Bar { z: 2 } };
 
-    assert_eq!(foo.to_state(), FooState { a: 0, b: 1, d: BarState { z: 2 } });
+    assert_eq!(foo.save_state(), FooState { a: 0, b: 1, d: BarState { z: 2 } });
 }

@@ -477,7 +477,7 @@ impl RasterizerInterface for NaiveSoftwareRasterizer {
         self.renderer.generate_frame_texture(registers, wgpu_resources, &self.vram)
     }
 
-    fn clone_vram(&self) -> Vram {
+    fn clone_vram(&mut self) -> Vram {
         self.vram.clone()
     }
 }
