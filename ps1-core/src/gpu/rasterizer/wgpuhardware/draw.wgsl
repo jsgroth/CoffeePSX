@@ -1,3 +1,10 @@
+struct DrawSettings {
+    force_mask_bit: u32,
+    resolution_scale: u32,
+}
+
+var<push_constant> draw_settings: DrawSettings;
+
 struct UntexturedVertex {
     @location(0) position: vec2i,
     @location(1) color: vec3u,
@@ -72,27 +79,8 @@ fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
     );
 }
 
-struct DrawSettings {
-    draw_area_top_left: vec2f,
-    draw_area_bottom_right: vec2f,
-    force_mask_bit: u32,
-}
-
-var<push_constant> draw_settings: DrawSettings;
-
-fn is_out_of_bounds(position: vec2f) -> bool {
-    return position.x < draw_settings.draw_area_top_left.x
-       || position.x > draw_settings.draw_area_bottom_right.x
-       || position.y < draw_settings.draw_area_top_left.y
-       || position.y > draw_settings.draw_area_bottom_right.y;
-}
-
 @fragment
 fn fs_untextured_opaque(input: UntexturedVertexOutput) -> @location(0) vec4f {
-    if is_out_of_bounds(input.position.xy) {
-        discard;
-    }
-
     return vec4f(input.color, f32(draw_settings.force_mask_bit));
 }
 
@@ -103,10 +91,6 @@ struct SemiTransparentOutput {
 
 @fragment
 fn fs_untextured_average(input: UntexturedVertexOutput) -> SemiTransparentOutput {
-    if is_out_of_bounds(input.position.xy) {
-        discard;
-    }
-
     let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
     let blend = vec4f(0.5, 0.5, 0.5, 0.5);
     return SemiTransparentOutput(color, blend);
@@ -114,10 +98,6 @@ fn fs_untextured_average(input: UntexturedVertexOutput) -> SemiTransparentOutput
 
 @fragment
 fn fs_untextured_add_quarter(input: UntexturedVertexOutput) -> SemiTransparentOutput {
-    if is_out_of_bounds(input.position.xy) {
-        discard;
-    }
-
     let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
     let blend = vec4f(0.25, 0.25, 0.25, 0.25);
     return SemiTransparentOutput(color, blend);
@@ -155,10 +135,6 @@ fn read_15bpp_texture(uv: vec2u, texpage: vec2u) -> u32 {
 }
 
 fn sample_texture(input: TexturedVertexOutput) -> vec4f {
-    if is_out_of_bounds(input.position.xy) {
-        discard;
-    }
-
     let uv = (vec2u(floor(input.uv)) & ~input.tex_window_mask)
         | (input.tex_window_offset & input.tex_window_mask);
 
