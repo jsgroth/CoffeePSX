@@ -14,11 +14,15 @@ use crate::gpu::rasterizer::{
 use crate::gpu::registers::Registers;
 use crate::gpu::{rasterizer, Color, Vram, WgpuResources};
 use std::collections::HashMap;
+use std::iter;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use wgpu::{
-    BindGroup, Buffer, CommandBuffer, CommandEncoder, CommandEncoderDescriptor,
-    ComputePassDescriptor, Device, Extent3d, ImageCopyTexture, LoadOp, Operations, Origin3d, Queue,
+    BindGroup, Buffer, BufferDescriptor, BufferUsages, CommandBuffer, CommandEncoder,
+    CommandEncoderDescriptor, ComputePassDescriptor, Device, Extent3d, ImageCopyBuffer,
+    ImageCopyTexture, ImageDataLayout, LoadOp, Maintain, MapMode, Operations, Origin3d, Queue,
     RenderPassColorAttachment, RenderPassDescriptor, StoreOp, Texture, TextureAspect,
     TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
 };
@@ -88,7 +92,8 @@ impl WgpuRasterizer {
             dimension: TextureDimension::D2,
             // R32 because storage textures don't support R16
             format: TextureFormat::R32Uint,
-            usage: TextureUsages::COPY_DST
+            usage: TextureUsages::COPY_SRC
+                | TextureUsages::COPY_DST
                 | TextureUsages::TEXTURE_BINDING
                 | TextureUsages::STORAGE_BINDING,
             view_formats: &[],
@@ -124,6 +129,45 @@ impl WgpuRasterizer {
             native_scaled_sync_pipeline,
             draw_commands: Vec::with_capacity(2000),
         }
+    }
+
+    pub fn copy_vram_from(&self, vram: &Vram) {
+        let vram_u32: Vec<_> = vram.iter().copied().map(u32::from).collect();
+
+        self.queue.write_texture(
+            self.native_vram.as_image_copy(),
+            bytemuck::cast_slice(&vram_u32),
+            ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * VRAM_WIDTH),
+                rows_per_image: None,
+            },
+            self.native_vram.size(),
+        );
+
+        let sync_vertex_buffer =
+            self.native_scaled_sync_pipeline.prepare(&self.device, [0, 0], [1024, 512]);
+
+        let scaled_vram_view = self.scaled_vram.create_view(&TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        {
+            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: "load_state_render_pass".into(),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &scaled_vram_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::BLACK),
+                        store: StoreOp::Store,
+                    },
+                })],
+                ..RenderPassDescriptor::default()
+            });
+
+            self.native_scaled_sync_pipeline.draw(&sync_vertex_buffer, &mut render_pass);
+        }
+
+        self.queue.submit(iter::once(encoder.finish()));
     }
 
     fn get_and_clear_frame(
@@ -441,8 +485,44 @@ impl RasterizerInterface for WgpuRasterizer {
         frame
     }
 
-    fn clone_vram(&self) -> Vram {
-        todo!("clone VRAM")
+    fn clone_vram(&mut self) -> Vram {
+        let flush_command_buffer = self.flush_draw_commands();
+
+        let vram_buffer = self.device.create_buffer(&BufferDescriptor {
+            label: "vram_buffer".into(),
+            size: (4 * VRAM_WIDTH * VRAM_HEIGHT).into(),
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder.copy_texture_to_buffer(
+            self.native_vram.as_image_copy(),
+            ImageCopyBuffer {
+                buffer: &vram_buffer,
+                layout: ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * VRAM_WIDTH),
+                    rows_per_image: None,
+                },
+            },
+            self.native_vram.size(),
+        );
+
+        self.queue.submit(flush_command_buffer.into_iter().chain(iter::once(encoder.finish())));
+
+        let vram_buffer_slice = vram_buffer.slice(..);
+        vram_buffer_slice.map_async(MapMode::Read, Result::unwrap);
+        self.device.poll(Maintain::Wait);
+
+        let vram_buffer_view = vram_buffer_slice.get_mapped_range();
+
+        let mut vram = Vram::new();
+        for (chunk, vram_value) in vram_buffer_view.chunks_exact(4).zip(vram.iter_mut()) {
+            *vram_value = u16::from_le_bytes([chunk[0], chunk[1]]);
+        }
+
+        vram
     }
 }
 

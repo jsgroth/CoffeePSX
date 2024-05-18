@@ -248,10 +248,10 @@ macro_rules! bincode_config {
     };
 }
 
-fn save_state(path: &PathBuf, emulator: &Ps1Emulator) -> anyhow::Result<()> {
+fn save_state(path: &PathBuf, emulator: &mut Ps1Emulator) -> anyhow::Result<()> {
     let file = File::create(path)?;
     let mut writer = BufWriter::new(file);
-    bincode::encode_into_std_write(emulator.to_state(), &mut writer, bincode_config!())?;
+    bincode::encode_into_std_write(emulator.save_state(), &mut writer, bincode_config!())?;
 
     log::info!("Saved state to '{}'", path.display());
 

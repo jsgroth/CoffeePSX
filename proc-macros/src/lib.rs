@@ -5,14 +5,14 @@ use syn::{Attribute, Data, DeriveInput, Fields};
 /// Define a save state struct and a method for converting to the save state struct.
 ///
 /// The save state struct will have the name `{struct_name}State`. The original struct will have
-/// a new method `to_state(&self)` that returns a save state value.
+/// a new method `save_state(&mut self)` that returns a save state value.
 ///
 /// All fields that are not annotated with a `#[save_state(_)]` attribute must implement `Clone`.
 ///
 /// Struct fields may be annotated with 1 of 2 attributes:
 /// - `#[save_state(skip)]`: The field will be left out of the save state struct
 /// - `#[save_state(to = OtherState)]`: The field in the save state struct will be of type `OtherState`,
-///   and `to_state()` will call the field's `to_state()` method instead of `clone()`
+///   and `save_state()` will call the field's `save_state()` method instead of `clone()`
 ///
 /// The save state struct will implement the traits `Debug`, `Clone`, `bincode::Encode`, and
 /// `bincode::Decode`.
@@ -40,13 +40,13 @@ use syn::{Attribute, Data, DeriveInput, Fields};
 ///     d: i32,
 /// }
 ///
-/// let bar = Bar {
+/// let mut bar = Bar {
 ///     a: Foo { field: 1 },
 ///     b: Foo { field: 2 },
 ///     c: 3,
 ///     d: 4,
 /// };
-/// let bar_state = bar.to_state();
+/// let bar_state = bar.save_state();
 ///
 /// assert_eq!(bar_state.a, Foo { field: 1 });
 /// assert_eq!(bar_state.b.field, 2);
@@ -94,7 +94,7 @@ pub fn save_state(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 });
 
                 to_state_fields.push(quote! {
-                    #field_ident: self.#field_ident.to_state()
+                    #field_ident: self.#field_ident.save_state()
                 });
             }
             None => {
@@ -119,7 +119,7 @@ pub fn save_state(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let to_state_impl = quote! {
         impl #struct_ident {
             #[must_use]
-            pub fn to_state(&self) -> #save_state_ident {
+            pub fn save_state(&mut self) -> #save_state_ident {
                 #save_state_ident {
                     #(#to_state_fields,)*
                 }

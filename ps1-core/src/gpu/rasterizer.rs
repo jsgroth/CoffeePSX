@@ -125,7 +125,7 @@ pub trait RasterizerInterface {
         wgpu_resources: &mut WgpuResources,
     ) -> &wgpu::Texture;
 
-    fn clone_vram(&self) -> Vram;
+    fn clone_vram(&mut self) -> Vram;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,15 +186,17 @@ impl Rasterizer {
         }
     }
 
-    pub fn to_state(&self) -> RasterizerState {
+    pub fn save_state(&mut self) -> RasterizerState {
         let vram = self.clone_vram();
         RasterizerState { vram }
     }
 
     pub fn from_state(
         state: RasterizerState,
-        wgpu_device: &wgpu::Device,
+        wgpu_device: &Rc<wgpu::Device>,
+        wgpu_queue: &Rc<wgpu::Queue>,
         rasterizer_type: RasterizerType,
+        hardware_resolution_scale: u32,
     ) -> Self {
         match rasterizer_type {
             RasterizerType::NaiveSoftware => {
@@ -203,7 +205,15 @@ impl Rasterizer {
             RasterizerType::SimdSoftware => {
                 Self(Box::new(SimdSoftwareRasterizer::from_vram(wgpu_device, &state.vram)))
             }
-            RasterizerType::WgpuHardware => todo!("HW rasterizer load state"),
+            RasterizerType::WgpuHardware => {
+                let rasterizer = WgpuRasterizer::new(
+                    Rc::clone(wgpu_device),
+                    Rc::clone(wgpu_queue),
+                    hardware_resolution_scale,
+                );
+                rasterizer.copy_vram_from(&state.vram);
+                Self(Box::new(rasterizer))
+            }
         }
     }
 }
