@@ -14,11 +14,11 @@ use ps1_core::RasterizerType;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::Sdl;
 use std::ffi::OsStr;
-use std::fs;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use std::{cmp, fs};
 use wgpu::{CommandBuffer, Texture};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
@@ -230,6 +230,35 @@ fn handle_key_event(
                 emulator.update_display_config(*display_config);
 
                 log::info!("Using naive software rasterizer");
+            }
+            KeyCode::Digit0 if pressed => {
+                display_config.rasterizer_type = RasterizerType::WgpuHardware;
+                emulator.update_display_config(*display_config);
+
+                log::info!(
+                    "Using wgpu hardware rasterizer with resolution scale {}x",
+                    display_config.hardware_resolution_scale
+                );
+            }
+            KeyCode::BracketLeft if pressed => {
+                display_config.hardware_resolution_scale =
+                    cmp::max(1, display_config.hardware_resolution_scale - 1);
+                emulator.update_display_config(*display_config);
+
+                log::info!(
+                    "Decreased hardware resolution scale to {}x",
+                    display_config.hardware_resolution_scale
+                );
+            }
+            KeyCode::BracketRight if pressed => {
+                display_config.hardware_resolution_scale =
+                    cmp::min(16, display_config.hardware_resolution_scale + 1);
+                emulator.update_display_config(*display_config);
+
+                log::info!(
+                    "Increased hardware resolution scale to {}x",
+                    display_config.hardware_resolution_scale
+                );
             }
             _ => {}
         },

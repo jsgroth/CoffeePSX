@@ -195,9 +195,13 @@ impl Gpu {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
         let prev_rasterizer_type = self.wgpu_resources.display_config.rasterizer_type;
+        let prev_resolution_scale = self.wgpu_resources.display_config.hardware_resolution_scale;
         self.wgpu_resources.display_config = display_config;
 
-        if prev_rasterizer_type != display_config.rasterizer_type {
+        if prev_rasterizer_type != display_config.rasterizer_type
+            || (display_config.rasterizer_type == RasterizerType::WgpuHardware
+                && prev_resolution_scale != display_config.hardware_resolution_scale)
+        {
             let vram = self.rasterizer.clone_vram();
             self.rasterizer = Rasterizer::from_state(
                 RasterizerState { vram },
