@@ -10,8 +10,8 @@ use wgpu::rwh::{HasDisplayHandle, HasWindowHandle};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
-    Buffer, BufferBinding, BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer,
+    BufferBinding, BufferBindingType, BufferUsages, Color, ColorTargetState, ColorWrites,
     CommandBuffer, CommandEncoder, CommandEncoderDescriptor, CompositeAlphaMode, Device,
     DeviceDescriptor, Extent3d, Features, FilterMode, FragmentState, FrontFace, Instance,
     InstanceDescriptor, Limits, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
@@ -151,7 +151,7 @@ impl PrescalePipeline {
                 compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(ColorTargetState {
                     format: TextureFormat::Rgba8UnormSrgb,
-                    blend: Some(BlendState::REPLACE),
+                    blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
             }),
@@ -500,7 +500,7 @@ fn create_render_pipeline(
             compilation_options: PipelineCompilationOptions::default(),
             targets: &[Some(ColorTargetState {
                 format: output_format,
-                blend: Some(BlendState::REPLACE),
+                blend: None,
                 write_mask: ColorWrites::ALL,
             })],
         }),

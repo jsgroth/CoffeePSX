@@ -430,7 +430,7 @@ impl ClearPipeline {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: frame_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),

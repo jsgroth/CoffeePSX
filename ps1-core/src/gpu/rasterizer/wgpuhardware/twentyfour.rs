@@ -3,8 +3,8 @@ use bytemuck::{Pod, Zeroable};
 use std::mem;
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, BlendState, ColorTargetState, ColorWrites,
-    Device, FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions,
+    BindGroupLayoutEntry, BindingResource, BindingType, ColorTargetState, ColorWrites, Device,
+    FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions,
     PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, PushConstantRange,
     RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StorageTextureAccess,
     Texture, TextureFormat, TextureViewDescriptor, TextureViewDimension, VertexState,
@@ -101,7 +101,7 @@ impl TwentyFourBppPipeline {
                 compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(ColorTargetState {
                     format: TextureFormat::Rgba8Unorm,
-                    blend: Some(BlendState::REPLACE),
+                    blend: None,
                     write_mask: ColorWrites::ALL,
                 })],
             }),
