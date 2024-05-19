@@ -247,7 +247,7 @@ fn create_untextured_triangle_pipeline(
     draw_shader: &ShaderModule,
     fs_entry_point: &str,
     pipeline_layout: &PipelineLayout,
-    blend: BlendState,
+    blend: Option<BlendState>,
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: format!("untextured_triangle_pipeline_{fs_entry_point}").as_str().into(),
@@ -275,7 +275,7 @@ fn create_untextured_triangle_pipeline(
             compilation_options: PipelineCompilationOptions::default(),
             targets: &[Some(ColorTargetState {
                 format: TextureFormat::Rgba8Unorm,
-                blend: Some(blend),
+                blend,
                 write_mask: ColorWrites::ALL,
             })],
         }),
@@ -290,7 +290,7 @@ fn create_textured_pipeline(
     vs_entry_point: &str,
     fs_entry_point: &str,
     pipeline_layout: &PipelineLayout,
-    blend: BlendState,
+    blend: Option<BlendState>,
 ) -> RenderPipeline {
     device.create_render_pipeline(&RenderPipelineDescriptor {
         label: format!("textured_draw_pipeline_{fs_entry_point}").as_str().into(),
@@ -318,7 +318,7 @@ fn create_textured_pipeline(
             compilation_options: PipelineCompilationOptions::default(),
             targets: &[Some(ColorTargetState {
                 format: TextureFormat::Rgba8Unorm,
-                blend: Some(blend),
+                blend,
                 write_mask: ColorWrites::ALL,
             })],
         }),
@@ -400,7 +400,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_opaque",
             &untextured_layout,
-            BlendState::REPLACE,
+            None,
         );
 
         let untextured_average_pipeline = create_untextured_triangle_pipeline(
@@ -408,7 +408,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_average",
             &untextured_layout,
-            Self::AVERAGE_BLEND,
+            Some(Self::AVERAGE_BLEND),
         );
 
         let untextured_add_pipeline = create_untextured_triangle_pipeline(
@@ -416,7 +416,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_opaque",
             &untextured_layout,
-            Self::ADDITIVE_BLEND_SINGLE_SOURCE,
+            Some(Self::ADDITIVE_BLEND_SINGLE_SOURCE),
         );
 
         let untextured_subtract_pipeline = create_untextured_triangle_pipeline(
@@ -424,7 +424,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_opaque",
             &untextured_layout,
-            Self::SUBTRACTIVE_BLEND,
+            Some(Self::SUBTRACTIVE_BLEND),
         );
 
         let untextured_add_quarter_pipeline = create_untextured_triangle_pipeline(
@@ -432,7 +432,7 @@ impl DrawPipelines {
             draw_shader,
             "fs_untextured_add_quarter",
             &untextured_layout,
-            Self::ADD_QUARTER_BLEND,
+            Some(Self::ADD_QUARTER_BLEND),
         );
 
         let textured_bind_group_layout =
@@ -476,7 +476,7 @@ impl DrawPipelines {
             "vs_textured",
             "fs_textured_opaque",
             &textured_pipeline_layout,
-            BlendState::REPLACE,
+            None,
         );
 
         let textured_average_pipeline = create_textured_pipeline(
@@ -486,7 +486,7 @@ impl DrawPipelines {
             "vs_textured",
             "fs_textured_average",
             &textured_pipeline_layout,
-            Self::AVERAGE_BLEND,
+            Some(Self::AVERAGE_BLEND),
         );
 
         let textured_add_pipeline = create_textured_pipeline(
@@ -496,7 +496,7 @@ impl DrawPipelines {
             "vs_textured",
             "fs_textured_add",
             &textured_pipeline_layout,
-            Self::ADDITIVE_BLEND_DUAL_SOURCE,
+            Some(Self::ADDITIVE_BLEND_DUAL_SOURCE),
         );
 
         let textured_subtract_pipeline_opaque = create_textured_pipeline(
@@ -506,7 +506,7 @@ impl DrawPipelines {
             "vs_textured",
             "fs_textured_subtract_opaque_texels",
             &textured_pipeline_layout,
-            BlendState::REPLACE,
+            None,
         );
 
         let textured_subtract_pipeline_transparent = create_textured_pipeline(
@@ -516,7 +516,7 @@ impl DrawPipelines {
             "vs_textured",
             "fs_textured_subtract_transparent_texels",
             &textured_pipeline_layout,
-            Self::SUBTRACTIVE_BLEND,
+            Some(Self::SUBTRACTIVE_BLEND),
         );
 
         let textured_add_quarter_pipeline = create_textured_pipeline(
@@ -526,7 +526,7 @@ impl DrawPipelines {
             "vs_textured",
             "fs_textured_add_quarter",
             &textured_pipeline_layout,
-            Self::ADD_QUARTER_BLEND,
+            Some(Self::ADD_QUARTER_BLEND),
         );
 
         let textured_opaque_rect_pipeline = create_textured_pipeline(
@@ -536,7 +536,7 @@ impl DrawPipelines {
             "vs_textured_rect",
             "fs_textured_rect_opaque",
             &textured_pipeline_layout,
-            BlendState::REPLACE,
+            None,
         );
 
         let textured_average_rect_pipeline = create_textured_pipeline(
@@ -546,7 +546,7 @@ impl DrawPipelines {
             "vs_textured_rect",
             "fs_textured_rect_average",
             &textured_pipeline_layout,
-            Self::AVERAGE_BLEND,
+            Some(Self::AVERAGE_BLEND),
         );
 
         let textured_add_rect_pipeline = create_textured_pipeline(
@@ -556,7 +556,7 @@ impl DrawPipelines {
             "vs_textured_rect",
             "fs_textured_rect_add",
             &textured_pipeline_layout,
-            Self::ADDITIVE_BLEND_DUAL_SOURCE,
+            Some(Self::ADDITIVE_BLEND_DUAL_SOURCE),
         );
 
         let textured_subtract_rect_pipeline_opaque = create_textured_pipeline(
@@ -566,7 +566,7 @@ impl DrawPipelines {
             "vs_textured_rect",
             "fs_textured_rect_subtract_opaque_texels",
             &textured_pipeline_layout,
-            BlendState::REPLACE,
+            None,
         );
 
         let textured_subtract_rect_pipeline_transparent = create_textured_pipeline(
@@ -576,7 +576,7 @@ impl DrawPipelines {
             "vs_textured_rect",
             "fs_textured_rect_subtract_transparent_texels",
             &textured_pipeline_layout,
-            Self::SUBTRACTIVE_BLEND,
+            Some(Self::SUBTRACTIVE_BLEND),
         );
 
         let textured_add_quarter_rect_pipeline = create_textured_pipeline(
@@ -586,7 +586,7 @@ impl DrawPipelines {
             "vs_textured_rect",
             "fs_textured_rect_add_quarter",
             &textured_pipeline_layout,
-            Self::ADD_QUARTER_BLEND,
+            Some(Self::ADD_QUARTER_BLEND),
         );
 
         Self {
