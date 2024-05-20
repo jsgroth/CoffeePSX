@@ -15,9 +15,23 @@ var scaled_vram: texture_2d<f32>;
 var scaled_vram_sampler: sampler;
 @group(0) @binding(2)
 var<uniform> resolution_scale: u32;
+@group(1) @binding(0)
+var<storage> rendered_atlas: array<u32>;
+
+fn check_atlas(position: vec2u) {
+    let row_offset = position.y << 2;
+    let col_offset = position.x >> 8;
+    let bit_index = (position.x >> 3) & 0x1F;
+
+    if (rendered_atlas[row_offset + col_offset] & (1u << bit_index)) == 0 {
+        discard;
+    }
+}
 
 @fragment
 fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4u {
+    check_atlas(vec2u(position.xy));
+
     let texel = textureSample(scaled_vram, scaled_vram_sampler, position.xy / vec2f(1024.0, 512.0));
 
     let r = u32(round(texel.r * 255.0)) >> 3;
