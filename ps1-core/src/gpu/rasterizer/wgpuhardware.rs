@@ -1,5 +1,6 @@
 mod blit;
 mod draw;
+mod hazards;
 mod sync;
 mod twentyfour;
 
@@ -9,20 +10,21 @@ use crate::gpu::rasterizer::wgpuhardware::blit::{
     CpuVramBlitPipeline, VramCopyPipeline, VramCpuBlitPipeline, VramFillPipeline,
 };
 use crate::gpu::rasterizer::wgpuhardware::draw::DrawPipelines;
+use crate::gpu::rasterizer::wgpuhardware::hazards::HazardTracker;
 use crate::gpu::rasterizer::wgpuhardware::sync::{
-    NativeScaledSyncPipeline, ScaledNativeSyncPipeline,
+    NativeScaledSyncPipeline, ScaledNativeSyncBuffers, ScaledNativeSyncPipeline,
 };
 use crate::gpu::rasterizer::wgpuhardware::twentyfour::TwentyFourBppPipeline;
 use crate::gpu::rasterizer::{
-    ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, FrameCoords,
-    FrameSize, RasterizerInterface, VramVramBlitArgs,
+    vertices_valid, ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs,
+    DrawTriangleArgs, FrameCoords, FrameSize, RasterizerInterface, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{rasterizer, Color, Vertex, Vram, WgpuResources};
 use std::collections::HashMap;
-use std::iter;
 use std::ops::Range;
 use std::rc::Rc;
+use std::{cmp, iter};
 use wgpu::{
     BindGroup, Buffer, BufferDescriptor, BufferUsages, CommandBuffer, CommandEncoder,
     CommandEncoderDescriptor, ComputePassDescriptor, Device, Extent3d, ImageCopyBuffer,
@@ -41,7 +43,7 @@ enum DrawCommand {
     CpuVramBlit { args: CpuVramBlitArgs, buffer_bind_group: BindGroup, sync_vertex_buffer: Buffer },
     VramCopy { args: VramVramBlitArgs, sync_vertex_buffer: Buffer },
     VramFill { x: u32, y: u32, width: u32, height: u32, color: Color, sync_vertex_buffer: Buffer },
-    ScaledNativeSync { top_left: Vertex, bottom_right: Vertex },
+    ScaledNativeSync { buffers: ScaledNativeSyncBuffers },
 }
 
 impl DrawCommand {
@@ -58,6 +60,7 @@ pub struct WgpuRasterizer {
     scaled_vram: Texture,
     native_vram: Texture,
     frame_textures: HashMap<(FrameSize, u32), Texture>,
+    hazard_tracker: HazardTracker,
     clear_pipeline: ClearPipeline,
     render_24bpp_pipeline: TwentyFourBppPipeline,
     draw_pipelines: DrawPipelines,
@@ -68,7 +71,6 @@ pub struct WgpuRasterizer {
     native_scaled_sync_pipeline: NativeScaledSyncPipeline,
     scaled_native_sync_pipeline: ScaledNativeSyncPipeline,
     draw_commands: Vec<DrawCommand>,
-    last_draw_area: Option<(Vertex, Vertex)>,
 }
 
 impl WgpuRasterizer {
@@ -134,6 +136,7 @@ impl WgpuRasterizer {
             scaled_vram,
             native_vram,
             frame_textures: HashMap::with_capacity(20),
+            hazard_tracker: HazardTracker::new(),
             clear_pipeline,
             render_24bpp_pipeline,
             draw_pipelines,
@@ -144,7 +147,6 @@ impl WgpuRasterizer {
             native_scaled_sync_pipeline,
             scaled_native_sync_pipeline,
             draw_commands: Vec::with_capacity(2000),
-            last_draw_area: None,
         }
     }
 
@@ -279,8 +281,8 @@ impl WgpuRasterizer {
 
                     i = j;
                 }
-                &DrawCommand::ScaledNativeSync { top_left, bottom_right } => {
-                    self.execute_scaled_native_sync(top_left, bottom_right, &mut encoder);
+                DrawCommand::ScaledNativeSync { buffers } => {
+                    self.execute_scaled_native_sync(buffers, &mut encoder);
                     i += 1;
                 }
             }
@@ -288,8 +290,14 @@ impl WgpuRasterizer {
 
         self.draw_commands.clear();
 
-        if let Some((top_left, bottom_right)) = self.last_draw_area.take() {
-            self.execute_scaled_native_sync(top_left, bottom_right, &mut encoder);
+        if let Some(bounding_box) = self.hazard_tracker.bounding_box() {
+            let buffers = self.scaled_native_sync_pipeline.prepare(
+                &self.device,
+                bounding_box,
+                self.hazard_tracker.atlas.as_ref(),
+            );
+            self.execute_scaled_native_sync(&buffers, &mut encoder);
+            self.hazard_tracker.clear();
         }
 
         Some(encoder.finish())
@@ -398,20 +406,10 @@ impl WgpuRasterizer {
 
     fn execute_scaled_native_sync(
         &self,
-        top_left: Vertex,
-        bottom_right: Vertex,
+        buffers: &ScaledNativeSyncBuffers,
         encoder: &mut CommandEncoder,
     ) {
-        let vertex_buffer =
-            self.scaled_native_sync_pipeline.prepare(&self.device, top_left, bottom_right);
-
-        log::debug!(
-            "Syncing scaled VRAM to native from ({}, {}) to ({}, {})",
-            top_left.x,
-            top_left.y,
-            bottom_right.x,
-            bottom_right.y
-        );
+        log::debug!("Syncing scaled VRAM to native");
 
         let native_vram_view = self.native_vram.create_view(&TextureViewDescriptor::default());
         {
@@ -425,22 +423,36 @@ impl WgpuRasterizer {
                 ..RenderPassDescriptor::default()
             });
 
-            self.scaled_native_sync_pipeline.draw(&vertex_buffer, &mut render_pass);
+            self.scaled_native_sync_pipeline.draw(buffers, &mut render_pass);
         }
     }
 }
 
 impl RasterizerInterface for WgpuRasterizer {
     fn draw_triangle(&mut self, args: DrawTriangleArgs, draw_settings: &DrawSettings) {
+        if !draw_settings.is_drawing_area_valid() {
+            return;
+        }
+
+        if !vertices_valid(args.vertices[0], args.vertices[1])
+            || !vertices_valid(args.vertices[1], args.vertices[2])
+            || !vertices_valid(args.vertices[2], args.vertices[0])
+        {
+            return;
+        }
+
         if draw_settings.check_mask_bit {
             log::warn!("Draw triangle with mask bit {args:?}");
         }
 
-        // TODO proper scaled/native sync
+        let Some((bounding_box_top_left, bounding_box_top_right)) =
+            triangle_bounding_box(&args, draw_settings)
+        else {
+            return;
+        };
+        self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
 
-        let top_left = draw_settings.draw_area_top_left;
-        let bottom_right = draw_settings.draw_area_bottom_right + Vertex::new(1, 1);
-        self.last_draw_area = Some((top_left, bottom_right));
+        // TODO proper scaled/native sync
 
         self.draw_commands
             .push(DrawCommand::DrawTriangle { args, draw_settings: draw_settings.clone() });
@@ -451,25 +463,28 @@ impl RasterizerInterface for WgpuRasterizer {
     }
 
     fn draw_rectangle(&mut self, args: DrawRectangleArgs, draw_settings: &DrawSettings) {
+        if !draw_settings.is_drawing_area_valid() {
+            return;
+        }
+
         if draw_settings.check_mask_bit {
             log::warn!("Draw rectangle with mask bit {args:?}");
         }
 
-        // TODO proper scaled/native sync
+        let Some((bounding_box_top_left, bounding_box_top_right)) =
+            rectangle_bounding_box(&args, draw_settings)
+        else {
+            return;
+        };
+        self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
 
-        let top_left = draw_settings.draw_area_top_left;
-        let bottom_right = draw_settings.draw_area_bottom_right + Vertex::new(1, 1);
-        self.last_draw_area = Some((top_left, bottom_right));
+        // TODO proper scaled/native sync
 
         self.draw_commands
             .push(DrawCommand::DrawRectangle { args, draw_settings: draw_settings.clone() });
     }
 
     fn vram_fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Color) {
-        if let Some((top_left, bottom_right)) = self.last_draw_area.take() {
-            self.draw_commands.push(DrawCommand::ScaledNativeSync { top_left, bottom_right });
-        }
-
         let sync_vertex_buffer =
             self.native_scaled_sync_pipeline.prepare(&self.device, [x, y], [width, height]);
 
@@ -484,10 +499,6 @@ impl RasterizerInterface for WgpuRasterizer {
     }
 
     fn cpu_to_vram_blit(&mut self, args: CpuVramBlitArgs, data: &[u16]) {
-        if let Some((top_left, bottom_right)) = self.last_draw_area.take() {
-            self.draw_commands.push(DrawCommand::ScaledNativeSync { top_left, bottom_right });
-        }
-
         let buffer_bind_group = self.cpu_vram_blit_pipeline.prepare(&self.device, &args, data);
         let sync_vertex_buffer = self.native_scaled_sync_pipeline.prepare(
             &self.device,
@@ -657,6 +668,47 @@ impl RasterizerInterface for WgpuRasterizer {
 
         vram
     }
+}
+
+fn triangle_bounding_box(
+    args: &DrawTriangleArgs,
+    draw_settings: &DrawSettings,
+) -> Option<(Vertex, Vertex)> {
+    let v_x = args.vertices.map(|v| v.x + draw_settings.draw_offset.x);
+    let v_y = args.vertices.map(|v| v.y + draw_settings.draw_offset.y);
+
+    let min_x = cmp::max(draw_settings.draw_area_top_left.x, v_x.into_iter().min().unwrap());
+    let max_x =
+        cmp::min(draw_settings.draw_area_bottom_right.x + 1, v_x.into_iter().max().unwrap());
+    let min_y = cmp::max(draw_settings.draw_area_top_left.y, v_y.into_iter().min().unwrap());
+    let max_y =
+        cmp::min(draw_settings.draw_area_bottom_right.y + 1, v_y.into_iter().max().unwrap());
+
+    if min_x >= max_x || min_y >= max_y {
+        return None;
+    }
+
+    Some((Vertex::new(min_x, min_y), Vertex::new(max_x, max_y)))
+}
+
+fn rectangle_bounding_box(
+    args: &DrawRectangleArgs,
+    draw_settings: &DrawSettings,
+) -> Option<(Vertex, Vertex)> {
+    let top_left = args.top_left + draw_settings.draw_offset;
+
+    let min_x = cmp::max(draw_settings.draw_area_top_left.x, top_left.x);
+    let max_x =
+        cmp::min(draw_settings.draw_area_bottom_right.x + 1, top_left.x + args.width as i32);
+    let min_y = cmp::max(draw_settings.draw_area_top_left.y, top_left.y);
+    let max_y =
+        cmp::min(draw_settings.draw_area_bottom_right.y + 1, top_left.y + args.height as i32);
+
+    if min_x >= max_x || min_y >= max_y {
+        return None;
+    }
+
+    Some((Vertex::new(min_x, min_y), Vertex::new(max_x, max_y)))
 }
 
 fn get_or_create_frame_texture<'a>(

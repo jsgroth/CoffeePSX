@@ -3,7 +3,7 @@ use bytemuck::{Pod, Zeroable};
 use std::mem;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType,
     BufferUsages, ColorTargetState, ColorWrites, Device, FilterMode, FragmentState, FrontFace,
     MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor, PolygonMode,
@@ -163,15 +163,22 @@ impl NativeScaledSyncPipeline {
 }
 
 #[derive(Debug)]
+pub struct ScaledNativeSyncBuffers {
+    vertex_buffer: Buffer,
+    atlas_bind_group: BindGroup,
+}
+
+#[derive(Debug)]
 pub struct ScaledNativeSyncPipeline {
-    bind_group: BindGroup,
+    bind_group_0: BindGroup,
+    bind_group_layout_1: BindGroupLayout,
     pipeline: RenderPipeline,
 }
 
 impl ScaledNativeSyncPipeline {
     pub fn new(device: &Device, scaled_vram: &Texture, resolution_scale: u32) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: "scaled_native_sync_bind_group".into(),
+        let bind_group_layout_0 = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: "scaled_native_sync_bind_group_0".into(),
             entries: &[
                 BindGroupLayoutEntry {
                     binding: 0,
@@ -218,9 +225,9 @@ impl ScaledNativeSyncPipeline {
             usage: BufferUsages::UNIFORM,
         });
 
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+        let bind_group_0 = device.create_bind_group(&BindGroupDescriptor {
             label: "scaled_native_sync_bind_group".into(),
-            layout: &bind_group_layout,
+            layout: &bind_group_layout_0,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -234,9 +241,23 @@ impl ScaledNativeSyncPipeline {
             ],
         });
 
+        let bind_group_layout_1 = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: "scaled_native_sync_bind_group_1".into(),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: "scaled_native_sync_pipeline_layout".into(),
-            bind_group_layouts: &[&bind_group_layout],
+            bind_group_layouts: &[&bind_group_layout_0, &bind_group_layout_1],
             push_constant_ranges: &[],
         });
 
@@ -274,33 +295,61 @@ impl ScaledNativeSyncPipeline {
             multiview: None,
         });
 
-        Self { bind_group, pipeline }
+        Self { bind_group_0, bind_group_layout_1, pipeline }
     }
 
-    #[allow(clippy::unused_self)]
-    pub fn prepare(&self, device: &Device, top_left: Vertex, bottom_right: Vertex) -> Buffer {
-        let vertices = [
-            VramSyncVertex { position: [top_left.x, top_left.y] },
-            VramSyncVertex { position: [bottom_right.x, top_left.y] },
-            VramSyncVertex { position: [top_left.x, bottom_right.y] },
-            VramSyncVertex { position: [bottom_right.x, bottom_right.y] },
-        ];
+    pub fn prepare(
+        &self,
+        device: &Device,
+        bounding_box: (Vertex, Vertex),
+        rendered_atlas: &[u128],
+    ) -> ScaledNativeSyncBuffers {
+        let (top_left, bottom_right) = bounding_box;
 
-        device.create_buffer_init(&BufferInitDescriptor {
+        log::debug!(
+            "Sync bounding box: ({}, {}) to ({}, {})",
+            top_left.x,
+            top_left.y,
+            bottom_right.x,
+            bottom_right.y
+        );
+
+        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: "scaled_native_sync_vertex_buffer".into(),
-            contents: bytemuck::cast_slice(&vertices),
+            contents: bytemuck::cast_slice(&[
+                VramSyncVertex { position: [top_left.x, top_left.y] },
+                VramSyncVertex { position: [bottom_right.x, top_left.y] },
+                VramSyncVertex { position: [top_left.x, bottom_right.y] },
+                VramSyncVertex { position: [bottom_right.x, bottom_right.y] },
+            ]),
             usage: BufferUsages::VERTEX,
-        })
+        });
+
+        let atlas_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: "scaled_native_sync_atlas_buffer".into(),
+            contents: bytemuck::cast_slice(rendered_atlas),
+            usage: BufferUsages::STORAGE,
+        });
+
+        let atlas_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: "scaled_native_sync_bind_group_1".into(),
+            layout: &self.bind_group_layout_1,
+            entries: &[BindGroupEntry { binding: 0, resource: atlas_buffer.as_entire_binding() }],
+        });
+
+        ScaledNativeSyncBuffers { vertex_buffer, atlas_bind_group }
     }
 
     pub fn draw<'rpass>(
         &'rpass self,
-        vertex_buffer: &'rpass Buffer,
+        buffers: &'rpass ScaledNativeSyncBuffers,
         render_pass: &mut RenderPass<'rpass>,
     ) {
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        render_pass.set_bind_group(0, &self.bind_group_0, &[]);
+        render_pass.set_bind_group(1, &buffers.atlas_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, buffers.vertex_buffer.slice(..));
+
         render_pass.draw(0..4, 0..1);
     }
 }
