@@ -184,7 +184,8 @@ fn apply_texture_window(uv: vec2u, mask: vec2u, offset: vec2u) -> vec2u {
 }
 
 fn apply_modulation(texel: vec4f, input_color: vec3f) -> vec4f {
-    return texel * 1.9921875 * vec4f(input_color, 1.0);
+    let rgb = floor(texel.rgb * 1.9921875 * input_color * 255.0) / 255.0;
+    return vec4f(rgb, texel.a);
 }
 
 fn sample_texture(
