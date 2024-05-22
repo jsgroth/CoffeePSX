@@ -148,6 +148,8 @@ fn fs_untextured_add_quarter(input: UntexturedVertexOutput) -> SemiTransparentOu
 
 @group(0) @binding(0)
 var native_vram: texture_storage_2d<r32uint, read>;
+@group(0) @binding(1)
+var scaled_vram_copy: texture_storage_2d<rgba8unorm, read>;
 
 fn read_4bpp_texture(uv: vec2u, texpage: vec2u, clut: vec2u) -> u32 {
     let x = texpage.x + (uv.x >> 2);
@@ -177,6 +179,14 @@ fn read_15bpp_texture(uv: vec2u, texpage: vec2u) -> u32 {
     return textureLoad(native_vram, vec2u(x, y)).r;
 }
 
+fn apply_texture_window(uv: vec2u, mask: vec2u, offset: vec2u) -> vec2u {
+    return (uv & ~mask) | (offset & mask);
+}
+
+fn apply_modulation(texel: vec4f, input_color: vec3f) -> vec4f {
+    return texel * 1.9921875 * vec4f(input_color, 1.0);
+}
+
 fn sample_texture(
     input_color: vec3f,
     input_uv: vec2u,
@@ -187,8 +197,7 @@ fn sample_texture(
     color_depth: u32,
     modulated: u32,
 ) -> vec4f {
-    let uv = (input_uv & ~tex_window_mask)
-        | (tex_window_offset & tex_window_mask);
+    let uv = apply_texture_window(input_uv, tex_window_mask, tex_window_offset);
 
     var color: u32;
     switch (color_depth) {
@@ -197,9 +206,6 @@ fn sample_texture(
         }
         case 1u: {
             color = read_8bpp_texture(uv, texpage, clut);
-        }
-        case 2u: {
-            color = read_15bpp_texture(uv, texpage);
         }
         default: {
             discard;
@@ -210,21 +216,52 @@ fn sample_texture(
         discard;
     }
 
-    var r = f32(color & 0x1F) / 31.0;
-    var g = f32((color >> 5) & 0x1F) / 31.0;
-    var b = f32((color >> 10) & 0x1F) / 31.0;
+    let r = f32(color & 0x1F) / 31.0;
+    let g = f32((color >> 5) & 0x1F) / 31.0;
+    let b = f32((color >> 10) & 0x1F) / 31.0;
+    let a = f32((color >> 15) & 1);
+    var texel = vec4f(r, g, b, a);
 
     if modulated != 0 {
-        r *= 1.9921875 * input_color.r;
-        g *= 1.9921875 * input_color.g;
-        b *= 1.9921875 * input_color.b;
+        texel = apply_modulation(texel, input_color);
     }
 
-    let a = f32((color >> 15) & 1);
-    return vec4f(r, g, b, a);
+    return texel;
+}
+
+fn sample_15bpp_texture(
+    input_color: vec3f,
+    scaled_uv: vec2u,
+    texpage: vec2u,
+    modulated: u32,
+) -> vec4f {
+    let scale = draw_settings.resolution_scale;
+    let x = (scale * texpage.x + scaled_uv.x) % (scale * 1024);
+    let y = scale * texpage.y + scaled_uv.y;
+    var texel = textureLoad(scaled_vram_copy, vec2u(x, y));
+
+    if texel.r == 0.0 && texel.g == 0.0 && texel.b == 0.0 && texel.a == 0.0 {
+        discard;
+    }
+
+    if modulated != 0 {
+        texel = apply_modulation(texel, input_color);
+    }
+
+    return texel;
 }
 
 fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
+    if input.color_depth == TEXTURE_15BPP {
+        let fractional_uv = fract(input.uv);
+        let integral_uv = vec2u(input.uv);
+        let masked_uv = apply_texture_window(integral_uv, input.tex_window_mask, input.tex_window_offset);
+
+        let scale = draw_settings.resolution_scale;
+        let scaled_uv = scale * masked_uv + vec2u(f32(scale) * fractional_uv);
+        return sample_15bpp_texture(input.color, scaled_uv, input.texpage, input.modulated);
+    }
+
     return sample_texture(
         input.color,
         vec2u(floor(input.uv)),
@@ -241,6 +278,12 @@ fn sample_texture_rect(input: TexturedRectVertexOutput) -> vec4f {
     let uv_offset = (vec2i(input.position.xy) - i32(draw_settings.resolution_scale) * input.base_position)
         / i32(draw_settings.resolution_scale);
     let uv = (input.base_uv + vec2u(uv_offset)) & vec2u(255, 255);
+
+    if input.color_depth == TEXTURE_15BPP {
+        let scale = draw_settings.resolution_scale;
+        let scaled_uv = scale * uv + (vec2u(input.position.xy) % scale);
+        return sample_15bpp_texture(input.color, scaled_uv, input.texpage, input.modulated);
+    }
 
     return sample_texture(
         input.color,

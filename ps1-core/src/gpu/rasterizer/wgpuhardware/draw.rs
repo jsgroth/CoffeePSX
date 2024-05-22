@@ -385,7 +385,12 @@ impl DrawPipelines {
         alpha: BlendComponent::REPLACE,
     };
 
-    pub fn new(device: &Device, draw_shader: &ShaderModule, native_vram: &Texture) -> Self {
+    pub fn new(
+        device: &Device,
+        draw_shader: &ShaderModule,
+        native_vram: &Texture,
+        scaled_vram_copy: &Texture,
+    ) -> Self {
         let untextured_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: "untextured_opaque_triangle_pipeline_layout".into(),
             bind_group_layouts: &[],
@@ -438,26 +443,45 @@ impl DrawPipelines {
         let textured_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: "textured_opaque_triangle_bind_group_layout".into(),
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::FRAGMENT,
-                    ty: BindingType::StorageTexture {
-                        access: StorageTextureAccess::ReadOnly,
-                        format: native_vram.format(),
-                        view_dimension: TextureViewDimension::D2,
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::StorageTexture {
+                            access: StorageTextureAccess::ReadOnly,
+                            format: native_vram.format(),
+                            view_dimension: TextureViewDimension::D2,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::StorageTexture {
+                            access: StorageTextureAccess::ReadOnly,
+                            format: scaled_vram_copy.format(),
+                            view_dimension: TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let native_vram_view = native_vram.create_view(&TextureViewDescriptor::default());
+        let scaled_vram_copy_view = scaled_vram_copy.create_view(&TextureViewDescriptor::default());
         let textured_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: "textured_opaque_triangle_bind_group".into(),
             layout: &textured_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: BindingResource::TextureView(&native_vram_view),
-            }],
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&native_vram_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&scaled_vram_copy_view),
+                },
+            ],
         });
 
         let textured_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
