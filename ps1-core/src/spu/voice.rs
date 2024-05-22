@@ -9,6 +9,7 @@ use std::cmp;
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Voice {
+    voice_number: usize,
     pub volume_l: SweepEnvelope,
     pub volume_r: SweepEnvelope,
     pub sample_rate: u16,
@@ -17,6 +18,12 @@ pub struct Voice {
     start_address: u32,
     repeat_address: u32,
     current_address: u32,
+    restart_pending: bool,
+    restart_delay: u8,
+    release_pending: bool,
+    keyed_on: bool,
+    keyed_off: bool,
+    soft_reset: bool,
     pub adsr: AdsrEnvelope,
     adpcm_buffer: SpuAdpcmBuffer,
     pitch_counter: u16,
@@ -25,8 +32,9 @@ pub struct Voice {
 }
 
 impl Voice {
-    pub fn new() -> Self {
+    pub fn new(voice_number: usize) -> Self {
         Self {
+            voice_number,
             volume_l: SweepEnvelope::new(),
             volume_r: SweepEnvelope::new(),
             sample_rate: 0,
@@ -35,6 +43,12 @@ impl Voice {
             start_address: 0,
             repeat_address: 0,
             current_address: 0,
+            restart_pending: false,
+            restart_delay: 0,
+            release_pending: false,
+            keyed_on: false,
+            keyed_off: false,
+            soft_reset: true,
             adsr: AdsrEnvelope::new(),
             adpcm_buffer: SpuAdpcmBuffer::new(),
             pitch_counter: 0,
@@ -43,7 +57,46 @@ impl Voice {
         }
     }
 
-    pub fn clock(&mut self, sound_ram: &SoundRam, noise_output: i16, prev_voice_output: i16) {
+    pub fn clock(
+        &mut self,
+        sound_ram: &SoundRam,
+        noise_output: i16,
+        prev_voice_output: i16,
+        soft_reset: bool,
+    ) {
+        if self.restart_pending {
+            self.restart_pending = false;
+            self.restart(sound_ram);
+            self.current_sample = (0, 0);
+            return;
+        }
+
+        if self.restart_delay != 0 {
+            self.restart_delay -= 1;
+            self.current_sample = (0, 0);
+
+            // Not sure this is right but this is how the SNES APU behaves - key off and soft reset
+            // flags prevent the voice from starting ADSR, but only if they're still set 2 clocks after
+            // key on
+            if self.restart_delay <= 3 && (self.release_pending || soft_reset) {
+                log::debug!(
+                    "Voice {} is not starting; key_off={} soft_reset={soft_reset}",
+                    self.voice_number,
+                    self.keyed_off
+                );
+                self.adsr.key_off();
+            }
+
+            self.release_pending = false;
+
+            return;
+        }
+
+        if self.release_pending {
+            self.release_pending = false;
+            self.adsr.key_off();
+        }
+
         self.volume_l.clock();
         self.volume_r.clock();
         self.adsr.clock();
@@ -105,7 +158,36 @@ impl Voice {
         self.repeat_address = (value & 0xFFFF) << 3;
     }
 
-    pub fn key_on(&mut self, sound_ram: &SoundRam) {
+    pub fn is_keyed_on(&self) -> bool {
+        self.keyed_on
+    }
+
+    pub fn update_key_on(&mut self, keyed_on: bool) {
+        self.keyed_on = keyed_on;
+
+        if keyed_on {
+            self.restart_pending = true;
+            log::debug!("Keying on voice {}", self.voice_number);
+        }
+    }
+
+    pub fn is_keyed_off(&self) -> bool {
+        self.keyed_off
+    }
+
+    pub fn update_key_off(&mut self, keyed_off: bool) {
+        self.keyed_off = keyed_off;
+
+        if keyed_off {
+            self.release_pending = true;
+            log::debug!("Keying off voice {}", self.voice_number);
+        }
+    }
+
+    fn restart(&mut self, sound_ram: &SoundRam) {
+        // Not sure this is right but the SNES APU plays 5 empty samples after a restart
+        self.restart_delay = 5;
+
         self.adsr.key_on();
 
         self.current_address = self.start_address;
@@ -137,8 +219,13 @@ impl Voice {
         }
     }
 
-    pub fn key_off(&mut self) {
-        self.adsr.key_off();
+    pub fn update_soft_reset(&mut self, soft_reset: bool) {
+        self.soft_reset = soft_reset;
+
+        if soft_reset {
+            self.adsr.level = 0;
+            self.adsr.key_off();
+        }
     }
 }
 

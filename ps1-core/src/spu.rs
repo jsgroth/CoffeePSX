@@ -169,28 +169,23 @@ impl DataPort {
 
 #[derive(Debug, Clone, Encode, Decode)]
 struct ControlRegisters {
-    spu_enabled: bool,
+    soft_reset: bool,
     amplifier_enabled: bool,
     external_audio_enabled: bool,
     cd_audio_enabled: bool,
     external_audio_reverb_enabled: bool,
     cd_audio_reverb_enabled: bool,
-    // Recorded in case software reads the KON or KOFF registers
-    last_key_on_write: u32,
-    last_key_off_write: u32,
 }
 
 impl ControlRegisters {
     fn new() -> Self {
         Self {
-            spu_enabled: false,
+            soft_reset: true,
             amplifier_enabled: false,
             external_audio_enabled: false,
             cd_audio_enabled: false,
             external_audio_reverb_enabled: false,
             cd_audio_reverb_enabled: false,
-            last_key_on_write: 0,
-            last_key_off_write: 0,
         }
     }
 
@@ -202,7 +197,7 @@ impl ControlRegisters {
         reverb: &ReverbUnit,
         noise: &NoiseGenerator,
     ) -> u32 {
-        (u32::from(self.spu_enabled) << 15)
+        (u32::from(!self.soft_reset) << 15)
             | (u32::from(self.amplifier_enabled) << 14)
             | (u32::from(noise.shift) << 10)
             | (u32::from(noise.step) << 8)
@@ -224,7 +219,7 @@ impl ControlRegisters {
         reverb: &mut ReverbUnit,
         noise: &mut NoiseGenerator,
     ) {
-        self.spu_enabled = value.bit(15);
+        self.soft_reset = !value.bit(15);
         self.amplifier_enabled = value.bit(14);
         noise.write_shift(((value >> 10) & 0xF) as u8);
         noise.step = ((value >> 8) & 3) as u8;
@@ -241,7 +236,7 @@ impl ControlRegisters {
         }
 
         log::debug!("SPUCNT write");
-        log::debug!("  SPU enabled: {}", self.spu_enabled);
+        log::debug!("  Soft reset: {}", self.soft_reset);
         log::debug!("  Amplifier enabled: {}", self.amplifier_enabled);
         log::debug!("  Noise shift: {}", noise.shift);
         log::debug!("  Noise step: {}", noise.step + 4);
@@ -252,22 +247,6 @@ impl ControlRegisters {
         log::debug!("  CD audio reverb enabled: {}", reverb.cd_enabled);
         log::debug!("  External audio enabled: {}", self.external_audio_enabled);
         log::debug!("  CD audio enabled: {}", self.cd_audio_enabled);
-    }
-
-    fn record_kon_low_write(&mut self, value: u32) {
-        self.last_key_on_write = (self.last_key_on_write & !0xFFFF) | (value & 0xFFFF);
-    }
-
-    fn record_kon_high_write(&mut self, value: u32) {
-        self.last_key_on_write = (self.last_key_on_write & 0xFFFF) | (value << 16);
-    }
-
-    fn record_koff_low_write(&mut self, value: u32) {
-        self.last_key_off_write = (self.last_key_off_write & !0xFFFF) | (value & 0xFFFF);
-    }
-
-    fn record_koff_high_write(&mut self, value: u32) {
-        self.last_key_off_write = (self.last_key_off_write & 0xFFFF) | (value << 16);
     }
 }
 
@@ -296,7 +275,7 @@ impl Spu {
     pub fn new() -> Self {
         Self {
             sound_ram: SoundRam::new(),
-            voices: array::from_fn(|_| Voice::new()),
+            voices: array::from_fn(Voice::new),
             control: ControlRegisters::new(),
             volume: VolumeControl::new(),
             data_port: DataPort::new(),
@@ -316,9 +295,10 @@ impl Spu {
         self.volume.main_r.clock();
         self.noise.clock();
 
+        let soft_reset = self.control.soft_reset;
         let mut prev_voice_output = 0;
         for voice in &mut self.voices {
-            voice.clock(&self.sound_ram, self.noise.output, prev_voice_output);
+            voice.clock(&self.sound_ram, self.noise.output, prev_voice_output, soft_reset);
             prev_voice_output = voice.current_amplitude;
         }
 
@@ -412,11 +392,10 @@ impl Spu {
             0x1D82 => self.volume.main_r.read(),
             0x1D84 => self.reverb.read_output_volume_l(),
             0x1D86 => self.reverb.read_output_volume_r(),
-            // KON/KOFF are normally write-only, but reads return the last written value
-            0x1D88 => self.control.last_key_on_write & 0xFFFF,
-            0x1D8A => self.control.last_key_on_write >> 16,
-            0x1D8C => self.control.last_key_off_write & 0xFFFF,
-            0x1D8E => self.control.last_key_off_write >> 16,
+            0x1D88 => self.reduce_voices_low(Voice::is_keyed_on),
+            0x1D8A => self.reduce_voices_high(Voice::is_keyed_on),
+            0x1D8C => self.reduce_voices_low(Voice::is_keyed_off),
+            0x1D8E => self.reduce_voices_high(Voice::is_keyed_off),
             0x1D90 => self.reduce_voices_low(|voice| voice.pitch_modulation_enabled),
             0x1D92 => self.reduce_voices_high(|voice| voice.pitch_modulation_enabled),
             0x1D94 => self.reduce_voices_low(|voice| voice.noise_enabled),
@@ -514,10 +493,10 @@ impl Spu {
             0x1D82 => self.volume.write_main_r(value),
             0x1D84 => self.reverb.write_output_volume_l(value),
             0x1D86 => self.reverb.write_output_volume_r(value),
-            0x1D88 => self.key_on_low(value),
-            0x1D8A => self.key_on_high(value),
-            0x1D8C => self.key_off_low(value),
-            0x1D8E => self.key_off_high(value),
+            0x1D88 => self.write_key_on(0..16, value),
+            0x1D8A => self.write_key_on(16..24, value),
+            0x1D8C => self.write_key_off(0..16, value),
+            0x1D8E => self.write_key_off(16..24, value),
             0x1D90 => self.write_pitch_modulation_low(value),
             0x1D92 => self.write_pitch_modulation_high(value),
             0x1D94 => self.write_noise_low(value),
@@ -543,12 +522,8 @@ impl Spu {
                     &mut self.noise,
                 );
 
-                // When SPU is disabled, all voices are immediately muted and keyed off
-                if !self.control.spu_enabled {
-                    for voice in &mut self.voices {
-                        voice.adsr.level = 0;
-                        voice.key_off();
-                    }
+                for voice in &mut self.voices {
+                    voice.update_soft_reset(self.control.soft_reset);
                 }
             }
             0x1DAC => {
@@ -712,69 +687,25 @@ impl Spu {
     }
 
     // $1F801D88: Key on (voices 0-15)
-    fn key_on_low(&mut self, value: u32) {
-        log::debug!("Key on low write: {value:04X}");
-
-        // Key on writes are ignored when SPU is disabled
-        if !self.control.spu_enabled {
-            return;
-        }
-
-        for voice in 0..16 {
-            if value.bit(voice) {
-                log::trace!("Keying on voice {voice}");
-                self.voices[voice as usize].key_on(&self.sound_ram);
-            }
-        }
-
-        self.control.record_kon_low_write(value);
-    }
-
     // $1F801D8A: Key on (voices 16-23)
-    fn key_on_high(&mut self, value: u32) {
-        log::debug!("Key on high write: {value:04X}");
+    fn write_key_on(&mut self, voices: Range<usize>, value: u32) {
+        log::debug!("Key on write for voices {voices:?}: {value:04X}");
 
-        // Key on writes are ignored when SPU is disabled
-        if !self.control.spu_enabled {
-            return;
+        let start = voices.start;
+        for voice in voices {
+            self.voices[voice].update_key_on(value.bit((voice - start) as u8));
         }
-
-        for voice in 16..24 {
-            if value.bit(voice - 16) {
-                log::trace!("Keying on voice {voice}");
-                self.voices[voice as usize].key_on(&self.sound_ram);
-            }
-        }
-
-        self.control.record_kon_high_write(value);
     }
 
     // $1F801D8C: Key off (voices 0-15)
-    fn key_off_low(&mut self, value: u32) {
-        log::debug!("Key off low write: {value:04X}");
-
-        for voice in 0..16 {
-            if value.bit(voice) {
-                log::trace!("Keying off voice {voice}");
-                self.voices[voice as usize].key_off();
-            }
-        }
-
-        self.control.record_koff_low_write(value);
-    }
-
     // $1F801D8E: Key off (voices 16-23)
-    fn key_off_high(&mut self, value: u32) {
-        log::debug!("Key off high write: {value:04X}");
+    fn write_key_off(&mut self, voices: Range<usize>, value: u32) {
+        log::debug!("Key off write for voices {voices:?}: {value:04X}");
 
-        for voice in 16..24 {
-            if value.bit(voice - 16) {
-                log::trace!("Keying off voice {voice}");
-                self.voices[voice as usize].key_off();
-            }
+        let start = voices.start;
+        for voice in voices {
+            self.voices[voice].update_key_off(value.bit((voice - start) as u8));
         }
-
-        self.control.record_koff_high_write(value);
     }
 
     // $1F801D90: Pitch modulation enabled (voices 1-15)
