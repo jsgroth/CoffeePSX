@@ -310,16 +310,18 @@ struct ShaderVramCopyArgs {
     size: [u32; 2],
     force_mask_bit: u32,
     check_mask_bit: u32,
+    resolution_scale: u32,
 }
 
 impl ShaderVramCopyArgs {
-    fn new(args: &VramVramBlitArgs) -> Self {
+    fn new(args: &VramVramBlitArgs, resolution_scale: u32) -> Self {
         Self {
-            source: [args.source_x, args.source_y],
-            destination: [args.dest_x, args.dest_y],
-            size: [args.width, args.height],
+            source: [args.source_x, args.source_y].map(|v| v * resolution_scale),
+            destination: [args.dest_x, args.dest_y].map(|v| v * resolution_scale),
+            size: [args.width, args.height].map(|v| v * resolution_scale),
             force_mask_bit: args.force_mask_bit.into(),
             check_mask_bit: args.check_mask_bit.into(),
+            resolution_scale,
         }
     }
 }
@@ -331,9 +333,9 @@ pub struct VramCopyPipeline {
 }
 
 impl VramCopyPipeline {
-    const X_WORKGROUP_SIZE: u32 = 16;
+    const WORKGROUP_SIZE: u32 = 16;
 
-    pub fn new(device: &Device, native_vram: &Texture) -> Self {
+    pub fn new(device: &Device, scaled_vram: &Texture) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: "vram_copy_bind_group_layout".into(),
             entries: &[BindGroupLayoutEntry {
@@ -341,20 +343,20 @@ impl VramCopyPipeline {
                 visibility: ShaderStages::COMPUTE,
                 ty: BindingType::StorageTexture {
                     access: StorageTextureAccess::ReadWrite,
-                    format: native_vram.format(),
+                    format: scaled_vram.format(),
                     view_dimension: TextureViewDimension::D2,
                 },
                 count: None,
             }],
         });
 
-        let native_vram_view = native_vram.create_view(&TextureViewDescriptor::default());
+        let scaled_vram_view = scaled_vram.create_view(&TextureViewDescriptor::default());
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: "vram_copy_bind_group".into(),
             layout: &bind_group_layout,
             entries: &[BindGroupEntry {
                 binding: 0,
-                resource: BindingResource::TextureView(&native_vram_view),
+                resource: BindingResource::TextureView(&scaled_vram_view),
             }],
         });
 
@@ -382,17 +384,20 @@ impl VramCopyPipeline {
     pub fn dispatch<'cpass>(
         &'cpass self,
         args: &VramVramBlitArgs,
+        resolution_scale: u32,
         compute_pass: &mut ComputePass<'cpass>,
     ) {
-        let vram_copy_args = ShaderVramCopyArgs::new(args);
+        let vram_copy_args = ShaderVramCopyArgs::new(args, resolution_scale);
 
         compute_pass.set_pipeline(&self.pipeline);
         compute_pass.set_push_constants(0, bytemuck::cast_slice(&[vram_copy_args]));
         compute_pass.set_bind_group(0, &self.bind_group, &[]);
 
-        let x_workgroups = args.width / Self::X_WORKGROUP_SIZE
-            + u32::from(args.width % Self::X_WORKGROUP_SIZE != 0);
-        compute_pass.dispatch_workgroups(x_workgroups, args.height, 1);
+        let x_workgroups =
+            (resolution_scale * args.width + Self::WORKGROUP_SIZE - 1) / Self::WORKGROUP_SIZE;
+        let y_workgroups =
+            (resolution_scale * args.height + Self::WORKGROUP_SIZE - 1) / Self::WORKGROUP_SIZE;
+        compute_pass.dispatch_workgroups(x_workgroups, y_workgroups, 1);
     }
 }
 
