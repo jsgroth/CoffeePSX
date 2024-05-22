@@ -5,7 +5,7 @@ mod sync;
 mod twentyfour;
 
 use crate::api::ColorDepthBits;
-use crate::gpu::gp0::{DrawSettings, TexturePage};
+use crate::gpu::gp0::{DrawSettings, TextureColorDepthBits, TexturePage};
 use crate::gpu::rasterizer::wgpuhardware::blit::{
     CpuVramBlitPipeline, VramCopyPipeline, VramCpuBlitPipeline, VramFillPipeline,
 };
@@ -548,6 +548,12 @@ impl WgpuRasterizer {
         let max_v: u32 = texture_mapping.v.into_iter().max().unwrap().into();
 
         self.check_texture_bounding_box(&texture_mapping.texpage, (min_u, min_v), (max_u, max_v));
+
+        self.check_clut_bounding_box(
+            texture_mapping.texpage.color_depth,
+            texture_mapping.clut_x,
+            texture_mapping.clut_y,
+        );
     }
 
     fn check_textured_rect_bounding_box(&mut self, args: &DrawRectangleArgs) {
@@ -604,6 +610,12 @@ impl WgpuRasterizer {
                 (u + args.width - 1, v + args.height - 1),
             );
         }
+
+        self.check_clut_bounding_box(
+            texture_mapping.texpage.color_depth,
+            texture_mapping.clut_x,
+            texture_mapping.clut_y,
+        );
     }
 
     fn check_texture_bounding_box(
@@ -633,6 +645,41 @@ impl WgpuRasterizer {
                 Vertex::new(x as i32, y as i32),
                 Vertex::new((x + width) as i32, (y + height) as i32),
             )
+        };
+
+        if hazard {
+            self.push_scaled_native_sync_command();
+        }
+    }
+
+    fn check_clut_bounding_box(&mut self, depth: TextureColorDepthBits, clut_x: u16, clut_y: u16) {
+        let clut_x = 16 * clut_x;
+
+        let hazard = match depth {
+            TextureColorDepthBits::Four => self.hazard_tracker.any_marked_rendered(
+                Vertex::new(clut_x.into(), clut_y.into()),
+                Vertex::new((clut_x + 16).into(), (clut_y + 1).into()),
+            ),
+            TextureColorDepthBits::Eight => {
+                if clut_x + 256 > VRAM_WIDTH as u16 {
+                    self.hazard_tracker.any_marked_rendered(
+                        Vertex::new(clut_x.into(), clut_y.into()),
+                        Vertex::new(VRAM_WIDTH as i32, (clut_y + 1).into()),
+                    ) || self.hazard_tracker.any_marked_rendered(
+                        Vertex::new(0, clut_y.into()),
+                        Vertex::new(
+                            (256 - (VRAM_WIDTH as u16 - clut_x)).into(),
+                            (clut_y + 1).into(),
+                        ),
+                    )
+                } else {
+                    self.hazard_tracker.any_marked_rendered(
+                        Vertex::new(clut_x.into(), clut_y.into()),
+                        Vertex::new((clut_x + 256).into(), (clut_y + 1).into()),
+                    )
+                }
+            }
+            TextureColorDepthBits::Fifteen => return,
         };
 
         if hazard {
