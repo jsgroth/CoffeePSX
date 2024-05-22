@@ -295,10 +295,9 @@ impl Spu {
         self.volume.main_r.clock();
         self.noise.clock();
 
-        let soft_reset = self.control.soft_reset;
         let mut prev_voice_output = 0;
         for voice in &mut self.voices {
-            voice.clock(&self.sound_ram, self.noise.output, prev_voice_output, soft_reset);
+            voice.clock(&self.sound_ram, self.noise.output, prev_voice_output);
             prev_voice_output = voice.current_amplitude;
         }
 

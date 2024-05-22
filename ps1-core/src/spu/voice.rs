@@ -17,6 +17,7 @@ pub struct Voice {
     pub pitch_modulation_enabled: bool,
     start_address: u32,
     repeat_address: u32,
+    repeat_address_locked: bool,
     current_address: u32,
     restart_pending: bool,
     restart_delay: u8,
@@ -42,6 +43,7 @@ impl Voice {
             pitch_modulation_enabled: false,
             start_address: 0,
             repeat_address: 0,
+            repeat_address_locked: false,
             current_address: 0,
             restart_pending: false,
             restart_delay: 0,
@@ -57,13 +59,7 @@ impl Voice {
         }
     }
 
-    pub fn clock(
-        &mut self,
-        sound_ram: &SoundRam,
-        noise_output: i16,
-        prev_voice_output: i16,
-        soft_reset: bool,
-    ) {
+    pub fn clock(&mut self, sound_ram: &SoundRam, noise_output: i16, prev_voice_output: i16) {
         if self.restart_pending {
             self.restart_pending = false;
             self.restart(sound_ram);
@@ -78,11 +74,12 @@ impl Voice {
             // Not sure this is right but this is how the SNES APU behaves - key off and soft reset
             // flags prevent the voice from starting ADSR, but only if they're still set 2 clocks after
             // key on
-            if self.restart_delay <= 3 && (self.release_pending || soft_reset) {
+            if self.restart_delay <= 3 && (self.release_pending || self.soft_reset) {
                 log::debug!(
-                    "Voice {} is not starting; key_off={} soft_reset={soft_reset}",
+                    "Voice {} is not starting; key_off={} soft_reset={}",
                     self.voice_number,
-                    self.keyed_off
+                    self.keyed_off,
+                    self.soft_reset
                 );
                 self.adsr.key_off();
             }
@@ -156,6 +153,14 @@ impl Voice {
 
     pub fn write_repeat_address(&mut self, value: u32) {
         self.repeat_address = (value & 0xFFFF) << 3;
+
+        // Writing to the repeat address register prevents ADPCM loop start addresses from having
+        // any effect until the next key on; The Misadventures of Tron Bonne depends on this or
+        // it will freeze during certain cutscenes
+        //
+        // However, repeat address register writes do _not_ have this effect if they occur
+        // while the voice is restarting; Re-Loaded depends on this or music/sound will be glitched
+        self.repeat_address_locked |= self.restart_delay == 0;
     }
 
     pub fn is_keyed_on(&self) -> bool {
@@ -188,6 +193,8 @@ impl Voice {
         // Not sure this is right but the SNES APU plays 5 empty samples after a restart
         self.restart_delay = 5;
 
+        self.repeat_address_locked = false;
+
         self.adsr.key_on();
 
         self.current_address = self.start_address;
@@ -204,7 +211,7 @@ impl Voice {
         adpcm::decode_spu_block(block, &mut self.adpcm_buffer);
 
         let AdpcmHeader { loop_start, loop_end, loop_repeat, .. } = self.adpcm_buffer.header;
-        if loop_start {
+        if loop_start && !self.repeat_address_locked {
             self.repeat_address = self.current_address;
         }
 

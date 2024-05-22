@@ -27,7 +27,7 @@ impl AdpcmHeader {
         let mut filter = (first_byte >> 4) & 0x7;
         if filter > 4 {
             // Only 0-4 are valid filter values
-            log::error!("Invalid SPU ADPCM filter value, using 4 instead: {filter}");
+            log::debug!("Invalid SPU ADPCM filter value, using 4 instead: {filter}");
             filter = 4;
         }
 
