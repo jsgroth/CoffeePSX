@@ -5,7 +5,7 @@ mod sync;
 mod twentyfour;
 
 use crate::api::ColorDepthBits;
-use crate::gpu::gp0::DrawSettings;
+use crate::gpu::gp0::{DrawSettings, TexturePage};
 use crate::gpu::rasterizer::wgpuhardware::blit::{
     CpuVramBlitPipeline, VramCopyPipeline, VramCpuBlitPipeline, VramFillPipeline,
 };
@@ -43,7 +43,7 @@ enum DrawCommand {
     CpuVramBlit { args: CpuVramBlitArgs, buffer_bind_group: BindGroup, sync_vertex_buffer: Buffer },
     VramCopy { args: VramVramBlitArgs, sync_vertex_buffer: Buffer },
     VramFill { x: u32, y: u32, width: u32, height: u32, color: Color, sync_vertex_buffer: Buffer },
-    ScaledNativeSync { buffers: ScaledNativeSyncBuffers },
+    ScaledNativeSync { bounding_box: (Vertex, Vertex), buffers: ScaledNativeSyncBuffers },
 }
 
 impl DrawCommand {
@@ -57,7 +57,11 @@ pub struct WgpuRasterizer {
     device: Rc<Device>,
     queue: Rc<Queue>,
     resolution_scale: u32,
+    // rgba8unorm at scaled resolution; used for rendering
     scaled_vram: Texture,
+    // rgba8unorm at scaled resolution; used for 15bpp texture sampling
+    scaled_vram_copy: Texture,
+    // r32uint at native resolution; used for 4bpp/8bpp texture sampling and blitting
     native_vram: Texture,
     frame_textures: HashMap<(FrameSize, u32), Texture>,
     hazard_tracker: HazardTracker,
@@ -93,6 +97,17 @@ impl WgpuRasterizer {
                 | TextureUsages::STORAGE_BINDING
                 | TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[TextureFormat::Rgba8UnormSrgb],
+        });
+
+        let scaled_vram_copy = device.create_texture(&TextureDescriptor {
+            label: "scaled_vram_copy_texture".into(),
+            size: scaled_vram.size(),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: scaled_vram.dimension(),
+            format: scaled_vram.format(),
+            usage: TextureUsages::COPY_DST | TextureUsages::STORAGE_BINDING,
+            view_formats: &[],
         });
 
         let native_vram = device.create_texture(&TextureDescriptor {
@@ -134,6 +149,7 @@ impl WgpuRasterizer {
             queue,
             resolution_scale,
             scaled_vram,
+            scaled_vram_copy,
             native_vram,
             frame_textures: HashMap::with_capacity(20),
             hazard_tracker: HazardTracker::new(),
@@ -185,6 +201,12 @@ impl WgpuRasterizer {
 
             self.native_scaled_sync_pipeline.draw(&sync_vertex_buffer, &mut render_pass);
         }
+
+        encoder.copy_texture_to_texture(
+            self.scaled_vram.as_image_copy(),
+            self.scaled_vram_copy.as_image_copy(),
+            self.scaled_vram.size(),
+        );
 
         self.queue.submit(iter::once(encoder.finish()));
     }
@@ -281,8 +303,8 @@ impl WgpuRasterizer {
 
                     i = j;
                 }
-                DrawCommand::ScaledNativeSync { buffers } => {
-                    self.execute_scaled_native_sync(buffers, &mut encoder);
+                DrawCommand::ScaledNativeSync { bounding_box, buffers } => {
+                    self.execute_scaled_native_sync(*bounding_box, buffers, &mut encoder);
                     i += 1;
                 }
             }
@@ -290,15 +312,7 @@ impl WgpuRasterizer {
 
         self.draw_commands.clear();
 
-        if let Some(bounding_box) = self.hazard_tracker.bounding_box() {
-            let buffers = self.scaled_native_sync_pipeline.prepare(
-                &self.device,
-                bounding_box,
-                self.hazard_tracker.atlas.as_ref(),
-            );
-            self.execute_scaled_native_sync(&buffers, &mut encoder);
-            self.hazard_tracker.clear();
-        }
+        self.flush_rendered_to_native(&mut encoder);
 
         Some(encoder.finish())
     }
@@ -389,7 +403,7 @@ impl WgpuRasterizer {
                 ..RenderPassDescriptor::default()
             });
 
-            for draw_command in &self.draw_commands[draw_command_range] {
+            for draw_command in &self.draw_commands[draw_command_range.clone()] {
                 match draw_command {
                     DrawCommand::CpuVramBlit { sync_vertex_buffer, .. }
                     | DrawCommand::VramCopy { sync_vertex_buffer, .. }
@@ -402,10 +416,32 @@ impl WgpuRasterizer {
                 }
             }
         }
+
+        for draw_command in &self.draw_commands[draw_command_range] {
+            match draw_command {
+                DrawCommand::CpuVramBlit { args, .. } => {
+                    self.copy_scaled_vram([args.x, args.y], [args.width, args.height], encoder);
+                }
+                DrawCommand::VramCopy { args, .. } => {
+                    self.copy_scaled_vram(
+                        [args.dest_x, args.dest_y],
+                        [args.width, args.height],
+                        encoder,
+                    );
+                }
+                &DrawCommand::VramFill { x, y, width, height, .. } => {
+                    self.copy_scaled_vram([x, y], [width, height], encoder);
+                }
+                DrawCommand::DrawTriangle { .. }
+                | DrawCommand::DrawRectangle { .. }
+                | DrawCommand::ScaledNativeSync { .. } => {}
+            }
+        }
     }
 
     fn execute_scaled_native_sync(
         &self,
+        bounding_box: (Vertex, Vertex),
         buffers: &ScaledNativeSyncBuffers,
         encoder: &mut CommandEncoder,
     ) {
@@ -424,6 +460,185 @@ impl WgpuRasterizer {
             });
 
             self.scaled_native_sync_pipeline.draw(buffers, &mut render_pass);
+        }
+
+        self.copy_scaled_vram(
+            [bounding_box.0.x as u32, bounding_box.0.y as u32],
+            [
+                (bounding_box.1.x - bounding_box.0.x) as u32,
+                (bounding_box.1.y - bounding_box.0.y) as u32,
+            ],
+            encoder,
+        );
+    }
+
+    fn copy_scaled_vram(&self, position: [u32; 2], size: [u32; 2], encoder: &mut CommandEncoder) {
+        if position[0] + size[0] > VRAM_WIDTH {
+            self.copy_scaled_vram(position, [VRAM_WIDTH - position[0], size[1]], encoder);
+            self.copy_scaled_vram(
+                [0, position[1]],
+                [size[0] - (VRAM_WIDTH - position[0]), size[1]],
+                encoder,
+            );
+            return;
+        }
+
+        if position[1] + size[1] > VRAM_HEIGHT {
+            self.copy_scaled_vram(position, [size[0], VRAM_HEIGHT - size[1]], encoder);
+            self.copy_scaled_vram(
+                [position[0], 0],
+                [size[0], size[1] - (VRAM_HEIGHT - size[1])],
+                encoder,
+            );
+            return;
+        }
+
+        let scaled_position = position.map(|value| value * self.resolution_scale);
+        let scaled_size = size.map(|value| value * self.resolution_scale);
+
+        let copy_origin = Origin3d { x: scaled_position[0], y: scaled_position[1], z: 0 };
+
+        encoder.copy_texture_to_texture(
+            ImageCopyTexture {
+                texture: &self.scaled_vram,
+                mip_level: 0,
+                origin: copy_origin,
+                aspect: TextureAspect::All,
+            },
+            ImageCopyTexture {
+                texture: &self.scaled_vram_copy,
+                mip_level: 0,
+                origin: copy_origin,
+                aspect: TextureAspect::All,
+            },
+            Extent3d { width: scaled_size[0], height: scaled_size[1], depth_or_array_layers: 1 },
+        );
+    }
+
+    fn push_scaled_native_sync_command(&mut self) {
+        let Some(bounding_box) = self.hazard_tracker.bounding_box() else { return };
+
+        let buffers = self.scaled_native_sync_pipeline.prepare(
+            &self.device,
+            bounding_box,
+            self.hazard_tracker.atlas.as_ref(),
+        );
+        self.draw_commands.push(DrawCommand::ScaledNativeSync { bounding_box, buffers });
+
+        self.hazard_tracker.clear();
+    }
+
+    fn flush_rendered_to_native(&mut self, encoder: &mut CommandEncoder) {
+        let Some(bounding_box) = self.hazard_tracker.bounding_box() else { return };
+
+        let buffers = self.scaled_native_sync_pipeline.prepare(
+            &self.device,
+            bounding_box,
+            self.hazard_tracker.atlas.as_ref(),
+        );
+        self.execute_scaled_native_sync(bounding_box, &buffers, encoder);
+
+        self.hazard_tracker.clear();
+    }
+
+    fn check_textured_triangle_bounding_box(&mut self, args: &DrawTriangleArgs) {
+        let Some(texture_mapping) = &args.texture_mapping else { return };
+
+        let min_u: u32 = texture_mapping.u.into_iter().min().unwrap().into();
+        let max_u: u32 = texture_mapping.u.into_iter().max().unwrap().into();
+        let min_v: u32 = texture_mapping.v.into_iter().min().unwrap().into();
+        let max_v: u32 = texture_mapping.v.into_iter().max().unwrap().into();
+
+        self.check_texture_bounding_box(&texture_mapping.texpage, (min_u, min_v), (max_u, max_v));
+    }
+
+    fn check_textured_rect_bounding_box(&mut self, args: &DrawRectangleArgs) {
+        let Some(texture_mapping) = &args.texture_mapping else { return };
+
+        let u: u32 = texture_mapping.u[0].into();
+        let v: u32 = texture_mapping.v[0].into();
+
+        let u_overflow = u + args.width > 256;
+        let v_overflow = v + args.height > 256;
+
+        if u_overflow && v_overflow {
+            let overflowed_u = cmp::min(255, args.width - (256 - u) - 1);
+            let overflowed_v = cmp::min(255, args.height - (256 - v) - 1);
+
+            self.check_texture_bounding_box(&texture_mapping.texpage, (u, v), (255, 255));
+            self.check_texture_bounding_box(&texture_mapping.texpage, (u, 0), (255, overflowed_v));
+            self.check_texture_bounding_box(&texture_mapping.texpage, (0, v), (overflowed_u, 255));
+            self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (0, 0),
+                (overflowed_u, overflowed_v),
+            );
+        } else if u_overflow {
+            let overflowed_u = cmp::min(255, args.width - (256 - u) - 1);
+
+            self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (u, v),
+                (255, v + args.height - 1),
+            );
+            self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (0, v),
+                (overflowed_u, v + args.height - 1),
+            );
+        } else if v_overflow {
+            let overflowed_v = cmp::min(255, args.height - (256 - v) - 1);
+
+            self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (u, v),
+                (u + args.width - 1, 255),
+            );
+            self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (u, 0),
+                (u + args.width - 1, overflowed_v),
+            );
+        } else {
+            self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (u, v),
+                (u + args.width - 1, v + args.height - 1),
+            );
+        }
+    }
+
+    fn check_texture_bounding_box(
+        &mut self,
+        texpage: &TexturePage,
+        top_left: (u32, u32),
+        bottom_right: (u32, u32),
+    ) {
+        let x_base = 64 * texpage.x_base;
+        let y_base = texpage.y_base;
+
+        let x = (x_base + top_left.0) & (VRAM_WIDTH - 1);
+        let y = (y_base + top_left.1) & (VRAM_HEIGHT - 1);
+        let width = bottom_right.0 - top_left.0 + 1;
+        let height = bottom_right.1 - top_left.1 + 1;
+
+        let hazard = if x + width > VRAM_WIDTH {
+            self.hazard_tracker.any_marked_rendered(
+                Vertex::new(x as i32, y as i32),
+                Vertex::new(VRAM_WIDTH as i32, (y + height) as i32),
+            ) || self.hazard_tracker.any_marked_rendered(
+                Vertex::new(0, y as i32),
+                Vertex::new((width - (VRAM_WIDTH - x)) as i32, (y + height) as i32),
+            )
+        } else {
+            self.hazard_tracker.any_marked_rendered(
+                Vertex::new(x as i32, y as i32),
+                Vertex::new((x + width) as i32, (y + height) as i32),
+            )
+        };
+
+        if hazard {
+            self.push_scaled_native_sync_command();
         }
     }
 }
@@ -450,6 +665,9 @@ impl RasterizerInterface for WgpuRasterizer {
         else {
             return;
         };
+
+        self.check_textured_triangle_bounding_box(&args);
+
         self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
 
         // TODO proper scaled/native sync
@@ -467,6 +685,10 @@ impl RasterizerInterface for WgpuRasterizer {
             return;
         }
 
+        if args.width == 0 || args.height == 0 {
+            return;
+        }
+
         if draw_settings.check_mask_bit {
             log::warn!("Draw rectangle with mask bit {args:?}");
         }
@@ -476,6 +698,9 @@ impl RasterizerInterface for WgpuRasterizer {
         else {
             return;
         };
+
+        self.check_textured_rect_bounding_box(&args);
+
         self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
 
         // TODO proper scaled/native sync
