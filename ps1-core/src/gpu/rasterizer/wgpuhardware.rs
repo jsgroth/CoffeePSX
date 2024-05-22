@@ -132,7 +132,8 @@ impl WgpuRasterizer {
 
         let draw_shader =
             device.create_shader_module(wgpu::include_wgsl!("wgpuhardware/draw.wgsl"));
-        let draw_pipelines = DrawPipelines::new(&device, &draw_shader, &native_vram);
+        let draw_pipelines =
+            DrawPipelines::new(&device, &draw_shader, &native_vram, &scaled_vram_copy);
 
         let cpu_vram_blit_pipeline = CpuVramBlitPipeline::new(&device, &native_vram);
         let vram_cpu_blit_pipeline = VramCpuBlitPipeline::new(&device, &native_vram);
@@ -868,6 +869,8 @@ impl RasterizerInterface for WgpuRasterizer {
         registers: &Registers,
         wgpu_resources: &mut WgpuResources,
     ) -> &Texture {
+        log::debug!("Rendering frame to display");
+
         if let Some(command_buffer) = self.flush_draw_commands() {
             wgpu_resources.queued_command_buffers.push(command_buffer);
         }
@@ -887,6 +890,8 @@ impl RasterizerInterface for WgpuRasterizer {
             return self
                 .get_and_clear_frame(frame_size, &mut wgpu_resources.queued_command_buffers);
         }
+
+        log::debug!("  Frame size {frame_size:?}, frame coords {frame_coords:?}");
 
         if registers.display_area_color_depth == ColorDepthBits::TwentyFour {
             return self.render_24bpp(
