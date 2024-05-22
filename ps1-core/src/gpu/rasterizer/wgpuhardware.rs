@@ -7,7 +7,7 @@ mod twentyfour;
 use crate::api::ColorDepthBits;
 use crate::gpu::gp0::{DrawSettings, TextureColorDepthBits, TexturePage};
 use crate::gpu::rasterizer::wgpuhardware::blit::{
-    CpuVramBlitPipeline, VramCopyPipeline, VramCpuBlitPipeline, VramFillPipeline,
+    CpuVramBlitPipeline, VramCopyPipeline, VramCpuBlitter, VramFillPipeline,
 };
 use crate::gpu::rasterizer::wgpuhardware::draw::DrawPipelines;
 use crate::gpu::rasterizer::wgpuhardware::hazards::HazardTracker;
@@ -69,7 +69,7 @@ pub struct WgpuRasterizer {
     render_24bpp_pipeline: TwentyFourBppPipeline,
     draw_pipelines: DrawPipelines,
     cpu_vram_blit_pipeline: CpuVramBlitPipeline,
-    vram_cpu_blit_pipeline: VramCpuBlitPipeline,
+    vram_cpu_blitter: VramCpuBlitter,
     vram_copy_pipeline: VramCopyPipeline,
     vram_fill_pipeline: VramFillPipeline,
     native_scaled_sync_pipeline: NativeScaledSyncPipeline,
@@ -136,7 +136,7 @@ impl WgpuRasterizer {
             DrawPipelines::new(&device, &draw_shader, &native_vram, &scaled_vram_copy);
 
         let cpu_vram_blit_pipeline = CpuVramBlitPipeline::new(&device, &native_vram);
-        let vram_cpu_blit_pipeline = VramCpuBlitPipeline::new(&device, &native_vram);
+        let vram_cpu_blitter = VramCpuBlitter::new(&device);
         let vram_copy_pipeline = VramCopyPipeline::new(&device, &scaled_vram);
         let vram_fill_pipeline = VramFillPipeline::new(&device, &native_vram);
 
@@ -158,7 +158,7 @@ impl WgpuRasterizer {
             render_24bpp_pipeline,
             draw_pipelines,
             cpu_vram_blit_pipeline,
-            vram_cpu_blit_pipeline,
+            vram_cpu_blitter,
             vram_copy_pipeline,
             vram_fill_pipeline,
             native_scaled_sync_pipeline,
@@ -269,6 +269,8 @@ impl WgpuRasterizer {
         if self.draw_commands.is_empty() {
             return None;
         }
+
+        self.vram_cpu_blitter.out_of_sync = true;
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
 
@@ -834,28 +836,23 @@ impl RasterizerInterface for WgpuRasterizer {
     }
 
     fn vram_to_cpu_blit(&mut self, x: u32, y: u32, width: u32, height: u32, out: &mut Vec<u16>) {
-        let flush_command_buffer = self.flush_draw_commands();
-
         log::debug!("VRAM-to-CPU blit: position ({x}, {y}) size ({width}, {height})");
 
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        let draw_command_buffer = self.flush_draw_commands();
+        assert!(draw_command_buffer.is_none() || self.vram_cpu_blitter.out_of_sync);
 
-        {
-            let mut compute_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: "vram_cpu_blit_compute_pass".into(),
-                timestamp_writes: None,
-            });
-            self.vram_cpu_blit_pipeline.dispatch(x, y, width, height, &mut compute_pass);
+        if self.vram_cpu_blitter.out_of_sync {
+            log::debug!("Syncing VRAM to host RAM");
+            self.vram_cpu_blitter.blit_from_gpu(
+                &self.device,
+                &self.queue,
+                &self.native_vram,
+                draw_command_buffer,
+            );
+            self.vram_cpu_blitter.out_of_sync = false;
         }
 
-        self.vram_cpu_blit_pipeline.copy_blit_output(
-            &self.device,
-            &self.queue,
-            width,
-            height,
-            flush_command_buffer.into_iter().chain(iter::once(encoder.finish())),
-            out,
-        );
+        self.vram_cpu_blitter.copy_blit_output(x, y, width, height, out);
     }
 
     fn vram_to_vram_blit(&mut self, args: VramVramBlitArgs) {

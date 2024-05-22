@@ -8,9 +8,9 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType,
     BufferDescriptor, BufferUsages, CommandBuffer, CommandEncoderDescriptor, ComputePass,
-    ComputePipeline, ComputePipelineDescriptor, Device, Maintain, MapMode,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, PushConstantRange, Queue, ShaderStages,
-    StorageTextureAccess, Texture, TextureViewDescriptor, TextureViewDimension,
+    ComputePipeline, ComputePipelineDescriptor, Device, ImageCopyBuffer, ImageDataLayout, Maintain,
+    MapMode, PipelineCompilationOptions, PipelineLayoutDescriptor, PushConstantRange, Queue,
+    ShaderStages, StorageTextureAccess, Texture, TextureViewDescriptor, TextureViewDimension,
 };
 
 // Must match CpuVramBlitArgs in cpuvramblit.wgsl
@@ -157,148 +157,77 @@ impl CpuVramBlitPipeline {
     }
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Zeroable, Pod)]
-struct VramCpuBlitArgs {
-    position: [u32; 2],
-    size: [u32; 2],
-}
-
 #[derive(Debug)]
-pub struct VramCpuBlitPipeline {
+pub struct VramCpuBlitter {
+    ram_buffer: Vec<u16>,
     blit_buffer: Buffer,
-    map_buffer: Buffer,
-    bind_group: BindGroup,
-    pipeline: ComputePipeline,
+    pub out_of_sync: bool,
 }
 
-impl VramCpuBlitPipeline {
-    const WORKGROUP_SIZE: u32 = 16;
-
-    pub fn new(device: &Device, native_vram: &Texture) -> Self {
+impl VramCpuBlitter {
+    pub fn new(device: &Device) -> Self {
         let blit_buffer = device.create_buffer(&BufferDescriptor {
             label: "vram_cpu_blit_buffer".into(),
-            size: (4 * VRAM_WIDTH * VRAM_HEIGHT).into(),
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let map_buffer = device.create_buffer(&BufferDescriptor {
-            label: "vram_cpu_map_buffer".into(),
             size: (4 * VRAM_WIDTH * VRAM_HEIGHT).into(),
             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: "vram_cpu_blit_bind_group_layout".into(),
-            entries: &[
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::StorageTexture {
-                        access: StorageTextureAccess::ReadOnly,
-                        format: native_vram.format(),
-                        view_dimension: TextureViewDimension::D2,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let native_vram_view = native_vram.create_view(&TextureViewDescriptor::default());
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: "vram_cpu_blit_bind_group".into(),
-            layout: &bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(&native_vram_view),
-                },
-                BindGroupEntry { binding: 1, resource: blit_buffer.as_entire_binding() },
-            ],
-        });
-
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: "vram_cpu_blit_pipeline_layout".into(),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[PushConstantRange {
-                stages: ShaderStages::COMPUTE,
-                range: 0..mem::size_of::<VramCpuBlitArgs>() as u32,
-            }],
-        });
-
-        let shader = device.create_shader_module(wgpu::include_wgsl!("vramcpublit.wgsl"));
-        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: "vram_cpu_blit_pipeline".into(),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: "vram_cpu_blit",
-            compilation_options: PipelineCompilationOptions::default(),
-        });
-
-        Self { blit_buffer, map_buffer, bind_group, pipeline }
+        Self {
+            ram_buffer: Vec::with_capacity((VRAM_WIDTH * VRAM_HEIGHT) as usize),
+            blit_buffer,
+            out_of_sync: true,
+        }
     }
 
-    pub fn dispatch<'cpass>(
-        &'cpass self,
-        x: u32,
-        y: u32,
-        width: u32,
-        height: u32,
-        compute_pass: &mut ComputePass<'cpass>,
-    ) {
-        let args = VramCpuBlitArgs { position: [x, y], size: [width, height] };
-
-        compute_pass.set_pipeline(&self.pipeline);
-        compute_pass.set_push_constants(0, bytemuck::cast_slice(&[args]));
-        compute_pass.set_bind_group(0, &self.bind_group, &[]);
-
-        let x_workgroups =
-            width / Self::WORKGROUP_SIZE + u32::from(width % Self::WORKGROUP_SIZE != 0);
-        let y_workgroups =
-            height / Self::WORKGROUP_SIZE + u32::from(height % Self::WORKGROUP_SIZE != 0);
-        compute_pass.dispatch_workgroups(x_workgroups, y_workgroups, 1);
-    }
-
-    pub fn copy_blit_output(
-        &self,
+    pub fn blit_from_gpu(
+        &mut self,
         device: &Device,
         queue: &Queue,
-        width: u32,
-        height: u32,
-        previous_commands: impl Iterator<Item = CommandBuffer>,
-        out: &mut Vec<u16>,
+        native_vram: &Texture,
+        draw_command_buffer: Option<CommandBuffer>,
     ) {
         let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor::default());
 
-        let copy_len: u64 = (4 * width * height).into();
-        encoder.copy_buffer_to_buffer(&self.blit_buffer, 0, &self.map_buffer, 0, copy_len);
+        encoder.copy_texture_to_buffer(
+            native_vram.as_image_copy(),
+            ImageCopyBuffer {
+                buffer: &self.blit_buffer,
+                layout: ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * VRAM_WIDTH),
+                    rows_per_image: None,
+                },
+            },
+            native_vram.size(),
+        );
 
-        queue.submit(previous_commands.chain(iter::once(encoder.finish())));
+        queue.submit(draw_command_buffer.into_iter().chain(iter::once(encoder.finish())));
 
-        let map_buffer_slice = self.map_buffer.slice(0..copy_len);
-        map_buffer_slice.map_async(MapMode::Read, Result::unwrap);
+        let blit_buffer_slice = self.blit_buffer.slice(..);
+        blit_buffer_slice.map_async(MapMode::Read, Result::unwrap);
         device.poll(Maintain::Wait);
 
+        self.ram_buffer.clear();
         {
-            let map_buffer_view = map_buffer_slice.get_mapped_range();
+            let map_buffer_view = blit_buffer_slice.get_mapped_range();
             for chunk in map_buffer_view.chunks_exact(4) {
-                out.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+                self.ram_buffer.push(u16::from_le_bytes([chunk[0], chunk[1]]));
             }
         }
 
-        self.map_buffer.unmap();
+        self.blit_buffer.unmap();
+    }
+
+    pub fn copy_blit_output(&self, x: u32, y: u32, width: u32, height: u32, out: &mut Vec<u16>) {
+        for dy in 0..height {
+            let y = (y + dy) & (VRAM_HEIGHT - 1);
+            for dx in 0..width {
+                let x = (x + dx) & (VRAM_WIDTH - 1);
+                let vram_addr = y * VRAM_WIDTH + x;
+                out.push(self.ram_buffer[vram_addr as usize]);
+            }
+        }
     }
 }
 
