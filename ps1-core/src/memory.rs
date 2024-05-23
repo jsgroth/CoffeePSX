@@ -17,7 +17,6 @@ type BiosRom = BoxedArray<u8, BIOS_ROM_LEN>;
 type MainRam = BoxedArray<u8, MAIN_RAM_LEN>;
 type Scratchpad = BoxedArray<u8, SCRATCHPAD_LEN>;
 
-// TODO I-cache (or is this stored in CP0?)
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Memory {
     bios_rom: BiosRom,
@@ -83,11 +82,13 @@ impl Memory {
 
         let bios_rom: Box<[u8; BIOS_ROM_LEN]> = bios_rom.into_boxed_slice().try_into().unwrap();
 
-        Ok(Self {
-            bios_rom: BiosRom::from(bios_rom),
-            main_ram: MainRam::new(),
-            scratchpad: Scratchpad::new(),
-        })
+        let mut main_ram = MainRam::new();
+        main_ram.fill_with(rand::random);
+
+        let mut scratchpad = Scratchpad::new();
+        scratchpad.fill_with(rand::random);
+
+        Ok(Self { bios_rom: BiosRom::from(bios_rom), main_ram, scratchpad })
     }
 
     pub fn read_bios_u8(&self, address: u32) -> u8 {
