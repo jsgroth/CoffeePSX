@@ -32,14 +32,14 @@ macro_rules! impl_read_u8 {
 
 macro_rules! impl_read_u16 {
     ($memory:expr, $addr_mask:expr, $address:expr) => {{
-        let address = ($address & $addr_mask) as usize;
+        let address = ($address & $addr_mask & !1) as usize;
         u16::from_le_bytes([$memory[address], $memory[address + 1]])
     }};
 }
 
 macro_rules! impl_read_u32 {
     ($memory:expr, $addr_mask:expr, $address:expr) => {{
-        let address = ($address & $addr_mask) as usize;
+        let address = ($address & $addr_mask & !3) as usize;
         u32::from_le_bytes([
             $memory[address],
             $memory[address + 1],
@@ -58,7 +58,7 @@ macro_rules! impl_write_u8 {
 macro_rules! impl_write_u16 {
     ($memory:expr, $addr_mask: expr, $address:expr, $value:expr) => {{
         let [lsb, msb] = $value.to_le_bytes();
-        let address = ($address & $addr_mask) as usize;
+        let address = ($address & $addr_mask & !1) as usize;
         $memory[address] = lsb;
         $memory[address + 1] = msb;
     }};
@@ -67,7 +67,7 @@ macro_rules! impl_write_u16 {
 macro_rules! impl_write_u32 {
     ($memory:expr, $addr_mask: expr, $address:expr, $value:expr) => {{
         let bytes = $value.to_le_bytes();
-        let address = ($address & $addr_mask) as usize;
+        let address = ($address & $addr_mask & !3) as usize;
         for i in 0..4 {
             $memory[address + i] = bytes[i];
         }
