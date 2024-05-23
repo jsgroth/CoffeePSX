@@ -2,8 +2,8 @@ use crate::gpu::gp0::{
     DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
 };
 use crate::gpu::rasterizer::{
-    DrawRectangleArgs, DrawTriangleArgs, RectangleTextureMapping, TextureMapping,
-    TextureMappingMode, TriangleShading, TriangleTextureMapping,
+    DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading, RectangleTextureMapping,
+    TextureMapping, TextureMappingMode, TriangleShading, TriangleTextureMapping,
 };
 use crate::gpu::{Color, Vertex};
 use bytemuck::{Pod, Zeroable};
@@ -649,20 +649,7 @@ impl DrawPipelines {
             DrawPipeline::UntexturedTriangle(semi_transparency_mode)
         };
 
-        // Subtractive semi-transparent textured triangles must go in their own batch
-        if pipeline == DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
-            || !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
-        {
-            let start =
-                (if textured { self.textured_buffer.len() } else { self.untextured_buffer.len() })
-                    as u32;
-            self.batches.push(DrawBatch {
-                draw_settings: draw_settings.clone(),
-                pipeline,
-                start,
-                end: start,
-            });
-        }
+        self.maybe_start_triangle_batch(pipeline, draw_settings, textured);
 
         let draw_offset = draw_settings.draw_offset;
         let positions =
@@ -696,6 +683,28 @@ impl DrawPipelines {
         }
 
         self.batches.last_mut().unwrap().end += 3;
+    }
+
+    fn maybe_start_triangle_batch(
+        &mut self,
+        pipeline: DrawPipeline,
+        draw_settings: &DrawSettings,
+        textured: bool,
+    ) {
+        // Subtractive semi-transparent textured triangles must go in their own batch
+        if pipeline == DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
+            || !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
+        {
+            let start =
+                (if textured { self.textured_buffer.len() } else { self.untextured_buffer.len() })
+                    as u32;
+            self.batches.push(DrawBatch {
+                draw_settings: draw_settings.clone(),
+                pipeline,
+                start,
+                end: start,
+            });
+        }
     }
 
     pub fn add_rectangle(&mut self, args: &DrawRectangleArgs, draw_settings: &DrawSettings) {
@@ -743,6 +752,73 @@ impl DrawPipelines {
                 }
             }
         }
+    }
+
+    pub fn add_line(&mut self, args: &DrawLineArgs, draw_settings: &DrawSettings) {
+        let dy = args.vertices[1].y - args.vertices[0].y;
+        let dx = args.vertices[1].x - args.vertices[0].x;
+
+        let v = args.vertices.map(|v| v + draw_settings.draw_offset);
+        let positions = if dx == 0 || dx.abs() <= dy.abs() {
+            // Vertically oriented line
+            if v[0].y <= v[1].y {
+                // First vertex is higher
+                [
+                    [v[0].x, v[0].y],
+                    [v[0].x + 1, v[0].y],
+                    [v[1].x, v[1].y + 1],
+                    [v[1].x + 1, v[1].y + 1],
+                ]
+            } else {
+                // First vertex is lower
+                [
+                    [v[0].x, v[0].y + 1],
+                    [v[0].x + 1, v[0].y + 1],
+                    [v[1].x, v[1].y],
+                    [v[1].x + 1, v[1].y],
+                ]
+            }
+        } else {
+            // Horizontally oriented line
+            if v[0].x <= v[1].x {
+                // First vertex is farther left
+                [
+                    [v[0].x, v[0].y],
+                    [v[0].x, v[0].y + 1],
+                    [v[1].x + 1, v[1].y],
+                    [v[1].x + 1, v[1].y + 1],
+                ]
+            } else {
+                // First vertex is farther right
+                [
+                    [v[0].x + 1, v[0].y],
+                    [v[0].x + 1, v[0].y + 1],
+                    [v[1].x, v[1].y],
+                    [v[1].x, v[1].y + 1],
+                ]
+            }
+        };
+
+        let colors = match args.shading {
+            LineShading::Flat(color) => [color; 4],
+            LineShading::Gouraud(colors) => [colors[0], colors[0], colors[1], colors[1]],
+        };
+        let colors: [[u32; 3]; 4] =
+            colors.map(|color| [color.r.into(), color.g.into(), color.b.into()]);
+
+        let pipeline = DrawPipeline::UntexturedTriangle(
+            args.semi_transparent.then_some(args.semi_transparency_mode),
+        );
+        self.maybe_start_triangle_batch(pipeline, draw_settings, false);
+
+        for range in [0..3, 1..4] {
+            for i in range {
+                self.untextured_buffer
+                    .push(UntexturedVertex { position: positions[i], color: colors[i] });
+            }
+        }
+
+        self.batches.last_mut().unwrap().end += 6;
     }
 
     pub fn prepare(&mut self, device: &Device) -> DrawBuffers {
