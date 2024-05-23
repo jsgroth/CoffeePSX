@@ -40,6 +40,7 @@ const VRAM_HEIGHT: u32 = 512;
 enum DrawCommand {
     DrawTriangle { args: DrawTriangleArgs, draw_settings: DrawSettings },
     DrawRectangle { args: DrawRectangleArgs, draw_settings: DrawSettings },
+    DrawLine { args: DrawLineArgs, draw_settings: DrawSettings },
     CpuVramBlit { args: CpuVramBlitArgs, buffer_bind_group: BindGroup, sync_vertex_buffer: Buffer },
     VramCopy { args: VramVramBlitArgs },
     VramFill { x: u32, y: u32, width: u32, height: u32, color: Color, sync_vertex_buffer: Buffer },
@@ -277,7 +278,9 @@ impl WgpuRasterizer {
         let mut i = 0;
         while let Some(command) = self.draw_commands.get(i) {
             match command {
-                DrawCommand::DrawTriangle { .. } | DrawCommand::DrawRectangle { .. } => {
+                DrawCommand::DrawTriangle { .. }
+                | DrawCommand::DrawRectangle { .. }
+                | DrawCommand::DrawLine { .. } => {
                     let mut j = i + 1;
                     while j < self.draw_commands.len()
                         && matches!(
@@ -330,6 +333,9 @@ impl WgpuRasterizer {
                 }
                 DrawCommand::DrawRectangle { args, draw_settings } => {
                     self.draw_pipelines.add_rectangle(args, draw_settings);
+                }
+                DrawCommand::DrawLine { args, draw_settings } => {
+                    self.draw_pipelines.add_line(args, draw_settings);
                 }
                 DrawCommand::CpuVramBlit { .. }
                 | DrawCommand::VramFill { .. }
@@ -393,6 +399,7 @@ impl WgpuRasterizer {
                     }
                     DrawCommand::DrawTriangle { .. }
                     | DrawCommand::DrawRectangle { .. }
+                    | DrawCommand::DrawLine { .. }
                     | DrawCommand::ScaledNativeSync { .. } => {}
                 }
             }
@@ -418,6 +425,7 @@ impl WgpuRasterizer {
                     }
                     DrawCommand::DrawTriangle { .. }
                     | DrawCommand::DrawRectangle { .. }
+                    | DrawCommand::DrawLine { .. }
                     | DrawCommand::ScaledNativeSync { .. }
                     | DrawCommand::VramCopy { .. } => {}
                 }
@@ -434,6 +442,7 @@ impl WgpuRasterizer {
                 }
                 DrawCommand::DrawTriangle { .. }
                 | DrawCommand::DrawRectangle { .. }
+                | DrawCommand::DrawLine { .. }
                 | DrawCommand::ScaledNativeSync { .. }
                 | DrawCommand::VramCopy { .. } => {}
             }
@@ -773,8 +782,15 @@ impl RasterizerInterface for WgpuRasterizer {
             .push(DrawCommand::DrawTriangle { args, draw_settings: draw_settings.clone() });
     }
 
-    fn draw_line(&mut self, _args: DrawLineArgs, _draw_settings: &DrawSettings) {
-        log::warn!("Draw line {_args:?} {_draw_settings:?}");
+    fn draw_line(&mut self, args: DrawLineArgs, draw_settings: &DrawSettings) {
+        if !draw_settings.is_drawing_area_valid() {
+            return;
+        }
+
+        // TODO mark points rendered, possibly just the bounding box
+
+        self.draw_commands
+            .push(DrawCommand::DrawLine { args, draw_settings: draw_settings.clone() });
     }
 
     fn draw_rectangle(&mut self, args: DrawRectangleArgs, draw_settings: &DrawSettings) {
