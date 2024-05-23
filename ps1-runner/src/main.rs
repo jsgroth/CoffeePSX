@@ -6,8 +6,8 @@ use cdrom::reader::{CdRom, CdRomFileFormat};
 use clap::Parser;
 use env_logger::Env;
 use ps1_core::api::{
-    AudioOutput, DisplayConfig, Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, SaveWriter,
-    TickEffect,
+    AudioOutput, DisplayConfig, Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, Renderer,
+    SaveWriter, TickEffect,
 };
 use ps1_core::input::Ps1Inputs;
 use ps1_core::RasterizerType;
@@ -19,6 +19,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use wgpu::{CommandBuffer, Texture};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
@@ -115,6 +116,37 @@ impl SaveWriter for FsSaveWriter {
     fn save_memory_card_1(&mut self, card_data: &[u8]) -> Result<(), Self::Err> {
         fs::write(&self.path, card_data)
             .context(format!("Error saving memory card 1 to '{}'", self.path.display()))
+    }
+}
+
+struct Null;
+
+impl Renderer for Null {
+    type Err = String;
+
+    fn render_frame(
+        &mut self,
+        _command_buffers: impl Iterator<Item = CommandBuffer>,
+        _frame: &Texture,
+        _pixel_aspect_ratio: f64,
+    ) -> Result<(), Self::Err> {
+        Ok(())
+    }
+}
+
+impl AudioOutput for Null {
+    type Err = String;
+
+    fn queue_samples(&mut self, _samples: &[(f64, f64)]) -> Result<(), Self::Err> {
+        Ok(())
+    }
+}
+
+impl SaveWriter for Null {
+    type Err = String;
+
+    fn save_memory_card_1(&mut self, _card_data: &[u8]) -> Result<(), Self::Err> {
+        Ok(())
     }
 }
 
@@ -339,7 +371,7 @@ fn main() -> anyhow::Result<()> {
 
         let exe = fs::read(exe_path)?;
         loop {
-            emulator.tick(inputs, &mut renderer, &mut audio_output, &mut save_writer)?;
+            emulator.tick(inputs, &mut Null, &mut Null, &mut Null)?;
             if emulator.cpu_pc() == 0x80030000 {
                 emulator.sideload_exe(&exe)?;
                 log::info!("EXE sideloaded");
