@@ -33,6 +33,21 @@ use wgpu::{
     TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
 };
 
+macro_rules! include_wgsl_concat {
+    ($($filename:literal),* $(,)?) => {
+        wgpu::ShaderModuleDescriptor {
+            label: None,
+            source: {
+                let contents = concat!(
+                    $(include_str!($filename),)*
+                );
+
+                wgpu::ShaderSource::Wgsl(contents.into())
+            }
+        }
+    }
+}
+
 const VRAM_WIDTH: u32 = 1024;
 const VRAM_HEIGHT: u32 = 512;
 
@@ -131,8 +146,10 @@ impl WgpuRasterizer {
 
         let render_24bpp_pipeline = TwentyFourBppPipeline::new(&device, &native_vram);
 
-        let draw_shader =
-            device.create_shader_module(wgpu::include_wgsl!("wgpuhardware/draw.wgsl"));
+        let draw_shader = device.create_shader_module(include_wgsl_concat!(
+            "wgpuhardware/draw_common.wgsl",
+            "wgpuhardware/draw.wgsl"
+        ));
         let draw_pipelines =
             DrawPipelines::new(&device, &draw_shader, &native_vram, &scaled_vram_copy);
 
