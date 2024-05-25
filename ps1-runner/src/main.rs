@@ -40,7 +40,7 @@ struct Args {
     video_sync: bool,
     #[arg(long = "no-audio-sync", default_value_t = true, action = clap::ArgAction::SetFalse)]
     audio_sync: bool,
-    #[arg(long = "no-simd", default_value_t = true)]
+    #[arg(long = "no-simd", default_value_t = true, action = clap::ArgAction::SetFalse)]
     simd: bool,
 }
 

@@ -356,9 +356,8 @@ pub unsafe fn rasterize_triangle(
                 );
 
                 // Texels are semi-transparent only if bit 15 is set
-                let texture_mask_bits = _mm256_set1_epi16(1 << 15);
-                mask_bits = _mm256_or_si256(mask_bits, texture_mask_bits);
-                semi_transparency_bits = _mm256_and_si256(texels, texture_mask_bits);
+                semi_transparency_bits = _mm256_and_si256(texels, _mm256_set1_epi16(1 << 15));
+                mask_bits = _mm256_or_si256(mask_bits, semi_transparency_bits);
 
                 let (tr, tg, tb) = convert_15bit_to_24bit(texels);
 
@@ -832,8 +831,6 @@ pub unsafe fn rasterize_rectangle(
     let color_g = _mm256_set1_epi16(color.g.into());
     let color_b = _mm256_set1_epi16(color.b.into());
 
-    let zero = _mm256_setzero_si256();
-
     for dy in 0..height {
         let y_offset = i11(top_left.y + dy + draw_offset.y);
         if y_offset < draw_area_top_left.y || y_offset > draw_area_bottom_right.y {
@@ -899,7 +896,7 @@ pub unsafe fn rasterize_rectangle(
                     write_mask,
                     _mm256_cmpeq_epi16(
                         _mm256_and_si256(existing, _mm256_set1_epi16(1 << 15)),
-                        zero,
+                        _mm256_setzero_si256(),
                     ),
                 );
             }
@@ -940,12 +937,14 @@ pub unsafe fn rasterize_rectangle(
                 );
 
                 // Mask out any pixels where the texel value is $0000
-                write_mask = _mm256_andnot_si256(_mm256_cmpeq_epi16(texels, zero), write_mask);
+                write_mask = _mm256_andnot_si256(
+                    _mm256_cmpeq_epi16(texels, _mm256_setzero_si256()),
+                    write_mask,
+                );
 
                 // Texture pixels are semi-transparent only if texel bit 15 is set
-                let bit_15_mask = _mm256_set1_epi16(1 << 15);
-                mask_bits = _mm256_or_si256(mask_bits, _mm256_and_si256(texels, bit_15_mask));
-                semi_transparency_bits = _mm256_and_si256(texels, bit_15_mask);
+                semi_transparency_bits = _mm256_and_si256(texels, _mm256_set1_epi16(1 << 15));
+                mask_bits = _mm256_or_si256(mask_bits, semi_transparency_bits);
 
                 let (tr, tg, tb) = convert_15bit_to_24bit(texels);
 
@@ -966,7 +965,8 @@ pub unsafe fn rasterize_rectangle(
 
             // If semi-transparency is enabled, blend existing colors with new colors
             if let Some(semi_transparency_mode) = semi_transparency_mode {
-                let semi_transparency_mask = _mm256_cmpeq_epi16(semi_transparency_bits, zero);
+                let semi_transparency_mask =
+                    _mm256_cmpeq_epi16(semi_transparency_bits, _mm256_setzero_si256());
 
                 let (existing_r, existing_g, existing_b) = convert_15bit_to_24bit(existing);
                 (r, g, b) = apply_semi_transparency(
