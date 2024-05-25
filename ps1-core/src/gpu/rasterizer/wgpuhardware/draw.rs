@@ -62,6 +62,8 @@ struct TexturedVertex {
     clut: [u32; 2],
     color_depth: u32,
     modulated: u32,
+    other_positions: [i32; 4],
+    other_uv: [u32; 4],
 }
 
 fn vertex_texpage(texpage: &TexturePage) -> [u32; 2] {
@@ -89,7 +91,7 @@ fn vertex_color_depth(color_depth: TextureColorDepthBits) -> u32 {
 }
 
 impl TexturedVertex {
-    const ATTRIBUTES: [VertexAttribute; 9] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [VertexAttribute; 11] = wgpu::vertex_attr_array![
         0 => Sint32x2,
         1 => Uint32x3,
         2 => Uint32x2,
@@ -99,6 +101,8 @@ impl TexturedVertex {
         6 => Uint32x2,
         7 => Uint32,
         8 => Uint32,
+        9 => Sint32x4,
+        10 => Uint32x4,
     ];
 
     const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
@@ -107,24 +111,39 @@ impl TexturedVertex {
         attributes: &Self::ATTRIBUTES,
     };
 
-    fn new(
-        position: [i32; 2],
-        color: Color,
-        u: u8,
-        v: u8,
+    fn new_vertices(
+        positions: [[i32; 2]; 3],
+        colors: [Color; 3],
         texture_mapping: &TriangleTextureMapping,
-    ) -> Self {
-        Self {
-            position,
-            color: [color.r.into(), color.g.into(), color.b.into()],
-            uv: [u.into(), v.into()],
-            texpage: vertex_texpage(&texture_mapping.texpage),
-            tex_window_mask: vertex_tex_window_mask(texture_mapping.window),
-            tex_window_offset: vertex_tex_window_offset(texture_mapping.window),
-            clut: vertex_clut(texture_mapping),
-            color_depth: vertex_color_depth(texture_mapping.texpage.color_depth),
-            modulated: (texture_mapping.mode == TextureMappingMode::Modulated).into(),
-        }
+    ) -> [Self; 3] {
+        array::from_fn(|i| {
+            let j = (i + 1) % 3;
+            let k = (i + 2) % 3;
+
+            Self {
+                position: positions[i],
+                color: [colors[i].r.into(), colors[i].g.into(), colors[i].b.into()],
+                uv: [texture_mapping.u[i].into(), texture_mapping.v[i].into()],
+                texpage: vertex_texpage(&texture_mapping.texpage),
+                tex_window_mask: vertex_tex_window_mask(texture_mapping.window),
+                tex_window_offset: vertex_tex_window_offset(texture_mapping.window),
+                clut: vertex_clut(texture_mapping),
+                color_depth: vertex_color_depth(texture_mapping.texpage.color_depth),
+                modulated: (texture_mapping.mode == TextureMappingMode::Modulated).into(),
+                other_positions: [
+                    positions[j][0],
+                    positions[j][1],
+                    positions[k][0],
+                    positions[k][1],
+                ],
+                other_uv: [
+                    texture_mapping.u[j].into(),
+                    texture_mapping.v[j].into(),
+                    texture_mapping.u[k].into(),
+                    texture_mapping.v[k].into(),
+                ],
+            }
+        })
     }
 }
 
@@ -662,15 +681,8 @@ impl DrawPipelines {
 
         match &args.texture_mapping {
             Some(mapping) => {
-                for (i, position) in positions.into_iter().enumerate() {
-                    self.textured_buffer.push(TexturedVertex::new(
-                        position,
-                        colors[i],
-                        mapping.u[i],
-                        mapping.v[i],
-                        mapping,
-                    ));
-                }
+                self.textured_buffer
+                    .extend(TexturedVertex::new_vertices(positions, colors, mapping));
             }
             None => {
                 for (position, color) in positions.into_iter().zip(colors) {
