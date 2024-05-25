@@ -64,7 +64,7 @@ enum DrawCommand {
 
 impl DrawCommand {
     fn can_share_compute_pass(&self) -> bool {
-        matches!(self, Self::CpuVramBlit { .. } | Self::VramCopy { .. } | Self::VramFill { .. })
+        matches!(self, Self::CpuVramBlit { .. } | Self::VramFill { .. })
     }
 }
 
@@ -312,9 +312,7 @@ impl WgpuRasterizer {
 
                     i = j;
                 }
-                DrawCommand::CpuVramBlit { .. }
-                | DrawCommand::VramCopy { .. }
-                | DrawCommand::VramFill { .. } => {
+                DrawCommand::CpuVramBlit { .. } | DrawCommand::VramFill { .. } => {
                     let mut j = i + 1;
                     while j < self.draw_commands.len()
                         && self.draw_commands[j].can_share_compute_pass()
@@ -323,6 +321,18 @@ impl WgpuRasterizer {
                     }
 
                     self.execute_blits(i..j, &mut encoder);
+
+                    i = j;
+                }
+                DrawCommand::VramCopy { .. } => {
+                    let mut j = i + 1;
+                    while j < self.draw_commands.len()
+                        && matches!(self.draw_commands[j], DrawCommand::VramCopy { .. })
+                    {
+                        j += 1;
+                    }
+
+                    self.execute_copy(i..j, &mut encoder);
 
                     i = j;
                 }
@@ -397,13 +407,6 @@ impl WgpuRasterizer {
                             &mut compute_pass,
                         );
                     }
-                    DrawCommand::VramCopy { args, .. } => {
-                        self.vram_copy_pipeline.dispatch(
-                            args,
-                            self.resolution_scale,
-                            &mut compute_pass,
-                        );
-                    }
                     &DrawCommand::VramFill { x, y, width, height, color, .. } => {
                         self.vram_fill_pipeline.dispatch(
                             x,
@@ -417,7 +420,8 @@ impl WgpuRasterizer {
                     DrawCommand::DrawTriangle { .. }
                     | DrawCommand::DrawRectangle { .. }
                     | DrawCommand::DrawLine { .. }
-                    | DrawCommand::ScaledNativeSync { .. } => {}
+                    | DrawCommand::ScaledNativeSync { .. }
+                    | DrawCommand::VramCopy { .. } => {}
                 }
             }
         }
@@ -462,6 +466,23 @@ impl WgpuRasterizer {
                 | DrawCommand::DrawLine { .. }
                 | DrawCommand::ScaledNativeSync { .. }
                 | DrawCommand::VramCopy { .. } => {}
+            }
+        }
+    }
+
+    fn execute_copy(&self, draw_command_range: Range<usize>, encoder: &mut CommandEncoder) {
+        log::debug!("Executing {} VRAM copy commands", draw_command_range.len());
+
+        {
+            let mut compute_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: "vram_copy_compute_pass".into(),
+                timestamp_writes: None,
+            });
+
+            for draw_command in &self.draw_commands[draw_command_range] {
+                let DrawCommand::VramCopy { args } = draw_command else { continue };
+
+                self.vram_copy_pipeline.dispatch(&args, self.resolution_scale, &mut compute_pass);
             }
         }
     }
