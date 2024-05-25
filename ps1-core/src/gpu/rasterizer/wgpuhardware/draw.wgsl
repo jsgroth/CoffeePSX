@@ -44,6 +44,8 @@ struct TexturedVertex {
     @location(6) clut: vec2u,
     @location(7) color_depth: u32,
     @location(8) modulated: u32,
+    @location(9) other_positions: vec4i,
+    @location(10) other_uv: vec4u,
 }
 
 struct TexturedRectVertex {
@@ -69,6 +71,7 @@ struct TexturedVertexOutput {
     @location(5) clut: vec2u,
     @location(6) color_depth: u32,
     @location(7) modulated: u32,
+    @location(8) uv_round_direction: vec2i,
 }
 
 struct TexturedRectVertexOutput {
@@ -84,11 +87,48 @@ struct TexturedRectVertexOutput {
     @location(8) base_uv: vec2u,
 }
 
+fn compute_dx(component: vec3i, v0: vec2i, v1: vec2i, v2: vec2i) -> i32 {
+    return component[0] * (v1.y - v2.y)
+        + component[1] * (v2.y - v0.y)
+        + component[2] * (v0.y - v1.y);
+}
+
+fn compute_dy(component: vec3i, v0: vec2i, v1: vec2i, v2: vec2i) -> i32 {
+    return component[0] * (v2.x - v1.x)
+        + component[1] * (v0.x - v2.x)
+        + component[2] * (v1.x - v0.x);
+}
+
+fn compute_uv_round_direction(vert0: vec2i, uv0: vec2u, other_positions: vec4i, other_uv: vec4u) -> vec2i {
+    let vert1 = other_positions.xy;
+    let vert2 = other_positions.zw;
+    let uv1 = other_uv.xy;
+    let uv2 = other_uv.zw;
+
+    let cpz_sign = sign((vert1.x - vert0.x) * (vert2.y - vert0.y) - (vert1.y - vert0.y) * (vert2.x - vert0.x));
+
+    let u = vec3i(vec3u(uv0.x, uv1.x, uv2.x));
+    let v = vec3i(vec3u(uv0.y, uv1.y, uv2.y));
+
+    let du_dx = cpz_sign * compute_dx(u, vert0, vert1, vert2);
+    let du_dy = cpz_sign * compute_dy(u, vert0, vert1, vert2);
+    let dv_dx = cpz_sign * compute_dx(v, vert0, vert1, vert2);
+    let dv_dy = cpz_sign * compute_dy(v, vert0, vert1, vert2);
+
+    let u_sign = sign(-du_dx - du_dy);
+    let v_sign = sign(-dv_dx - dv_dy);
+    return vec2i(u_sign, v_sign);
+}
+
 @vertex
 fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
     let position = vram_position_to_vertex(input.position);
     let color = vec3f(input.color) / 255.0;
     let uv = vec2f(input.uv);
+
+    let uv_round_direction = compute_uv_round_direction(
+        input.position, input.uv, input.other_positions, input.other_uv,
+    );
 
     return TexturedVertexOutput(
         position,
@@ -100,6 +140,7 @@ fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
         input.clut,
         input.color_depth,
         input.modulated,
+        uv_round_direction,
     );
 }
 
@@ -252,6 +293,12 @@ fn sample_15bpp_texture(
     return texel;
 }
 
+fn round_uv(uv: vec2f, round_direction: vec2i) -> vec2u {
+    let u = select(floor(uv.x), ceil(uv.x), round_direction.x >= 0);
+    let v = select(floor(uv.y), ceil(uv.y), round_direction.y >= 0);
+    return vec2u(u32(u), u32(v));
+}
+
 fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
     if input.color_depth == TEXTURE_15BPP {
         let fractional_uv = fract(input.uv);
@@ -259,13 +306,17 @@ fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
         let masked_uv = apply_texture_window(integral_uv, input.tex_window_mask, input.tex_window_offset);
 
         let scale = draw_settings.resolution_scale;
-        let scaled_uv = scale * masked_uv + vec2u(f32(scale) * fractional_uv);
+        let fractional_uv_scaled = round_uv(f32(scale) * fractional_uv, input.uv_round_direction);
+        let scaled_uv = scale * masked_uv + fractional_uv_scaled;
+
         return sample_15bpp_texture(input.color, scaled_uv, input.texpage, input.modulated);
     }
 
+    let uv = round_uv(input.uv, input.uv_round_direction);
+
     return sample_texture(
         input.color,
-        vec2u(floor(input.uv)),
+        uv,
         input.texpage,
         input.tex_window_mask,
         input.tex_window_offset,
