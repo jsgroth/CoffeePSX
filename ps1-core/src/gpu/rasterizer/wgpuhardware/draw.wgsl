@@ -176,15 +176,13 @@ struct SemiTransparentOutput {
 @fragment
 fn fs_untextured_average(input: UntexturedVertexOutput) -> SemiTransparentOutput {
     let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
-    let blend = vec4f(0.5, 0.5, 0.5, 0.5);
+    let blend = vec4f(0.5);
     return SemiTransparentOutput(color, blend);
 }
 
 @fragment
-fn fs_untextured_add_quarter(input: UntexturedVertexOutput) -> SemiTransparentOutput {
-    let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
-    let blend = vec4f(0.25, 0.25, 0.25, 0.25);
-    return SemiTransparentOutput(color, blend);
+fn fs_untextured_add_quarter(input: UntexturedVertexOutput) -> @location(0) vec4f {
+    return vec4f(0.25 * input.color, f32(draw_settings.force_mask_bit));
 }
 
 @group(0) @binding(0)
@@ -365,7 +363,7 @@ fn fs_textured_rect_opaque(input: TexturedRectVertexOutput) -> @location(0) vec4
 
 fn average_blend(texel: vec4f) -> vec4f {
     let factor = select(1.0, 0.5, texel.a != 0.0);
-    return vec4f(factor, factor, factor, factor);
+    return vec4f(factor);
 }
 
 @fragment
@@ -390,7 +388,7 @@ fn fs_textured_rect_average(input: TexturedRectVertexOutput) -> SemiTransparentO
 
 fn additive_blend(texel: vec4f) -> vec4f {
     let factor = select(0.0, 1.0, texel.a != 0.0);
-    return vec4f(factor, factor, factor, factor);
+    return vec4f(factor);
 }
 
 @fragment
