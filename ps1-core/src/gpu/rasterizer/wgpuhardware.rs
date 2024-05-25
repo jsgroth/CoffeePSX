@@ -762,10 +762,6 @@ impl RasterizerInterface for WgpuRasterizer {
             return;
         }
 
-        if draw_settings.check_mask_bit {
-            log::warn!("Draw triangle with mask bit {args:?}");
-        }
-
         let Some((bounding_box_top_left, bounding_box_top_right)) =
             triangle_bounding_box(&args, draw_settings)
         else {
@@ -800,10 +796,6 @@ impl RasterizerInterface for WgpuRasterizer {
 
         if args.width == 0 || args.height == 0 {
             return;
-        }
-
-        if draw_settings.check_mask_bit {
-            log::warn!("Draw rectangle with mask bit {args:?}");
         }
 
         let Some((bounding_box_top_left, bounding_box_top_right)) =

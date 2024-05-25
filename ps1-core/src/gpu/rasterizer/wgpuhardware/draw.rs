@@ -238,13 +238,18 @@ pub struct DrawBuffers {
 pub struct DrawPipelines {
     untextured_buffer: Vec<UntexturedVertex>,
     untextured_opaque_pipeline: RenderPipeline,
+    untextured_opaque_mask_pipeline: RenderPipeline,
     untextured_average_pipeline: RenderPipeline,
     untextured_add_pipeline: RenderPipeline,
+    untextured_add_mask_pipeline: RenderPipeline,
     untextured_subtract_pipeline: RenderPipeline,
+    untextured_subtract_mask_pipeline: RenderPipeline,
     untextured_add_quarter_pipeline: RenderPipeline,
+    untextured_add_quarter_mask_pipeline: RenderPipeline,
     textured_buffer: Vec<TexturedVertex>,
     textured_bind_group: BindGroup,
     textured_opaque_pipeline: RenderPipeline,
+    textured_opaque_mask_pipeline: RenderPipeline,
     textured_average_pipeline: RenderPipeline,
     textured_add_pipeline: RenderPipeline,
     textured_subtract_pipeline_opaque: RenderPipeline,
@@ -253,6 +258,7 @@ pub struct DrawPipelines {
     textured_rect_buffer: Vec<TexturedRectVertex>,
     textured_rect_indices: Vec<u32>,
     textured_opaque_rect_pipeline: RenderPipeline,
+    textured_opaque_rect_mask_pipeline: RenderPipeline,
     textured_average_rect_pipeline: RenderPipeline,
     textured_add_rect_pipeline: RenderPipeline,
     textured_subtract_rect_pipeline_opaque: RenderPipeline,
@@ -359,6 +365,15 @@ fn rect_vertices(args: &DrawRectangleArgs, draw_offset: Vertex) -> [Vertex; 4] {
 impl DrawPipelines {
     const INITIAL_BUFFER_CAPACITY: u64 = 15000;
 
+    const CHECK_MASK_COMPONENT: BlendComponent = BlendComponent {
+        src_factor: BlendFactor::OneMinusDstAlpha,
+        dst_factor: BlendFactor::DstAlpha,
+        operation: BlendOperation::Add,
+    };
+
+    const REPLACE_CHECK_MASK: BlendState =
+        BlendState { color: Self::CHECK_MASK_COMPONENT, alpha: Self::CHECK_MASK_COMPONENT };
+
     const AVERAGE_BLEND: BlendState = BlendState {
         color: BlendComponent {
             src_factor: BlendFactor::Src1Alpha,
@@ -386,6 +401,15 @@ impl DrawPipelines {
         alpha: BlendComponent::REPLACE,
     };
 
+    const ADDITIVE_BLEND_CHECK_MASK: BlendState = BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::OneMinusDstAlpha,
+            dst_factor: BlendFactor::One,
+            operation: BlendOperation::Add,
+        },
+        alpha: Self::CHECK_MASK_COMPONENT,
+    };
+
     const SUBTRACTIVE_BLEND: BlendState = BlendState {
         color: BlendComponent {
             src_factor: BlendFactor::One,
@@ -393,6 +417,15 @@ impl DrawPipelines {
             operation: BlendOperation::ReverseSubtract,
         },
         alpha: BlendComponent::REPLACE,
+    };
+
+    const SUBTRACTIVE_BLEND_CHECK_MASK: BlendState = BlendState {
+        color: BlendComponent {
+            src_factor: BlendFactor::OneMinusDstAlpha,
+            dst_factor: BlendFactor::One,
+            operation: BlendOperation::ReverseSubtract,
+        },
+        alpha: Self::CHECK_MASK_COMPONENT,
     };
 
     const ADD_QUARTER_BLEND: BlendState = BlendState {
@@ -427,6 +460,14 @@ impl DrawPipelines {
             None,
         );
 
+        let untextured_opaque_mask_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_opaque",
+            &untextured_layout,
+            Some(Self::REPLACE_CHECK_MASK),
+        );
+
         let untextured_average_pipeline = create_untextured_triangle_pipeline(
             device,
             draw_shader,
@@ -443,6 +484,14 @@ impl DrawPipelines {
             Some(Self::ADDITIVE_BLEND_SINGLE_SOURCE),
         );
 
+        let untextured_add_mask_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_opaque",
+            &untextured_layout,
+            Some(Self::ADDITIVE_BLEND_CHECK_MASK),
+        );
+
         let untextured_subtract_pipeline = create_untextured_triangle_pipeline(
             device,
             draw_shader,
@@ -451,12 +500,28 @@ impl DrawPipelines {
             Some(Self::SUBTRACTIVE_BLEND),
         );
 
+        let untextured_subtract_mask_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_opaque",
+            &untextured_layout,
+            Some(Self::SUBTRACTIVE_BLEND_CHECK_MASK),
+        );
+
         let untextured_add_quarter_pipeline = create_untextured_triangle_pipeline(
             device,
             draw_shader,
             "fs_untextured_add_quarter",
             &untextured_layout,
-            Some(Self::ADD_QUARTER_BLEND),
+            Some(Self::ADDITIVE_BLEND_SINGLE_SOURCE),
+        );
+
+        let untextured_add_quarter_mask_pipeline = create_untextured_triangle_pipeline(
+            device,
+            draw_shader,
+            "fs_untextured_add_quarter",
+            &untextured_layout,
+            Some(Self::ADDITIVE_BLEND_CHECK_MASK),
         );
 
         let textured_bind_group_layout =
@@ -522,6 +587,16 @@ impl DrawPipelines {
             None,
         );
 
+        let textured_opaque_mask_pipeline = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedVertex::LAYOUT,
+            "vs_textured",
+            "fs_textured_opaque",
+            &textured_pipeline_layout,
+            Some(Self::REPLACE_CHECK_MASK),
+        );
+
         let textured_average_pipeline = create_textured_pipeline(
             device,
             draw_shader,
@@ -582,6 +657,16 @@ impl DrawPipelines {
             None,
         );
 
+        let textured_opaque_rect_mask_pipeline = create_textured_pipeline(
+            device,
+            draw_shader,
+            TexturedRectVertex::LAYOUT,
+            "vs_textured_rect",
+            "fs_textured_rect_opaque",
+            &textured_pipeline_layout,
+            Some(Self::REPLACE_CHECK_MASK),
+        );
+
         let textured_average_rect_pipeline = create_textured_pipeline(
             device,
             draw_shader,
@@ -635,13 +720,18 @@ impl DrawPipelines {
         Self {
             untextured_buffer: Vec::with_capacity(Self::INITIAL_BUFFER_CAPACITY as usize),
             untextured_opaque_pipeline,
+            untextured_opaque_mask_pipeline,
             untextured_average_pipeline,
             untextured_add_pipeline,
+            untextured_add_mask_pipeline,
             untextured_subtract_pipeline,
+            untextured_subtract_mask_pipeline,
             untextured_add_quarter_pipeline,
+            untextured_add_quarter_mask_pipeline,
             textured_buffer: Vec::with_capacity(Self::INITIAL_BUFFER_CAPACITY as usize),
             textured_bind_group,
             textured_opaque_pipeline,
+            textured_opaque_mask_pipeline,
             textured_average_pipeline,
             textured_add_pipeline,
             textured_subtract_pipeline_opaque,
@@ -650,6 +740,7 @@ impl DrawPipelines {
             textured_rect_buffer: Vec::with_capacity(Self::INITIAL_BUFFER_CAPACITY as usize),
             textured_rect_indices: Vec::with_capacity(Self::INITIAL_BUFFER_CAPACITY as usize),
             textured_opaque_rect_pipeline,
+            textured_opaque_rect_mask_pipeline,
             textured_average_rect_pipeline,
             textured_add_rect_pipeline,
             textured_subtract_rect_pipeline_opaque,
@@ -886,16 +977,40 @@ impl DrawPipelines {
             let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
             set_scissor_rect(render_pass, &batch.draw_settings, resolution_scale);
 
+            let check_mask_bit = batch.draw_settings.check_mask_bit;
+
             match batch.pipeline {
                 DrawPipeline::UntexturedTriangle(semi_transparency_mode) => {
                     let pipeline = match semi_transparency_mode {
                         Some(SemiTransparencyMode::Average) => &self.untextured_average_pipeline,
-                        Some(SemiTransparencyMode::Add) => &self.untextured_add_pipeline,
-                        Some(SemiTransparencyMode::Subtract) => &self.untextured_subtract_pipeline,
-                        Some(SemiTransparencyMode::AddQuarter) => {
-                            &self.untextured_add_quarter_pipeline
+                        Some(SemiTransparencyMode::Add) => {
+                            if check_mask_bit {
+                                &self.untextured_add_mask_pipeline
+                            } else {
+                                &self.untextured_add_pipeline
+                            }
                         }
-                        None => &self.untextured_opaque_pipeline,
+                        Some(SemiTransparencyMode::Subtract) => {
+                            if check_mask_bit {
+                                &self.untextured_subtract_mask_pipeline
+                            } else {
+                                &self.untextured_subtract_pipeline
+                            }
+                        }
+                        Some(SemiTransparencyMode::AddQuarter) => {
+                            if check_mask_bit {
+                                &self.untextured_add_quarter_mask_pipeline
+                            } else {
+                                &self.untextured_add_quarter_pipeline
+                            }
+                        }
+                        None => {
+                            if check_mask_bit {
+                                &self.untextured_opaque_mask_pipeline
+                            } else {
+                                &self.untextured_opaque_pipeline
+                            }
+                        }
                     };
 
                     render_pass.set_pipeline(pipeline);
@@ -937,7 +1052,13 @@ impl DrawPipelines {
                         Some(SemiTransparencyMode::AddQuarter) => {
                             &self.textured_add_quarter_pipeline
                         }
-                        None => &self.textured_opaque_pipeline,
+                        None => {
+                            if check_mask_bit {
+                                &self.textured_opaque_mask_pipeline
+                            } else {
+                                &self.textured_opaque_pipeline
+                            }
+                        }
                     };
 
                     render_pass.set_pipeline(pipeline);
@@ -985,7 +1106,13 @@ impl DrawPipelines {
                         Some(SemiTransparencyMode::AddQuarter) => {
                             &self.textured_add_quarter_rect_pipeline
                         }
-                        None => &self.textured_opaque_rect_pipeline,
+                        None => {
+                            if check_mask_bit {
+                                &self.textured_opaque_rect_mask_pipeline
+                            } else {
+                                &self.textured_opaque_rect_pipeline
+                            }
+                        }
                         Some(SemiTransparencyMode::Subtract) => unreachable!(),
                     };
 
