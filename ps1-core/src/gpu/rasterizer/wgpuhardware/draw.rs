@@ -1403,7 +1403,9 @@ impl MaskBitPipelines {
                     );
                     render_pass.set_vertex_buffer(0, buffers.untextured_triangle.slice(..));
 
-                    render_pass.draw(batch.start..batch.end, 0..1);
+                    for start in (batch.start..batch.end).step_by(3) {
+                        render_pass.draw(start..start + 3, 0..1);
+                    }
                 }
                 DrawPipeline::UntexturedTriangle(semi_transparency_mode) => panic!(
                     "Unexpected untextured semi-transparency mode for mask bit pipeline: {semi_transparency_mode:?}"
@@ -1430,7 +1432,9 @@ impl MaskBitPipelines {
                     );
                     render_pass.set_vertex_buffer(0, buffers.textured_triangle.slice(..));
 
-                    render_pass.draw(batch.start..batch.end, 0..1);
+                    for start in (batch.start..batch.end).step_by(3) {
+                        render_pass.draw(start..start + 3, 0..1);
+                    }
                 }
                 DrawPipeline::TexturedRectangle(semi_transparency_mode) => {
                     let pipeline = match semi_transparency_mode {
@@ -1462,7 +1466,9 @@ impl MaskBitPipelines {
 
                     let indexed_start = batch.start * 3 / 2;
                     let indexed_end = batch.end * 3 / 2;
-                    render_pass.draw_indexed(indexed_start..indexed_end, 0, 0..1);
+                    for start in (indexed_start..indexed_end).step_by(6) {
+                        render_pass.draw_indexed(start..start + 6, 0, 0..1);
+                    }
                 }
             }
         }
