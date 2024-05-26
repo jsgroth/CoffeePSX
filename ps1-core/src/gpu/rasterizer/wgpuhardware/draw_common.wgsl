@@ -24,8 +24,14 @@ struct UntexturedVertexOutput {
 }
 
 fn vram_position_to_vertex(position: vec2i) -> vec4f {
-    let x = f32(position.x - 512) / 512.0;
-    let y = -f32(position.y - 256) / 256.0;
+    var x = f32(position.x - 512) / 512.0;
+    var y = -f32(position.y - 256) / 256.0;
+
+    if draw_settings.resolution_scale == 1 {
+        x += 0.5 / 512.0;
+        y -= 0.5 / 256.0;
+    }
+
     return vec4f(x, y, 0.0, 1.0);
 }
 
@@ -220,6 +226,10 @@ fn sample_15bpp_texture(
 }
 
 fn round_uv(uv: vec2f, round_direction: vec2i) -> vec2u {
+    if draw_settings.resolution_scale == 1 {
+        return vec2u(round(uv));
+    }
+
     let u = select(floor(uv.x), ceil(uv.x), round_direction.x >= 0);
     let v = select(floor(uv.y), ceil(uv.y), round_direction.y >= 0);
     return vec2u(u32(u), u32(v));
