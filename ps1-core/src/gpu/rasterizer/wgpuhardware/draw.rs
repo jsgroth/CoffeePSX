@@ -1599,6 +1599,7 @@ impl MaskBitPipelines {
     ) {
         for batch in self.batches.drain(..) {
             let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
+            set_scissor_rect(render_pass, &batch.draw_settings, resolution_scale);
 
             match batch.pipeline {
                 DrawPipeline::UntexturedTriangle(Some(SemiTransparencyMode::Average)) => {
