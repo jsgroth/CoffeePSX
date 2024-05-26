@@ -775,7 +775,7 @@ impl DrawPipelines {
             |pipeline| {
                 pipeline != DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
             },
-        )
+        );
     }
 
     pub fn add_line(&mut self, args: &DrawLineArgs, draw_settings: &DrawSettings) {

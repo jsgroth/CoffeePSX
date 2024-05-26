@@ -22,7 +22,7 @@ use crate::gpu::rasterizer::{
 use crate::gpu::registers::Registers;
 use crate::gpu::{rasterizer, Color, Vertex, Vram, WgpuResources};
 use std::collections::HashMap;
-use std::ops::Range;
+use std::ops::{BitOr, BitOrAssign, Range};
 use std::rc::Rc;
 use std::{cmp, iter};
 use wgpu::{
@@ -119,6 +119,34 @@ impl DrawCommand {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HazardCheck {
+    NotFound,
+    Found,
+}
+
+impl BitOr for HazardCheck {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Self::Found, _) | (_, Self::Found) => Self::Found,
+            (Self::NotFound, Self::NotFound) => Self::NotFound,
+        }
+    }
+}
+
+impl BitOrAssign for HazardCheck {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = *self | rhs;
+    }
+}
+
+// Hack: Limit how rapidly the rasterizer will sync the VRAMs; this fixes terrible performance in
+// Valkyrie Profile whenever Freya is onscreen. Her ripple effects are drawn using a bunch of
+// textured quads that sample from nearby in the current frame buffer.
+const SCALED_NATIVE_SYNC_DELAY: u8 = 5;
+
 #[derive(Debug)]
 pub struct WgpuRasterizer {
     device: Rc<Device>,
@@ -144,6 +172,7 @@ pub struct WgpuRasterizer {
     vram_fill_pipeline: VramFillPipeline,
     native_scaled_sync_pipeline: NativeScaledSyncPipeline,
     scaled_native_sync_pipeline: ScaledNativeSyncPipeline,
+    scaled_native_sync_delay: u8,
     draw_commands: Vec<DrawCommand>,
 }
 
@@ -256,6 +285,7 @@ impl WgpuRasterizer {
             native_scaled_sync_pipeline,
             scaled_native_sync_pipeline,
             draw_commands: Vec::with_capacity(2000),
+            scaled_native_sync_delay: 0,
         }
     }
 
@@ -363,6 +393,7 @@ impl WgpuRasterizer {
         }
 
         self.vram_cpu_blitter.out_of_sync = true;
+        self.scaled_native_sync_delay = 0;
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
 
@@ -590,7 +621,7 @@ impl WgpuRasterizer {
             for draw_command in &self.draw_commands[draw_command_range] {
                 let DrawCommand::VramCopy { args } = draw_command else { continue };
 
-                self.vram_copy_pipeline.dispatch(&args, self.resolution_scale, &mut compute_pass);
+                self.vram_copy_pipeline.dispatch(args, self.resolution_scale, &mut compute_pass);
             }
         }
     }
@@ -697,25 +728,33 @@ impl WgpuRasterizer {
         self.hazard_tracker.clear();
     }
 
-    fn check_textured_triangle_bounding_box(&mut self, args: &DrawTriangleArgs) {
-        let Some(texture_mapping) = &args.texture_mapping else { return };
+    #[must_use]
+    fn check_textured_triangle_bounding_box(&self, args: &DrawTriangleArgs) -> HazardCheck {
+        let Some(texture_mapping) = &args.texture_mapping else { return HazardCheck::NotFound };
 
         let min_u: u32 = texture_mapping.u.into_iter().min().unwrap().into();
         let max_u: u32 = texture_mapping.u.into_iter().max().unwrap().into();
         let min_v: u32 = texture_mapping.v.into_iter().min().unwrap().into();
         let max_v: u32 = texture_mapping.v.into_iter().max().unwrap().into();
 
-        self.check_texture_bounding_box(&texture_mapping.texpage, (min_u, min_v), (max_u, max_v));
+        let mut hazard_found = self.check_texture_bounding_box(
+            &texture_mapping.texpage,
+            (min_u, min_v),
+            (max_u, max_v),
+        );
 
-        self.check_clut_bounding_box(
+        hazard_found |= self.check_clut_bounding_box(
             texture_mapping.texpage.color_depth,
             texture_mapping.clut_x,
             texture_mapping.clut_y,
         );
+
+        hazard_found
     }
 
-    fn check_textured_rect_bounding_box(&mut self, args: &DrawRectangleArgs) {
-        let Some(texture_mapping) = &args.texture_mapping else { return };
+    #[must_use]
+    fn check_textured_rect_bounding_box(&mut self, args: &DrawRectangleArgs) -> HazardCheck {
+        let Some(texture_mapping) = &args.texture_mapping else { return HazardCheck::NotFound };
 
         let u: u32 = texture_mapping.u[0].into();
         let v: u32 = texture_mapping.v[0].into();
@@ -723,14 +762,25 @@ impl WgpuRasterizer {
         let u_overflow = u + args.width > 256;
         let v_overflow = v + args.height > 256;
 
+        let mut hazard_found = HazardCheck::NotFound;
+
         if u_overflow && v_overflow {
             let overflowed_u = cmp::min(255, args.width - (256 - u) - 1);
             let overflowed_v = cmp::min(255, args.height - (256 - v) - 1);
 
-            self.check_texture_bounding_box(&texture_mapping.texpage, (u, v), (255, 255));
-            self.check_texture_bounding_box(&texture_mapping.texpage, (u, 0), (255, overflowed_v));
-            self.check_texture_bounding_box(&texture_mapping.texpage, (0, v), (overflowed_u, 255));
-            self.check_texture_bounding_box(
+            hazard_found |=
+                self.check_texture_bounding_box(&texture_mapping.texpage, (u, v), (255, 255));
+            hazard_found |= self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (u, 0),
+                (255, overflowed_v),
+            );
+            hazard_found |= self.check_texture_bounding_box(
+                &texture_mapping.texpage,
+                (0, v),
+                (overflowed_u, 255),
+            );
+            hazard_found |= self.check_texture_bounding_box(
                 &texture_mapping.texpage,
                 (0, 0),
                 (overflowed_u, overflowed_v),
@@ -738,12 +788,12 @@ impl WgpuRasterizer {
         } else if u_overflow {
             let overflowed_u = cmp::min(255, args.width - (256 - u) - 1);
 
-            self.check_texture_bounding_box(
+            hazard_found |= self.check_texture_bounding_box(
                 &texture_mapping.texpage,
                 (u, v),
                 (255, v + args.height - 1),
             );
-            self.check_texture_bounding_box(
+            hazard_found |= self.check_texture_bounding_box(
                 &texture_mapping.texpage,
                 (0, v),
                 (overflowed_u, v + args.height - 1),
@@ -751,43 +801,52 @@ impl WgpuRasterizer {
         } else if v_overflow {
             let overflowed_v = cmp::min(255, args.height - (256 - v) - 1);
 
-            self.check_texture_bounding_box(
+            hazard_found |= self.check_texture_bounding_box(
                 &texture_mapping.texpage,
                 (u, v),
                 (u + args.width - 1, 255),
             );
-            self.check_texture_bounding_box(
+            hazard_found |= self.check_texture_bounding_box(
                 &texture_mapping.texpage,
                 (u, 0),
                 (u + args.width - 1, overflowed_v),
             );
         } else {
-            self.check_texture_bounding_box(
+            hazard_found |= self.check_texture_bounding_box(
                 &texture_mapping.texpage,
                 (u, v),
                 (u + args.width - 1, v + args.height - 1),
             );
         }
 
-        self.check_clut_bounding_box(
+        hazard_found |= self.check_clut_bounding_box(
             texture_mapping.texpage.color_depth,
             texture_mapping.clut_x,
             texture_mapping.clut_y,
         );
+
+        hazard_found
     }
 
+    #[must_use]
     fn check_texture_bounding_box(
-        &mut self,
+        &self,
         texpage: &TexturePage,
         top_left: (u32, u32),
         bottom_right: (u32, u32),
-    ) {
+    ) -> HazardCheck {
         let x_base = 64 * texpage.x_base;
         let y_base = texpage.y_base;
 
-        let x = (x_base + top_left.0) & (VRAM_WIDTH - 1);
+        let u_shift = match texpage.color_depth {
+            TextureColorDepthBits::Four => 2,
+            TextureColorDepthBits::Eight => 1,
+            TextureColorDepthBits::Fifteen => 0,
+        };
+
+        let x = (x_base + (top_left.0 >> u_shift)) & (VRAM_WIDTH - 1);
         let y = (y_base + top_left.1) & (VRAM_HEIGHT - 1);
-        let width = bottom_right.0 - top_left.0 + 1;
+        let width = (bottom_right.0 - top_left.0 + 1) >> u_shift;
         let height = bottom_right.1 - top_left.1 + 1;
 
         let hazard = if x + width > VRAM_WIDTH {
@@ -805,14 +864,16 @@ impl WgpuRasterizer {
             )
         };
 
-        if hazard {
-            self.push_scaled_native_sync_command();
-        }
+        if hazard { HazardCheck::Found } else { HazardCheck::NotFound }
     }
 
-    fn check_clut_bounding_box(&mut self, depth: TextureColorDepthBits, clut_x: u16, clut_y: u16) {
-        let clut_x = 16 * clut_x;
-
+    #[must_use]
+    fn check_clut_bounding_box(
+        &self,
+        depth: TextureColorDepthBits,
+        clut_x: u16,
+        clut_y: u16,
+    ) -> HazardCheck {
         let hazard = match depth {
             TextureColorDepthBits::Four => self.hazard_tracker.any_marked_rendered(
                 Vertex::new(clut_x.into(), clut_y.into()),
@@ -837,12 +898,10 @@ impl WgpuRasterizer {
                     )
                 }
             }
-            TextureColorDepthBits::Fifteen => return,
+            TextureColorDepthBits::Fifteen => return HazardCheck::NotFound,
         };
 
-        if hazard {
-            self.push_scaled_native_sync_command();
-        }
+        if hazard { HazardCheck::Found } else { HazardCheck::NotFound }
     }
 
     fn mark_vram_copy_rendered(&mut self, args: &VramVramBlitArgs) {
@@ -905,10 +964,7 @@ fn must_use_mask_bit_pipeline(
         return false;
     }
 
-    (textured && semi_transparent)
-        || (!textured
-            && semi_transparent
-            && semi_transparency_mode == SemiTransparencyMode::Average)
+    semi_transparent && (textured || semi_transparency_mode == SemiTransparencyMode::Average)
 }
 
 impl RasterizerInterface for WgpuRasterizer {
@@ -930,7 +986,14 @@ impl RasterizerInterface for WgpuRasterizer {
             return;
         };
 
-        self.check_textured_triangle_bounding_box(&args);
+        self.scaled_native_sync_delay = self.scaled_native_sync_delay.saturating_sub(1);
+
+        if self.check_textured_triangle_bounding_box(&args) == HazardCheck::Found {
+            if self.scaled_native_sync_delay == 0 {
+                self.push_scaled_native_sync_command();
+            }
+            self.scaled_native_sync_delay = SCALED_NATIVE_SYNC_DELAY;
+        }
 
         self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
 
@@ -966,7 +1029,14 @@ impl RasterizerInterface for WgpuRasterizer {
             return;
         };
 
-        self.check_textured_rect_bounding_box(&args);
+        self.scaled_native_sync_delay = self.scaled_native_sync_delay.saturating_sub(1);
+
+        if self.check_textured_rect_bounding_box(&args) == HazardCheck::Found {
+            if self.scaled_native_sync_delay == 0 {
+                self.push_scaled_native_sync_command();
+            }
+            self.scaled_native_sync_delay = SCALED_NATIVE_SYNC_DELAY;
+        }
 
         self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
 
