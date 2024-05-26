@@ -33,7 +33,12 @@ impl R3000 {
         pc: u32,
         bus: &mut Bus<'_>,
     ) -> CpuResult<()> {
-        log::trace!("opcode {opcode:08X} at PC {pc:08X}: {}", disassemble::instruction_str(opcode));
+        if log::log_enabled!(log::Level::Trace) {
+            log::trace!(
+                "opcode {opcode:08X} at PC {pc:08X}: {}",
+                disassemble::instruction_str(opcode)
+            );
+        }
 
         // First 6 bits of opcode identify operation
         match opcode >> 26 {
