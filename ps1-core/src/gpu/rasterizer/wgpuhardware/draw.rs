@@ -15,10 +15,10 @@ use wgpu::{
     BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendFactor,
     BlendOperation, BlendState, Buffer, BufferUsages, ColorTargetState, ColorWrites, Device,
     FragmentState, FrontFace, IndexFormat, MultisampleState, PipelineCompilationOptions,
-    PipelineLayout, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
-    PushConstantRange, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModule,
-    ShaderStages, StorageTextureAccess, Texture, TextureFormat, TextureViewDescriptor,
-    TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexState, VertexStepMode,
+    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, PushConstantRange,
+    RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderStages,
+    StorageTextureAccess, Texture, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+    VertexAttribute, VertexBufferLayout, VertexState, VertexStepMode,
 };
 
 #[repr(C)]
@@ -268,90 +268,6 @@ pub struct DrawPipelines {
     batches: Vec<DrawBatch>,
 }
 
-fn create_untextured_triangle_pipeline(
-    device: &Device,
-    draw_shader: &ShaderModule,
-    fs_entry_point: &str,
-    pipeline_layout: &PipelineLayout,
-    blend: Option<BlendState>,
-) -> RenderPipeline {
-    device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: format!("untextured_triangle_pipeline_{fs_entry_point}").as_str().into(),
-        layout: Some(pipeline_layout),
-        vertex: VertexState {
-            module: draw_shader,
-            entry_point: "vs_untextured",
-            compilation_options: PipelineCompilationOptions::default(),
-            buffers: &[UntexturedVertex::LAYOUT],
-        },
-        primitive: PrimitiveState {
-            topology: PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: FrontFace::Ccw,
-            cull_mode: None,
-            unclipped_depth: false,
-            polygon_mode: PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: MultisampleState::default(),
-        fragment: Some(FragmentState {
-            module: draw_shader,
-            entry_point: fs_entry_point,
-            compilation_options: PipelineCompilationOptions::default(),
-            targets: &[Some(ColorTargetState {
-                format: TextureFormat::Rgba8Unorm,
-                blend,
-                write_mask: ColorWrites::ALL,
-            })],
-        }),
-        multiview: None,
-    })
-}
-
-fn create_textured_pipeline(
-    device: &Device,
-    draw_shader: &ShaderModule,
-    vertex_buffer_layout: VertexBufferLayout<'_>,
-    vs_entry_point: &str,
-    fs_entry_point: &str,
-    pipeline_layout: &PipelineLayout,
-    blend: Option<BlendState>,
-) -> RenderPipeline {
-    device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: format!("textured_draw_pipeline_{fs_entry_point}").as_str().into(),
-        layout: Some(pipeline_layout),
-        vertex: VertexState {
-            module: draw_shader,
-            entry_point: vs_entry_point,
-            compilation_options: PipelineCompilationOptions::default(),
-            buffers: &[vertex_buffer_layout],
-        },
-        primitive: PrimitiveState {
-            topology: PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: FrontFace::Ccw,
-            cull_mode: None,
-            unclipped_depth: false,
-            polygon_mode: PolygonMode::Fill,
-            conservative: false,
-        },
-        depth_stencil: None,
-        multisample: MultisampleState::default(),
-        fragment: Some(FragmentState {
-            module: draw_shader,
-            entry_point: fs_entry_point,
-            compilation_options: PipelineCompilationOptions::default(),
-            targets: &[Some(ColorTargetState {
-                format: TextureFormat::Rgba8Unorm,
-                blend,
-                write_mask: ColorWrites::ALL,
-            })],
-        }),
-        multiview: None,
-    })
-}
-
 fn rect_vertices(args: &DrawRectangleArgs, draw_offset: Vertex) -> [Vertex; 4] {
     let top_left = args.top_left + draw_offset;
 
@@ -453,75 +369,77 @@ impl DrawPipelines {
             }],
         });
 
-        let untextured_opaque_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
-            "fs_untextured_opaque",
-            &untextured_layout,
-            None,
-        );
+        let new_untextured_triangle_pipeline = |fs_entry_point: &str, blend: Option<BlendState>| {
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: format!("untextured_triangle_pipeline_{fs_entry_point}").as_str().into(),
+                layout: Some(&untextured_layout),
+                vertex: VertexState {
+                    module: draw_shader,
+                    entry_point: "vs_untextured",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    buffers: &[UntexturedVertex::LAYOUT],
+                },
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    module: draw_shader,
+                    entry_point: fs_entry_point,
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(ColorTargetState {
+                        format: TextureFormat::Rgba8Unorm,
+                        blend,
+                        write_mask: ColorWrites::ALL,
+                    })],
+                }),
+                multiview: None,
+            })
+        };
 
-        let untextured_opaque_mask_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
+        let untextured_opaque_pipeline =
+            new_untextured_triangle_pipeline("fs_untextured_opaque", None);
+
+        let untextured_opaque_mask_pipeline = new_untextured_triangle_pipeline(
             "fs_untextured_opaque",
-            &untextured_layout,
             Some(Self::REPLACE_CHECK_MASK),
         );
 
-        let untextured_average_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
-            "fs_untextured_average",
-            &untextured_layout,
-            Some(Self::AVERAGE_BLEND),
-        );
+        let untextured_average_pipeline =
+            new_untextured_triangle_pipeline("fs_untextured_average", Some(Self::AVERAGE_BLEND));
 
-        let untextured_add_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
+        let untextured_add_pipeline = new_untextured_triangle_pipeline(
             "fs_untextured_opaque",
-            &untextured_layout,
             Some(Self::ADDITIVE_BLEND_SINGLE_SOURCE),
         );
 
-        let untextured_add_mask_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
+        let untextured_add_mask_pipeline = new_untextured_triangle_pipeline(
             "fs_untextured_opaque",
-            &untextured_layout,
             Some(Self::ADDITIVE_BLEND_CHECK_MASK),
         );
 
-        let untextured_subtract_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
-            "fs_untextured_opaque",
-            &untextured_layout,
-            Some(Self::SUBTRACTIVE_BLEND),
-        );
+        let untextured_subtract_pipeline =
+            new_untextured_triangle_pipeline("fs_untextured_opaque", Some(Self::SUBTRACTIVE_BLEND));
 
-        let untextured_subtract_mask_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
+        let untextured_subtract_mask_pipeline = new_untextured_triangle_pipeline(
             "fs_untextured_opaque",
-            &untextured_layout,
             Some(Self::SUBTRACTIVE_BLEND_CHECK_MASK),
         );
 
-        let untextured_add_quarter_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
+        let untextured_add_quarter_pipeline = new_untextured_triangle_pipeline(
             "fs_untextured_add_quarter",
-            &untextured_layout,
             Some(Self::ADDITIVE_BLEND_SINGLE_SOURCE),
         );
 
-        let untextured_add_quarter_mask_pipeline = create_untextured_triangle_pipeline(
-            device,
-            draw_shader,
+        let untextured_add_quarter_mask_pipeline = new_untextured_triangle_pipeline(
             "fs_untextured_add_quarter",
-            &untextured_layout,
             Some(Self::ADDITIVE_BLEND_CHECK_MASK),
         );
 
@@ -578,143 +496,108 @@ impl DrawPipelines {
             }],
         });
 
-        let textured_opaque_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedVertex::LAYOUT,
-            "vs_textured",
-            "fs_textured_opaque",
-            &textured_pipeline_layout,
-            None,
-        );
+        let new_textured_pipeline =
+            |vertex_buffer_layout: VertexBufferLayout<'_>,
+             vs_entry_point: &str,
+             fs_entry_point: &str,
+             blend: Option<BlendState>| {
+                device.create_render_pipeline(&RenderPipelineDescriptor {
+                    label: format!("textured_draw_pipeline_{fs_entry_point}").as_str().into(),
+                    layout: Some(&textured_pipeline_layout),
+                    vertex: VertexState {
+                        module: draw_shader,
+                        entry_point: vs_entry_point,
+                        compilation_options: PipelineCompilationOptions::default(),
+                        buffers: &[vertex_buffer_layout],
+                    },
+                    primitive: PrimitiveState {
+                        topology: PrimitiveTopology::TriangleList,
+                        strip_index_format: None,
+                        front_face: FrontFace::Ccw,
+                        cull_mode: None,
+                        unclipped_depth: false,
+                        polygon_mode: PolygonMode::Fill,
+                        conservative: false,
+                    },
+                    depth_stencil: None,
+                    multisample: MultisampleState::default(),
+                    fragment: Some(FragmentState {
+                        module: draw_shader,
+                        entry_point: fs_entry_point,
+                        compilation_options: PipelineCompilationOptions::default(),
+                        targets: &[Some(ColorTargetState {
+                            format: TextureFormat::Rgba8Unorm,
+                            blend,
+                            write_mask: ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview: None,
+                })
+            };
 
-        let textured_opaque_mask_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedVertex::LAYOUT,
-            "vs_textured",
-            "fs_textured_opaque",
-            &textured_pipeline_layout,
-            Some(Self::REPLACE_CHECK_MASK),
-        );
+        let new_textured_triangle_pipeline = |fs_entry_point: &str, blend: Option<BlendState>| {
+            new_textured_pipeline(TexturedVertex::LAYOUT, "vs_textured", fs_entry_point, blend)
+        };
 
-        let textured_average_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedVertex::LAYOUT,
-            "vs_textured",
-            "fs_textured_average",
-            &textured_pipeline_layout,
-            Some(Self::AVERAGE_BLEND),
-        );
+        let textured_opaque_pipeline = new_textured_triangle_pipeline("fs_textured_opaque", None);
 
-        let textured_add_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedVertex::LAYOUT,
-            "vs_textured",
+        let textured_opaque_mask_pipeline =
+            new_textured_triangle_pipeline("fs_textured_opaque", Some(Self::REPLACE_CHECK_MASK));
+
+        let textured_average_pipeline =
+            new_textured_triangle_pipeline("fs_textured_average", Some(Self::AVERAGE_BLEND));
+
+        let textured_add_pipeline = new_textured_triangle_pipeline(
             "fs_textured_add",
-            &textured_pipeline_layout,
             Some(Self::ADDITIVE_BLEND_DUAL_SOURCE),
         );
 
-        let textured_subtract_pipeline_opaque = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedVertex::LAYOUT,
-            "vs_textured",
-            "fs_textured_subtract_opaque_texels",
-            &textured_pipeline_layout,
-            None,
-        );
+        let textured_subtract_pipeline_opaque =
+            new_textured_triangle_pipeline("fs_textured_subtract_opaque_texels", None);
 
-        let textured_subtract_pipeline_transparent = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedVertex::LAYOUT,
-            "vs_textured",
+        let textured_subtract_pipeline_transparent = new_textured_triangle_pipeline(
             "fs_textured_subtract_transparent_texels",
-            &textured_pipeline_layout,
             Some(Self::SUBTRACTIVE_BLEND),
         );
 
-        let textured_add_quarter_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedVertex::LAYOUT,
-            "vs_textured",
+        let textured_add_quarter_pipeline = new_textured_triangle_pipeline(
             "fs_textured_add_quarter",
-            &textured_pipeline_layout,
             Some(Self::ADD_QUARTER_BLEND),
         );
 
-        let textured_opaque_rect_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedRectVertex::LAYOUT,
-            "vs_textured_rect",
-            "fs_textured_rect_opaque",
-            &textured_pipeline_layout,
-            None,
-        );
+        let new_textured_rect_pipeline = |fs_entry_point: &str, blend: Option<BlendState>| {
+            new_textured_pipeline(
+                TexturedRectVertex::LAYOUT,
+                "vs_textured_rect",
+                fs_entry_point,
+                blend,
+            )
+        };
 
-        let textured_opaque_rect_mask_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedRectVertex::LAYOUT,
-            "vs_textured_rect",
-            "fs_textured_rect_opaque",
-            &textured_pipeline_layout,
-            Some(Self::REPLACE_CHECK_MASK),
-        );
+        let textured_opaque_rect_pipeline =
+            new_textured_rect_pipeline("fs_textured_rect_opaque", None);
 
-        let textured_average_rect_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedRectVertex::LAYOUT,
-            "vs_textured_rect",
-            "fs_textured_rect_average",
-            &textured_pipeline_layout,
-            Some(Self::AVERAGE_BLEND),
-        );
+        let textured_opaque_rect_mask_pipeline =
+            new_textured_rect_pipeline("fs_textured_rect_opaque", Some(Self::REPLACE_CHECK_MASK));
 
-        let textured_add_rect_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedRectVertex::LAYOUT,
-            "vs_textured_rect",
+        let textured_average_rect_pipeline =
+            new_textured_rect_pipeline("fs_textured_rect_average", Some(Self::AVERAGE_BLEND));
+
+        let textured_add_rect_pipeline = new_textured_rect_pipeline(
             "fs_textured_rect_add",
-            &textured_pipeline_layout,
             Some(Self::ADDITIVE_BLEND_DUAL_SOURCE),
         );
 
-        let textured_subtract_rect_pipeline_opaque = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedRectVertex::LAYOUT,
-            "vs_textured_rect",
-            "fs_textured_rect_subtract_opaque_texels",
-            &textured_pipeline_layout,
-            None,
-        );
+        let textured_subtract_rect_pipeline_opaque =
+            new_textured_rect_pipeline("fs_textured_rect_subtract_opaque_texels", None);
 
-        let textured_subtract_rect_pipeline_transparent = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedRectVertex::LAYOUT,
-            "vs_textured_rect",
+        let textured_subtract_rect_pipeline_transparent = new_textured_rect_pipeline(
             "fs_textured_rect_subtract_transparent_texels",
-            &textured_pipeline_layout,
             Some(Self::SUBTRACTIVE_BLEND),
         );
 
-        let textured_add_quarter_rect_pipeline = create_textured_pipeline(
-            device,
-            draw_shader,
-            TexturedRectVertex::LAYOUT,
-            "vs_textured_rect",
+        let textured_add_quarter_rect_pipeline = new_textured_rect_pipeline(
             "fs_textured_rect_add_quarter",
-            &textured_pipeline_layout,
             Some(Self::ADD_QUARTER_BLEND),
         );
 
@@ -1249,22 +1132,6 @@ impl MaskBitPipelines {
             }],
         });
 
-        let primitive_state = PrimitiveState {
-            topology: PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: FrontFace::Ccw,
-            cull_mode: None,
-            unclipped_depth: false,
-            polygon_mode: PolygonMode::Fill,
-            conservative: false,
-        };
-
-        let color_target_state = ColorTargetState {
-            format: TextureFormat::Rgba8Unorm,
-            blend: None,
-            write_mask: ColorWrites::empty(),
-        };
-
         let mask_shader =
             device.create_shader_module(include_wgsl_concat!("draw_common.wgsl", "maskbit.wgsl"));
 
@@ -1278,14 +1145,26 @@ impl MaskBitPipelines {
                     compilation_options: PipelineCompilationOptions::default(),
                     buffers: &[UntexturedVertex::LAYOUT],
                 },
-                primitive: primitive_state,
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: PolygonMode::Fill,
+                    conservative: false,
+                },
                 depth_stencil: None,
                 multisample: MultisampleState::default(),
                 fragment: Some(FragmentState {
                     module: &mask_shader,
                     entry_point: "fs_untextured_average",
                     compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(color_target_state.clone())],
+                    targets: &[Some(ColorTargetState {
+                        format: TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: ColorWrites::empty(),
+                    })],
                 }),
                 multiview: None,
             });
@@ -1355,151 +1234,63 @@ impl MaskBitPipelines {
             }],
         });
 
-        let textured_triangle_vertex_state = VertexState {
-            module: draw_shader,
-            entry_point: "vs_textured",
-            compilation_options: PipelineCompilationOptions::default(),
-            buffers: &[TexturedVertex::LAYOUT],
+        let new_textured_pipeline = |vertex_buffer_layout: VertexBufferLayout<'_>,
+                                     vs_entry_point: &str,
+                                     fs_entry_point: &str| {
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: format!("textured_mask_{fs_entry_point}_pipeline").as_str().into(),
+                layout: Some(&textured_pipeline_layout),
+                vertex: VertexState {
+                    module: draw_shader,
+                    entry_point: vs_entry_point,
+                    compilation_options: PipelineCompilationOptions::default(),
+                    buffers: &[vertex_buffer_layout],
+                },
+                primitive: PrimitiveState {
+                    topology: PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    module: &mask_shader,
+                    entry_point: fs_entry_point,
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(ColorTargetState {
+                        format: TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: ColorWrites::empty(),
+                    })],
+                }),
+                multiview: None,
+            })
         };
 
-        let textured_average_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: "textured_mask_average_pipeline".into(),
-            layout: Some(&textured_pipeline_layout),
-            vertex: textured_triangle_vertex_state.clone(),
-            primitive: primitive_state,
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            fragment: Some(FragmentState {
-                module: &mask_shader,
-                entry_point: "fs_textured_average",
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(color_target_state.clone())],
-            }),
-            multiview: None,
-        });
+        let new_textured_triangle_pipeline = |fs_entry_point: &str| {
+            new_textured_pipeline(TexturedVertex::LAYOUT, "vs_textured", fs_entry_point)
+        };
 
-        let textured_add_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: "textured_mask_add_pipeline".into(),
-            layout: Some(&textured_pipeline_layout),
-            vertex: textured_triangle_vertex_state.clone(),
-            primitive: primitive_state,
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            fragment: Some(FragmentState {
-                module: &mask_shader,
-                entry_point: "fs_textured_add",
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(color_target_state.clone())],
-            }),
-            multiview: None,
-        });
-
-        let textured_subtract_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: "textured_mask_subtract_pipeline".into(),
-            layout: Some(&textured_pipeline_layout),
-            vertex: textured_triangle_vertex_state.clone(),
-            primitive: primitive_state,
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            fragment: Some(FragmentState {
-                module: &mask_shader,
-                entry_point: "fs_textured_subtract",
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(color_target_state.clone())],
-            }),
-            multiview: None,
-        });
-
+        let textured_average_pipeline = new_textured_triangle_pipeline("fs_textured_average");
+        let textured_add_pipeline = new_textured_triangle_pipeline("fs_textured_add");
+        let textured_subtract_pipeline = new_textured_triangle_pipeline("fs_textured_subtract");
         let textured_add_quarter_pipeline =
-            device.create_render_pipeline(&RenderPipelineDescriptor {
-                label: "textured_mask_add_quarter_pipeline".into(),
-                layout: Some(&textured_pipeline_layout),
-                vertex: textured_triangle_vertex_state,
-                primitive: primitive_state,
-                depth_stencil: None,
-                multisample: MultisampleState::default(),
-                fragment: Some(FragmentState {
-                    module: &mask_shader,
-                    entry_point: "fs_textured_add_quarter",
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(color_target_state.clone())],
-                }),
-                multiview: None,
-            });
+            new_textured_triangle_pipeline("fs_textured_add_quarter");
 
-        let textured_rect_vertex_state = VertexState {
-            module: draw_shader,
-            entry_point: "vs_textured_rect",
-            compilation_options: PipelineCompilationOptions::default(),
-            buffers: &[TexturedRectVertex::LAYOUT],
+        let new_textured_rect_pipeline = |fs_entry_point: &str| {
+            new_textured_pipeline(TexturedRectVertex::LAYOUT, "vs_textured_rect", fs_entry_point)
         };
 
-        let textured_average_rect_pipeline =
-            device.create_render_pipeline(&RenderPipelineDescriptor {
-                label: "textured_mask_average_rect_pipeline".into(),
-                layout: Some(&textured_pipeline_layout),
-                vertex: textured_rect_vertex_state.clone(),
-                primitive: primitive_state,
-                depth_stencil: None,
-                multisample: MultisampleState::default(),
-                fragment: Some(FragmentState {
-                    module: &mask_shader,
-                    entry_point: "fs_textured_rect_average",
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(color_target_state.clone())],
-                }),
-                multiview: None,
-            });
-
-        let textured_add_rect_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: "textured_mask_add_rect_pipeline".into(),
-            layout: Some(&textured_pipeline_layout),
-            vertex: textured_rect_vertex_state.clone(),
-            primitive: primitive_state,
-            depth_stencil: None,
-            multisample: MultisampleState::default(),
-            fragment: Some(FragmentState {
-                module: &mask_shader,
-                entry_point: "fs_textured_rect_add",
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(color_target_state.clone())],
-            }),
-            multiview: None,
-        });
-
+        let textured_average_rect_pipeline = new_textured_rect_pipeline("fs_textured_rect_average");
+        let textured_add_rect_pipeline = new_textured_rect_pipeline("fs_textured_rect_add");
         let textured_subtract_rect_pipeline =
-            device.create_render_pipeline(&RenderPipelineDescriptor {
-                label: "textured_mask_subtract_rect_pipeline".into(),
-                layout: Some(&textured_pipeline_layout),
-                vertex: textured_rect_vertex_state.clone(),
-                primitive: primitive_state,
-                depth_stencil: None,
-                multisample: MultisampleState::default(),
-                fragment: Some(FragmentState {
-                    module: &mask_shader,
-                    entry_point: "fs_textured_rect_subtract",
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(color_target_state.clone())],
-                }),
-                multiview: None,
-            });
-
+            new_textured_rect_pipeline("fs_textured_rect_subtract");
         let textured_add_quarter_rect_pipeline =
-            device.create_render_pipeline(&RenderPipelineDescriptor {
-                label: "textured_mask_add_quarter_rect_pipeline".into(),
-                layout: Some(&textured_pipeline_layout),
-                vertex: textured_rect_vertex_state,
-                primitive: primitive_state,
-                depth_stencil: None,
-                multisample: MultisampleState::default(),
-                fragment: Some(FragmentState {
-                    module: &mask_shader,
-                    entry_point: "fs_textured_rect_add_quarter",
-                    compilation_options: PipelineCompilationOptions::default(),
-                    targets: &[Some(color_target_state)],
-                }),
-                multiview: None,
-            });
+            new_textured_rect_pipeline("fs_textured_rect_add_quarter");
 
         Self {
             untextured_buffer: Vec::with_capacity(DrawPipelines::INITIAL_BUFFER_CAPACITY as usize),
