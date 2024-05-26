@@ -1,6 +1,17 @@
 // Texture sampling functions require the following bindings:
 //   native_vram: texture_storage_2d<r32uint, read>
+//
 //   scaled_vram_copy: texture_storage_2d<rgba8unorm, read>
+//
+//   draw_settings: struct {
+//       resolution_scale: u32,
+//       ...
+//   }
+
+struct DrawSettings {
+    force_mask_bit: u32,
+    resolution_scale: u32,
+}
 
 struct UntexturedVertex {
     @location(0) position: vec2i,
