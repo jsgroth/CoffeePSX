@@ -1,6 +1,7 @@
 use crate::gpu::gp0::{
     DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
 };
+use crate::gpu::rasterizer::wgpuhardware::include_wgsl_concat;
 use crate::gpu::rasterizer::{
     DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading, RectangleTextureMapping,
     TextureMapping, TextureMappingMode, TriangleShading, TriangleTextureMapping,
@@ -751,177 +752,34 @@ impl DrawPipelines {
     }
 
     pub fn add_triangle(&mut self, args: &DrawTriangleArgs, draw_settings: &DrawSettings) {
-        let semi_transparency_mode = args.semi_transparent.then_some(args.semi_transparency_mode);
-        let textured = args.texture_mapping.is_some();
-        let pipeline = if textured {
-            DrawPipeline::TexturedTriangle(semi_transparency_mode)
-        } else {
-            DrawPipeline::UntexturedTriangle(semi_transparency_mode)
-        };
-
-        self.maybe_start_triangle_batch(pipeline, draw_settings, textured);
-
-        let draw_offset = draw_settings.draw_offset;
-        let positions =
-            args.vertices.map(|vertex| [vertex.x + draw_offset.x, vertex.y + draw_offset.y]);
-
-        let colors = match args.shading {
-            TriangleShading::Flat(color) => [color; 3],
-            TriangleShading::Gouraud(colors) => colors,
-        };
-
-        match &args.texture_mapping {
-            Some(mapping) => {
-                self.textured_buffer
-                    .extend(TexturedVertex::new_vertices(positions, colors, mapping));
-            }
-            None => {
-                for (position, color) in positions.into_iter().zip(colors) {
-                    self.untextured_buffer.push(UntexturedVertex {
-                        position,
-                        color: [color.r.into(), color.g.into(), color.b.into()],
-                    });
-                }
-            }
-        }
-
-        self.batches.last_mut().unwrap().end += 3;
-    }
-
-    fn maybe_start_triangle_batch(
-        &mut self,
-        pipeline: DrawPipeline,
-        draw_settings: &DrawSettings,
-        textured: bool,
-    ) {
-        // Subtractive semi-transparent textured triangles must go in their own batch
-        if pipeline == DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
-            || !self.batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
-        {
-            let start =
-                (if textured { self.textured_buffer.len() } else { self.untextured_buffer.len() })
-                    as u32;
-            self.batches.push(DrawBatch {
-                draw_settings: draw_settings.clone(),
-                pipeline,
-                start,
-                end: start,
-            });
-        }
+        add_triangle_to_batch(
+            args,
+            draw_settings,
+            &mut self.untextured_buffer,
+            &mut self.textured_buffer,
+            &mut self.batches,
+            |pipeline| {
+                pipeline != DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
+            },
+        );
     }
 
     pub fn add_rectangle(&mut self, args: &DrawRectangleArgs, draw_settings: &DrawSettings) {
-        match &args.texture_mapping {
-            Some(texture_mapping) => {
-                let semi_transparency_mode =
-                    args.semi_transparent.then_some(args.semi_transparency_mode);
-                let pipeline = DrawPipeline::TexturedRectangle(semi_transparency_mode);
-
-                // Subtractive semi-transparent textured rectangles must go in their own batch
-                if semi_transparency_mode == Some(SemiTransparencyMode::Subtract)
-                    || !self
-                        .batches
-                        .last()
-                        .is_some_and(|batch| batch.matches(draw_settings, pipeline))
-                {
-                    let start = self.textured_rect_buffer.len() as u32;
-                    self.batches.push(DrawBatch {
-                        draw_settings: draw_settings.clone(),
-                        pipeline,
-                        start,
-                        end: start,
-                    });
-                }
-
-                let vertices =
-                    TexturedRectVertex::new_vertices(args, texture_mapping, draw_settings);
-                self.textured_rect_buffer.extend(vertices);
-
-                self.batches.last_mut().unwrap().end += 4;
-            }
-            None => {
-                let v = rect_vertices(args, Vertex::new(0, 0));
-                for vertices in [[v[0], v[1], v[2]], [v[1], v[2], v[3]]] {
-                    self.add_triangle(
-                        &DrawTriangleArgs {
-                            vertices,
-                            shading: TriangleShading::Flat(args.color),
-                            semi_transparent: args.semi_transparent,
-                            semi_transparency_mode: args.semi_transparency_mode,
-                            texture_mapping: None,
-                        },
-                        draw_settings,
-                    );
-                }
-            }
-        }
+        add_rectangle_to_batch(
+            args,
+            draw_settings,
+            &mut self.untextured_buffer,
+            &mut self.textured_buffer,
+            &mut self.textured_rect_buffer,
+            &mut self.batches,
+            |pipeline| {
+                pipeline != DrawPipeline::TexturedTriangle(Some(SemiTransparencyMode::Subtract))
+            },
+        )
     }
 
     pub fn add_line(&mut self, args: &DrawLineArgs, draw_settings: &DrawSettings) {
-        let dy = args.vertices[1].y - args.vertices[0].y;
-        let dx = args.vertices[1].x - args.vertices[0].x;
-
-        let v = args.vertices.map(|v| v + draw_settings.draw_offset);
-        let positions = if dx == 0 || dx.abs() <= dy.abs() {
-            // Vertically oriented line
-            if v[0].y <= v[1].y {
-                // First vertex is higher
-                [
-                    [v[0].x, v[0].y],
-                    [v[0].x + 1, v[0].y],
-                    [v[1].x, v[1].y + 1],
-                    [v[1].x + 1, v[1].y + 1],
-                ]
-            } else {
-                // First vertex is lower
-                [
-                    [v[0].x, v[0].y + 1],
-                    [v[0].x + 1, v[0].y + 1],
-                    [v[1].x, v[1].y],
-                    [v[1].x + 1, v[1].y],
-                ]
-            }
-        } else {
-            // Horizontally oriented line
-            if v[0].x <= v[1].x {
-                // First vertex is farther left
-                [
-                    [v[0].x, v[0].y],
-                    [v[0].x, v[0].y + 1],
-                    [v[1].x + 1, v[1].y],
-                    [v[1].x + 1, v[1].y + 1],
-                ]
-            } else {
-                // First vertex is farther right
-                [
-                    [v[0].x + 1, v[0].y],
-                    [v[0].x + 1, v[0].y + 1],
-                    [v[1].x, v[1].y],
-                    [v[1].x, v[1].y + 1],
-                ]
-            }
-        };
-
-        let colors = match args.shading {
-            LineShading::Flat(color) => [color; 4],
-            LineShading::Gouraud(colors) => [colors[0], colors[0], colors[1], colors[1]],
-        };
-        let colors: [[u32; 3]; 4] =
-            colors.map(|color| [color.r.into(), color.g.into(), color.b.into()]);
-
-        let pipeline = DrawPipeline::UntexturedTriangle(
-            args.semi_transparent.then_some(args.semi_transparency_mode),
-        );
-        self.maybe_start_triangle_batch(pipeline, draw_settings, false);
-
-        for range in [0..3, 1..4] {
-            for i in range {
-                self.untextured_buffer
-                    .push(UntexturedVertex { position: positions[i], color: colors[i] });
-            }
-        }
-
-        self.batches.last_mut().unwrap().end += 6;
+        add_line_to_batch(args, draw_settings, &mut self.untextured_buffer, &mut self.batches);
     }
 
     pub fn prepare(&mut self, device: &Device) -> DrawBuffers {
@@ -943,11 +801,7 @@ impl DrawPipelines {
             usage: BufferUsages::VERTEX,
         });
 
-        for i in (0..self.textured_rect_buffer.len()).step_by(4) {
-            let i = i as u32;
-            self.textured_rect_indices.extend([i, i + 1, i + 2, i + 1, i + 2, i + 3]);
-        }
-
+        populate_rect_index_buffer(&self.textured_rect_buffer, &mut self.textured_rect_indices);
         let textured_rectangle_index = device.create_buffer_init(&BufferInitDescriptor {
             label: "textured_rectangle_index_buffer".into(),
             contents: bytemuck::cast_slice(&self.textured_rect_indices),
@@ -1154,4 +1008,671 @@ fn set_scissor_rect(
         resolution_scale * width,
         resolution_scale * height,
     );
+}
+
+fn add_triangle_to_batch(
+    args: &DrawTriangleArgs,
+    draw_settings: &DrawSettings,
+    untextured_buffer: &mut Vec<UntexturedVertex>,
+    textured_buffer: &mut Vec<TexturedVertex>,
+    batches: &mut Vec<DrawBatch>,
+    can_share_batch_fn: impl Fn(DrawPipeline) -> bool,
+) {
+    let semi_transparency_mode = args.semi_transparent.then_some(args.semi_transparency_mode);
+    let pipeline = match &args.texture_mapping {
+        Some(_) => DrawPipeline::TexturedTriangle(semi_transparency_mode),
+        None => DrawPipeline::UntexturedTriangle(semi_transparency_mode),
+    };
+
+    if !can_share_batch_fn(pipeline)
+        || !batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
+    {
+        let start = match &args.texture_mapping {
+            Some(_) => textured_buffer.len() as u32,
+            None => untextured_buffer.len() as u32,
+        };
+        batches.push(DrawBatch {
+            draw_settings: draw_settings.clone(),
+            pipeline,
+            start,
+            end: start,
+        });
+    }
+
+    let positions = args
+        .vertices
+        .map(|v| [v.x + draw_settings.draw_offset.x, v.y + draw_settings.draw_offset.y]);
+    let colors = match args.shading {
+        TriangleShading::Flat(color) => [color; 3],
+        TriangleShading::Gouraud(colors) => colors,
+    };
+
+    match &args.texture_mapping {
+        Some(mapping) => {
+            textured_buffer.extend(TexturedVertex::new_vertices(positions, colors, mapping));
+        }
+        None => {
+            for (i, position) in positions.into_iter().enumerate() {
+                untextured_buffer.push(UntexturedVertex {
+                    position,
+                    color: [colors[i].r.into(), colors[i].g.into(), colors[i].b.into()],
+                });
+            }
+        }
+    }
+
+    batches.last_mut().unwrap().end += 3;
+}
+
+fn add_rectangle_to_batch(
+    args: &DrawRectangleArgs,
+    draw_settings: &DrawSettings,
+    untextured_buffer: &mut Vec<UntexturedVertex>,
+    textured_buffer: &mut Vec<TexturedVertex>,
+    textured_rect_buffer: &mut Vec<TexturedRectVertex>,
+    batches: &mut Vec<DrawBatch>,
+    can_share_batch_fn: impl Copy + Fn(DrawPipeline) -> bool,
+) {
+    match &args.texture_mapping {
+        Some(texture_mapping) => {
+            let semi_transparency_mode =
+                args.semi_transparent.then_some(args.semi_transparency_mode);
+            let pipeline = DrawPipeline::TexturedRectangle(semi_transparency_mode);
+
+            if !can_share_batch_fn(pipeline)
+                || !batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline))
+            {
+                let start = textured_rect_buffer.len() as u32;
+                batches.push(DrawBatch {
+                    draw_settings: draw_settings.clone(),
+                    pipeline,
+                    start,
+                    end: start,
+                });
+            }
+
+            let vertices = TexturedRectVertex::new_vertices(args, texture_mapping, draw_settings);
+            textured_rect_buffer.extend(vertices);
+
+            batches.last_mut().unwrap().end += 4;
+        }
+        None => {
+            let v = rect_vertices(args, Vertex::new(0, 0));
+            for vertices in [[v[0], v[1], v[2]], [v[1], v[2], v[3]]] {
+                add_triangle_to_batch(
+                    &DrawTriangleArgs {
+                        vertices,
+                        shading: TriangleShading::Flat(args.color),
+                        semi_transparent: args.semi_transparent,
+                        semi_transparency_mode: args.semi_transparency_mode,
+                        texture_mapping: None,
+                    },
+                    draw_settings,
+                    untextured_buffer,
+                    textured_buffer,
+                    batches,
+                    can_share_batch_fn,
+                );
+            }
+        }
+    }
+}
+
+fn add_line_to_batch(
+    args: &DrawLineArgs,
+    draw_settings: &DrawSettings,
+    untextured_buffer: &mut Vec<UntexturedVertex>,
+    batches: &mut Vec<DrawBatch>,
+) {
+    let dy = args.vertices[1].y - args.vertices[0].y;
+    let dx = args.vertices[1].x - args.vertices[0].x;
+
+    let v = args.vertices.map(|v| v + draw_settings.draw_offset);
+    let positions = if dx == 0 || dx.abs() <= dy.abs() {
+        // Vertically oriented line
+        if v[0].y <= v[1].y {
+            // First vertex is higher
+            [[v[0].x, v[0].y], [v[0].x + 1, v[0].y], [v[1].x, v[1].y + 1], [v[1].x + 1, v[1].y + 1]]
+        } else {
+            // First vertex is lower
+            [[v[0].x, v[0].y + 1], [v[0].x + 1, v[0].y + 1], [v[1].x, v[1].y], [v[1].x + 1, v[1].y]]
+        }
+    } else {
+        // Horizontally oriented line
+        if v[0].x <= v[1].x {
+            // First vertex is farther left
+            [[v[0].x, v[0].y], [v[0].x, v[0].y + 1], [v[1].x + 1, v[1].y], [v[1].x + 1, v[1].y + 1]]
+        } else {
+            // First vertex is farther right
+            [[v[0].x + 1, v[0].y], [v[0].x + 1, v[0].y + 1], [v[1].x, v[1].y], [v[1].x, v[1].y + 1]]
+        }
+    };
+
+    let colors = match args.shading {
+        LineShading::Flat(color) => [color; 4],
+        LineShading::Gouraud(colors) => [colors[0], colors[0], colors[1], colors[1]],
+    };
+    let colors: [[u32; 3]; 4] =
+        colors.map(|color| [color.r.into(), color.g.into(), color.b.into()]);
+
+    let pipeline = DrawPipeline::UntexturedTriangle(
+        args.semi_transparent.then_some(args.semi_transparency_mode),
+    );
+    if !batches.last().is_some_and(|batch| batch.matches(draw_settings, pipeline)) {
+        let start = untextured_buffer.len() as u32;
+        batches.push(DrawBatch {
+            draw_settings: draw_settings.clone(),
+            pipeline,
+            start,
+            end: start,
+        });
+    }
+
+    for range in [0..3, 1..4] {
+        for i in range {
+            untextured_buffer.push(UntexturedVertex { position: positions[i], color: colors[i] });
+        }
+    }
+
+    batches.last_mut().unwrap().end += 6;
+}
+
+fn populate_rect_index_buffer(vertex_buffer: &[TexturedRectVertex], index_buffer: &mut Vec<u32>) {
+    for i in (0..vertex_buffer.len()).step_by(4) {
+        let i = i as u32;
+        index_buffer.extend([i, i + 1, i + 2, i + 1, i + 2, i + 3]);
+    }
+}
+
+#[derive(Debug)]
+pub struct MaskBitPipelines {
+    untextured_buffer: Vec<UntexturedVertex>,
+    textured_buffer: Vec<TexturedVertex>,
+    textured_rect_buffer: Vec<TexturedRectVertex>,
+    textured_rect_indices: Vec<u32>,
+    untextured_bind_group: BindGroup,
+    untextured_average_pipeline: RenderPipeline,
+    textured_bind_group: BindGroup,
+    textured_average_pipeline: RenderPipeline,
+    textured_add_pipeline: RenderPipeline,
+    textured_subtract_pipeline: RenderPipeline,
+    textured_add_quarter_pipeline: RenderPipeline,
+    textured_average_rect_pipeline: RenderPipeline,
+    textured_add_rect_pipeline: RenderPipeline,
+    textured_subtract_rect_pipeline: RenderPipeline,
+    textured_add_quarter_rect_pipeline: RenderPipeline,
+    batches: Vec<DrawBatch>,
+}
+
+impl MaskBitPipelines {
+    pub fn new(
+        device: &Device,
+        draw_shader: &ShaderModule,
+        native_vram: &Texture,
+        scaled_vram: &Texture,
+        scaled_vram_copy: &Texture,
+    ) -> Self {
+        let native_vram_view = native_vram.create_view(&TextureViewDescriptor::default());
+        let scaled_vram_view = scaled_vram.create_view(&TextureViewDescriptor::default());
+        let scaled_vram_copy_view = scaled_vram_copy.create_view(&TextureViewDescriptor::default());
+
+        let untextured_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: "untextured_mask_bind_group_layout".into(),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::StorageTexture {
+                        access: StorageTextureAccess::ReadWrite,
+                        format: scaled_vram.format(),
+                        view_dimension: TextureViewDimension::D2,
+                    },
+                    count: None,
+                }],
+            });
+
+        let untextured_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: "untextured_mask_bind_group".into(),
+            layout: &untextured_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&scaled_vram_view),
+            }],
+        });
+
+        let untextured_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: "untextured_mask_pipeline_layout".into(),
+            bind_group_layouts: &[&untextured_bind_group_layout],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::FRAGMENT,
+                range: 0..mem::size_of::<ShaderDrawSettings>() as u32,
+            }],
+        });
+
+        let primitive_state = PrimitiveState {
+            topology: PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: FrontFace::Ccw,
+            cull_mode: None,
+            unclipped_depth: false,
+            polygon_mode: PolygonMode::Fill,
+            conservative: false,
+        };
+
+        let color_target_state = ColorTargetState {
+            format: TextureFormat::Rgba8Unorm,
+            blend: None,
+            write_mask: ColorWrites::empty(),
+        };
+
+        let mask_shader =
+            device.create_shader_module(include_wgsl_concat!("draw_common.wgsl", "maskbit.wgsl"));
+
+        let untextured_average_pipeline =
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: "untextured_mask_average_pipeline".into(),
+                layout: Some(&untextured_pipeline_layout),
+                vertex: VertexState {
+                    module: draw_shader,
+                    entry_point: "vs_untextured",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    buffers: &[UntexturedVertex::LAYOUT],
+                },
+                primitive: primitive_state,
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    module: &mask_shader,
+                    entry_point: "fs_untextured_average",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(color_target_state.clone())],
+                }),
+                multiview: None,
+            });
+
+        let textured_bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: "textured_mask_bind_group_layout".into(),
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::StorageTexture {
+                            access: StorageTextureAccess::ReadWrite,
+                            format: scaled_vram.format(),
+                            view_dimension: TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::StorageTexture {
+                            access: StorageTextureAccess::ReadOnly,
+                            format: native_vram.format(),
+                            view_dimension: TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                    BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: ShaderStages::FRAGMENT,
+                        ty: BindingType::StorageTexture {
+                            access: StorageTextureAccess::ReadOnly,
+                            format: scaled_vram_copy.format(),
+                            view_dimension: TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let textured_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: "textured_mask_bind_group".into(),
+            layout: &textured_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&scaled_vram_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&native_vram_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&scaled_vram_copy_view),
+                },
+            ],
+        });
+
+        let textured_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: "textured_mask_pipeline_layout".into(),
+            bind_group_layouts: &[&textured_bind_group_layout],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::FRAGMENT,
+                range: 0..mem::size_of::<ShaderDrawSettings>() as u32,
+            }],
+        });
+
+        let textured_triangle_vertex_state = VertexState {
+            module: draw_shader,
+            entry_point: "vs_textured",
+            compilation_options: PipelineCompilationOptions::default(),
+            buffers: &[TexturedVertex::LAYOUT],
+        };
+
+        let textured_average_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "textured_mask_average_pipeline".into(),
+            layout: Some(&textured_pipeline_layout),
+            vertex: textured_triangle_vertex_state.clone(),
+            primitive: primitive_state,
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: &mask_shader,
+                entry_point: "fs_textured_average",
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(color_target_state.clone())],
+            }),
+            multiview: None,
+        });
+
+        let textured_add_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "textured_mask_add_pipeline".into(),
+            layout: Some(&textured_pipeline_layout),
+            vertex: textured_triangle_vertex_state.clone(),
+            primitive: primitive_state,
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: &mask_shader,
+                entry_point: "fs_textured_add",
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(color_target_state.clone())],
+            }),
+            multiview: None,
+        });
+
+        let textured_subtract_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "textured_mask_subtract_pipeline".into(),
+            layout: Some(&textured_pipeline_layout),
+            vertex: textured_triangle_vertex_state.clone(),
+            primitive: primitive_state,
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: &mask_shader,
+                entry_point: "fs_textured_subtract",
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(color_target_state.clone())],
+            }),
+            multiview: None,
+        });
+
+        let textured_add_quarter_pipeline =
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: "textured_mask_add_quarter_pipeline".into(),
+                layout: Some(&textured_pipeline_layout),
+                vertex: textured_triangle_vertex_state,
+                primitive: primitive_state,
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    module: &mask_shader,
+                    entry_point: "fs_textured_add_quarter",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(color_target_state.clone())],
+                }),
+                multiview: None,
+            });
+
+        let textured_rect_vertex_state = VertexState {
+            module: draw_shader,
+            entry_point: "vs_textured_rect",
+            compilation_options: PipelineCompilationOptions::default(),
+            buffers: &[TexturedRectVertex::LAYOUT],
+        };
+
+        let textured_average_rect_pipeline =
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: "textured_mask_average_rect_pipeline".into(),
+                layout: Some(&textured_pipeline_layout),
+                vertex: textured_rect_vertex_state.clone(),
+                primitive: primitive_state,
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    module: &mask_shader,
+                    entry_point: "fs_textured_rect_average",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(color_target_state.clone())],
+                }),
+                multiview: None,
+            });
+
+        let textured_add_rect_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: "textured_mask_add_rect_pipeline".into(),
+            layout: Some(&textured_pipeline_layout),
+            vertex: textured_rect_vertex_state.clone(),
+            primitive: primitive_state,
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: &mask_shader,
+                entry_point: "fs_textured_rect_add",
+                compilation_options: PipelineCompilationOptions::default(),
+                targets: &[Some(color_target_state.clone())],
+            }),
+            multiview: None,
+        });
+
+        let textured_subtract_rect_pipeline =
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: "textured_mask_subtract_rect_pipeline".into(),
+                layout: Some(&textured_pipeline_layout),
+                vertex: textured_rect_vertex_state.clone(),
+                primitive: primitive_state,
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    module: &mask_shader,
+                    entry_point: "fs_textured_rect_subtract",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(color_target_state.clone())],
+                }),
+                multiview: None,
+            });
+
+        let textured_add_quarter_rect_pipeline =
+            device.create_render_pipeline(&RenderPipelineDescriptor {
+                label: "textured_mask_add_quarter_rect_pipeline".into(),
+                layout: Some(&textured_pipeline_layout),
+                vertex: textured_rect_vertex_state,
+                primitive: primitive_state,
+                depth_stencil: None,
+                multisample: MultisampleState::default(),
+                fragment: Some(FragmentState {
+                    module: &mask_shader,
+                    entry_point: "fs_textured_rect_add_quarter",
+                    compilation_options: PipelineCompilationOptions::default(),
+                    targets: &[Some(color_target_state)],
+                }),
+                multiview: None,
+            });
+
+        Self {
+            untextured_buffer: Vec::with_capacity(DrawPipelines::INITIAL_BUFFER_CAPACITY as usize),
+            textured_buffer: Vec::with_capacity(DrawPipelines::INITIAL_BUFFER_CAPACITY as usize),
+            textured_rect_buffer: Vec::with_capacity(
+                DrawPipelines::INITIAL_BUFFER_CAPACITY as usize,
+            ),
+            textured_rect_indices: Vec::with_capacity(
+                DrawPipelines::INITIAL_BUFFER_CAPACITY as usize,
+            ),
+            untextured_bind_group,
+            untextured_average_pipeline,
+            textured_bind_group,
+            textured_average_pipeline,
+            textured_add_pipeline,
+            textured_subtract_pipeline,
+            textured_add_quarter_pipeline,
+            textured_average_rect_pipeline,
+            textured_add_rect_pipeline,
+            textured_subtract_rect_pipeline,
+            textured_add_quarter_rect_pipeline,
+            batches: Vec::with_capacity(DrawPipelines::INITIAL_BUFFER_CAPACITY as usize),
+        }
+    }
+
+    pub fn add_triangle(&mut self, args: &DrawTriangleArgs, draw_settings: &DrawSettings) {
+        add_triangle_to_batch(
+            args,
+            draw_settings,
+            &mut self.untextured_buffer,
+            &mut self.textured_buffer,
+            &mut self.batches,
+            |_| true,
+        );
+    }
+
+    pub fn add_rectangle(&mut self, args: &DrawRectangleArgs, draw_settings: &DrawSettings) {
+        add_rectangle_to_batch(
+            args,
+            draw_settings,
+            &mut self.untextured_buffer,
+            &mut self.textured_buffer,
+            &mut self.textured_rect_buffer,
+            &mut self.batches,
+            |_| true,
+        );
+    }
+
+    pub fn add_line(&mut self, args: &DrawLineArgs, draw_settings: &DrawSettings) {
+        add_line_to_batch(args, draw_settings, &mut self.untextured_buffer, &mut self.batches);
+    }
+
+    pub fn prepare(&mut self, device: &Device) -> DrawBuffers {
+        let untextured_triangle = device.create_buffer_init(&BufferInitDescriptor {
+            label: "untextured_triangle_mask_vertex_buffer".into(),
+            contents: bytemuck::cast_slice(&self.untextured_buffer),
+            usage: BufferUsages::VERTEX,
+        });
+
+        let textured_triangle = device.create_buffer_init(&BufferInitDescriptor {
+            label: "textured_triangle_mask_vertex_buffer".into(),
+            contents: bytemuck::cast_slice(&self.textured_buffer),
+            usage: BufferUsages::VERTEX,
+        });
+
+        let textured_rectangle_vertex = device.create_buffer_init(&BufferInitDescriptor {
+            label: "textured_rect_mask_vertex_buffer".into(),
+            contents: bytemuck::cast_slice(&self.textured_rect_buffer),
+            usage: BufferUsages::VERTEX,
+        });
+
+        populate_rect_index_buffer(&self.textured_rect_buffer, &mut self.textured_rect_indices);
+        let textured_rectangle_index = device.create_buffer_init(&BufferInitDescriptor {
+            label: "textured_rect_mask_index_buffer".into(),
+            contents: bytemuck::cast_slice(&self.textured_rect_indices),
+            usage: BufferUsages::INDEX,
+        });
+
+        self.untextured_buffer.clear();
+        self.textured_buffer.clear();
+        self.textured_rect_buffer.clear();
+        self.textured_rect_indices.clear();
+
+        DrawBuffers {
+            untextured_triangle,
+            textured_triangle,
+            textured_rectangle_vertex,
+            textured_rectangle_index,
+        }
+    }
+
+    pub fn draw<'rpass>(
+        &'rpass mut self,
+        buffers: &'rpass DrawBuffers,
+        resolution_scale: u32,
+        render_pass: &mut RenderPass<'rpass>,
+    ) {
+        for batch in self.batches.drain(..) {
+            let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
+
+            match batch.pipeline {
+                DrawPipeline::UntexturedTriangle(Some(SemiTransparencyMode::Average)) => {
+                    render_pass.set_pipeline(&self.untextured_average_pipeline);
+                    render_pass.set_bind_group(0, &self.untextured_bind_group, &[]);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+                    render_pass.set_vertex_buffer(0, buffers.untextured_triangle.slice(..));
+
+                    render_pass.draw(batch.start..batch.end, 0..1);
+                }
+                DrawPipeline::UntexturedTriangle(semi_transparency_mode) => panic!(
+                    "Unexpected untextured semi-transparency mode for mask bit pipeline: {semi_transparency_mode:?}"
+                ),
+                DrawPipeline::TexturedTriangle(semi_transparency_mode) => {
+                    let pipeline = match semi_transparency_mode {
+                        Some(SemiTransparencyMode::Average) => &self.textured_average_pipeline,
+                        Some(SemiTransparencyMode::Add) => &self.textured_add_pipeline,
+                        Some(SemiTransparencyMode::Subtract) => &self.textured_subtract_pipeline,
+                        Some(SemiTransparencyMode::AddQuarter) => {
+                            &self.textured_add_quarter_pipeline
+                        }
+                        None => panic!(
+                            "mask bit pipeline invoked for a non-semi-transparent textured triangle"
+                        ),
+                    };
+
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+                    render_pass.set_vertex_buffer(0, buffers.textured_triangle.slice(..));
+
+                    render_pass.draw(batch.start..batch.end, 0..1);
+                }
+                DrawPipeline::TexturedRectangle(semi_transparency_mode) => {
+                    let pipeline = match semi_transparency_mode {
+                        Some(SemiTransparencyMode::Average) => &self.textured_average_rect_pipeline,
+                        Some(SemiTransparencyMode::Add) => &self.textured_add_rect_pipeline,
+                        Some(SemiTransparencyMode::Subtract) => {
+                            &self.textured_subtract_rect_pipeline
+                        }
+                        Some(SemiTransparencyMode::AddQuarter) => {
+                            &self.textured_add_quarter_rect_pipeline
+                        }
+                        None => panic!(
+                            "mask bit pipeline invoked for a non-semi-transparent textured rectangle"
+                        ),
+                    };
+
+                    render_pass.set_pipeline(pipeline);
+                    render_pass.set_bind_group(0, &self.textured_bind_group, &[]);
+                    render_pass.set_push_constants(
+                        ShaderStages::FRAGMENT,
+                        0,
+                        bytemuck::cast_slice(&[draw_settings]),
+                    );
+                    render_pass.set_vertex_buffer(0, buffers.textured_rectangle_vertex.slice(..));
+                    render_pass.set_index_buffer(
+                        buffers.textured_rectangle_index.slice(..),
+                        IndexFormat::Uint32,
+                    );
+
+                    let indexed_start = batch.start * 3 / 2;
+                    let indexed_end = batch.end * 3 / 2;
+                    render_pass.draw_indexed(indexed_start..indexed_end, 0, 0..1);
+                }
+            }
+        }
+    }
 }

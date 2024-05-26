@@ -1,8 +1,3 @@
-struct DrawSettings {
-    force_mask_bit: u32,
-    resolution_scale: u32,
-}
-
 var<push_constant> draw_settings: DrawSettings;
 
 @vertex

@@ -5,11 +5,11 @@ mod sync;
 mod twentyfour;
 
 use crate::api::ColorDepthBits;
-use crate::gpu::gp0::{DrawSettings, TextureColorDepthBits, TexturePage};
+use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage};
 use crate::gpu::rasterizer::wgpuhardware::blit::{
     CpuVramBlitPipeline, VramCopyPipeline, VramCpuBlitter, VramFillPipeline,
 };
-use crate::gpu::rasterizer::wgpuhardware::draw::DrawPipelines;
+use crate::gpu::rasterizer::wgpuhardware::draw::{DrawPipelines, MaskBitPipelines};
 use crate::gpu::rasterizer::wgpuhardware::hazards::HazardTracker;
 use crate::gpu::rasterizer::wgpuhardware::sync::{
     NativeScaledSyncPipeline, ScaledNativeSyncBuffers, ScaledNativeSyncPipeline,
@@ -48,8 +48,19 @@ macro_rules! include_wgsl_concat {
     }
 }
 
+use include_wgsl_concat;
+
 const VRAM_WIDTH: u32 = 1024;
 const VRAM_HEIGHT: u32 = 512;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DrawCommandType {
+    Draw,
+    DrawCheckMaskBit,
+    Blit,
+    Copy,
+    ScaledNativeSync,
+}
 
 #[derive(Debug)]
 enum DrawCommand {
@@ -63,8 +74,48 @@ enum DrawCommand {
 }
 
 impl DrawCommand {
-    fn can_share_compute_pass(&self) -> bool {
-        matches!(self, Self::CpuVramBlit { .. } | Self::VramFill { .. })
+    fn to_type(&self) -> DrawCommandType {
+        match self {
+            Self::DrawTriangle { args, draw_settings } => {
+                if must_use_mask_bit_pipeline(
+                    args.semi_transparent,
+                    args.semi_transparency_mode,
+                    args.texture_mapping.is_some(),
+                    draw_settings.check_mask_bit,
+                ) {
+                    DrawCommandType::DrawCheckMaskBit
+                } else {
+                    DrawCommandType::Draw
+                }
+            }
+            Self::DrawRectangle { args, draw_settings } => {
+                if must_use_mask_bit_pipeline(
+                    args.semi_transparent,
+                    args.semi_transparency_mode,
+                    args.texture_mapping.is_some(),
+                    draw_settings.check_mask_bit,
+                ) {
+                    DrawCommandType::DrawCheckMaskBit
+                } else {
+                    DrawCommandType::Draw
+                }
+            }
+            Self::DrawLine { args, draw_settings } => {
+                if must_use_mask_bit_pipeline(
+                    args.semi_transparent,
+                    args.semi_transparency_mode,
+                    false,
+                    draw_settings.check_mask_bit,
+                ) {
+                    DrawCommandType::DrawCheckMaskBit
+                } else {
+                    DrawCommandType::Draw
+                }
+            }
+            Self::CpuVramBlit { .. } | Self::VramFill { .. } => DrawCommandType::Blit,
+            Self::VramCopy { .. } => DrawCommandType::Copy,
+            Self::ScaledNativeSync { .. } => DrawCommandType::ScaledNativeSync,
+        }
     }
 }
 
@@ -79,11 +130,14 @@ pub struct WgpuRasterizer {
     scaled_vram_copy: Texture,
     // r32uint at native resolution; used for 4bpp/8bpp texture sampling and blitting
     native_vram: Texture,
+    // rgba8unorm at scaled resolution; used as a no-op render attachment with some mask bit shaders
+    dummy_vram: Texture,
     frame_textures: HashMap<(FrameSize, u32), Texture>,
     hazard_tracker: HazardTracker,
     clear_pipeline: ClearPipeline,
     render_24bpp_pipeline: TwentyFourBppPipeline,
     draw_pipelines: DrawPipelines,
+    mask_bit_pipelines: MaskBitPipelines,
     cpu_vram_blit_pipeline: CpuVramBlitPipeline,
     vram_cpu_blitter: VramCpuBlitter,
     vram_copy_pipeline: VramCopyPipeline,
@@ -142,6 +196,17 @@ impl WgpuRasterizer {
             view_formats: &[],
         });
 
+        let dummy_vram = device.create_texture(&TextureDescriptor {
+            label: "dummy_vram_texture".into(),
+            size: scaled_vram.size(),
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: scaled_vram.dimension(),
+            format: scaled_vram.format(),
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
         let clear_pipeline = ClearPipeline::new(&device, TextureFormat::Rgba8Unorm);
 
         let render_24bpp_pipeline = TwentyFourBppPipeline::new(&device, &native_vram);
@@ -152,6 +217,13 @@ impl WgpuRasterizer {
         ));
         let draw_pipelines =
             DrawPipelines::new(&device, &draw_shader, &native_vram, &scaled_vram_copy);
+        let mask_bit_pipelines = MaskBitPipelines::new(
+            &device,
+            &draw_shader,
+            &native_vram,
+            &scaled_vram,
+            &scaled_vram_copy,
+        );
 
         let cpu_vram_blit_pipeline = CpuVramBlitPipeline::new(&device, &native_vram);
         let vram_cpu_blitter = VramCpuBlitter::new(&device);
@@ -170,11 +242,13 @@ impl WgpuRasterizer {
             scaled_vram,
             scaled_vram_copy,
             native_vram,
+            dummy_vram,
             frame_textures: HashMap::with_capacity(20),
             hazard_tracker: HazardTracker::new(),
             clear_pipeline,
             render_24bpp_pipeline,
             draw_pipelines,
+            mask_bit_pipelines,
             cpu_vram_blit_pipeline,
             vram_cpu_blitter,
             vram_copy_pipeline,
@@ -294,53 +368,41 @@ impl WgpuRasterizer {
 
         let mut i = 0;
         while let Some(command) = self.draw_commands.get(i) {
-            match command {
-                DrawCommand::DrawTriangle { .. }
-                | DrawCommand::DrawRectangle { .. }
-                | DrawCommand::DrawLine { .. } => {
-                    let mut j = i + 1;
-                    while j < self.draw_commands.len()
-                        && matches!(
-                            &self.draw_commands[j],
-                            DrawCommand::DrawTriangle { .. } | DrawCommand::DrawRectangle { .. }
-                        )
-                    {
-                        j += 1;
-                    }
+            let command_type = command.to_type();
 
+            let mut j = i + 1;
+            while j < self.draw_commands.len() && self.draw_commands[j].to_type() == command_type {
+                j += 1;
+            }
+
+            match command_type {
+                DrawCommandType::Draw => {
                     self.execute_draw(i..j, &mut encoder);
-
-                    i = j;
                 }
-                DrawCommand::CpuVramBlit { .. } | DrawCommand::VramFill { .. } => {
-                    let mut j = i + 1;
-                    while j < self.draw_commands.len()
-                        && self.draw_commands[j].can_share_compute_pass()
-                    {
-                        j += 1;
-                    }
-
+                DrawCommandType::DrawCheckMaskBit => {
+                    self.execute_mask_bit_draw(i..j, &mut encoder);
+                }
+                DrawCommandType::Blit => {
                     self.execute_blits(i..j, &mut encoder);
-
-                    i = j;
                 }
-                DrawCommand::VramCopy { .. } => {
-                    let mut j = i + 1;
-                    while j < self.draw_commands.len()
-                        && matches!(self.draw_commands[j], DrawCommand::VramCopy { .. })
-                    {
-                        j += 1;
-                    }
-
+                DrawCommandType::Copy => {
                     self.execute_copy(i..j, &mut encoder);
-
-                    i = j;
                 }
-                DrawCommand::ScaledNativeSync { bounding_box, buffers } => {
-                    self.execute_scaled_native_sync(*bounding_box, buffers, &mut encoder);
-                    i += 1;
+                DrawCommandType::ScaledNativeSync => {
+                    // This is an internal command and there shouldn't be more than one of these
+                    // consecutively anyway, no need to batch
+                    for draw_command in &self.draw_commands[i..j] {
+                        let DrawCommand::ScaledNativeSync { bounding_box, buffers } = draw_command
+                        else {
+                            continue;
+                        };
+
+                        self.execute_scaled_native_sync(*bounding_box, buffers, &mut encoder);
+                    }
                 }
             }
+
+            i = j;
         }
 
         self.draw_commands.clear();
@@ -386,6 +448,52 @@ impl WgpuRasterizer {
             });
 
             self.draw_pipelines.draw(&draw_buffers, self.resolution_scale, &mut render_pass);
+        }
+    }
+
+    fn execute_mask_bit_draw(
+        &mut self,
+        draw_command_range: Range<usize>,
+        encoder: &mut CommandEncoder,
+    ) {
+        log::debug!("Executing {} draw commands with check mask bit", draw_command_range.len());
+
+        for draw_command in &self.draw_commands[draw_command_range.clone()] {
+            match draw_command {
+                DrawCommand::DrawTriangle { args, draw_settings } => {
+                    self.mask_bit_pipelines.add_triangle(args, draw_settings);
+                }
+                DrawCommand::DrawRectangle { args, draw_settings } => {
+                    self.mask_bit_pipelines.add_rectangle(args, draw_settings);
+                }
+                DrawCommand::DrawLine { args, draw_settings } => {
+                    self.mask_bit_pipelines.add_line(args, draw_settings);
+                }
+                DrawCommand::CpuVramBlit { .. }
+                | DrawCommand::VramCopy { .. }
+                | DrawCommand::VramFill { .. }
+                | DrawCommand::ScaledNativeSync { .. } => {}
+            }
+        }
+
+        let draw_buffers = self.mask_bit_pipelines.prepare(&self.device);
+
+        let dummy_vram_view = self.dummy_vram.create_view(&TextureViewDescriptor::default());
+        {
+            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: "draw_triangles_mask_render_pass".into(),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &dummy_vram_view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(wgpu::Color::BLACK),
+                        store: StoreOp::Discard,
+                    },
+                })],
+                ..RenderPassDescriptor::default()
+            });
+
+            self.mask_bit_pipelines.draw(&draw_buffers, self.resolution_scale, &mut render_pass);
         }
     }
 
@@ -787,6 +895,22 @@ impl WgpuRasterizer {
     }
 }
 
+fn must_use_mask_bit_pipeline(
+    semi_transparent: bool,
+    semi_transparency_mode: SemiTransparencyMode,
+    textured: bool,
+    check_mask_bit: bool,
+) -> bool {
+    if !check_mask_bit {
+        return false;
+    }
+
+    (textured && semi_transparent)
+        || (!textured
+            && semi_transparent
+            && semi_transparency_mode == SemiTransparencyMode::Average)
+}
+
 impl RasterizerInterface for WgpuRasterizer {
     fn draw_triangle(&mut self, args: DrawTriangleArgs, draw_settings: &DrawSettings) {
         if !draw_settings.is_drawing_area_valid() {
@@ -902,6 +1026,8 @@ impl RasterizerInterface for WgpuRasterizer {
     }
 
     fn vram_to_vram_blit(&mut self, args: VramVramBlitArgs) {
+        log::debug!("VRAM-to-VRAM blit: {args:?}");
+
         self.mark_vram_copy_rendered(&args);
 
         self.draw_commands.push(DrawCommand::VramCopy { args });

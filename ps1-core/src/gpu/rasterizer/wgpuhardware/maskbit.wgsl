@@ -1,0 +1,167 @@
+@group(0) @binding(0)
+var scaled_vram: texture_storage_2d<rgba8unorm, read_write>;
+@group(0) @binding(1)
+var native_vram: texture_storage_2d<r32uint, read>;
+@group(0) @binding(2)
+var scaled_vram_copy: texture_storage_2d<rgba8unorm, read>;
+
+var<push_constant> draw_settings: DrawSettings;
+
+@fragment
+fn fs_untextured_average(input: UntexturedVertexOutput) -> @location(0) vec4f {
+    let position = vec2u(input.position.xy);
+    let existing = textureLoad(scaled_vram, position);
+    if existing.a != 0.0 {
+        discard;
+    }
+
+    let blended_color = saturate(0.5 * input.color + 0.5 * existing.rgb);
+    let pixel = vec4f(blended_color, f32(draw_settings.force_mask_bit));
+    textureStore(scaled_vram, position, pixel);
+
+    discard;
+}
+
+fn blend_average(texel: vec4f, existing: vec4f) -> vec3f {
+    return select(
+        texel.rgb,
+        saturate(0.5 * texel.rgb + 0.5 * existing.rgb),
+        texel.a != 0.0,
+    );
+}
+
+@fragment
+fn fs_textured_average(input: TexturedVertexOutput) -> @location(0) vec4f {
+    let position = vec2u(input.position.xy);
+    let existing = textureLoad(scaled_vram, position);
+    if existing.a != 0.0 {
+        discard;
+    }
+
+    let texel = sample_texture_triangle(input);
+    let blended_color = blend_average(texel, existing);
+
+    let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
+    textureStore(scaled_vram, position, pixel);
+
+    discard;
+}
+
+@fragment
+fn fs_textured_rect_average(input: TexturedRectVertexOutput) -> @location(0) vec4f {
+    let position = vec2u(input.position.xy);
+    let existing = textureLoad(scaled_vram, position);
+    if existing.a != 0.0 {
+        discard;
+    }
+
+    let texel = sample_texture_rect(input);
+    let blended_color = blend_average(texel, existing);
+
+    let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
+    textureStore(scaled_vram, position, pixel);
+
+    discard;
+}
+
+fn blend_add(texel: vec4f, existing: vec4f, factor: f32) -> vec3f {
+    return select(
+       texel.rgb,
+       saturate(factor * texel.rgb + existing.rgb),
+       texel.a != 0.0,
+   );
+}
+
+fn textured_add(input: TexturedVertexOutput, factor: f32) -> vec4f {
+    let position = vec2u(input.position.xy);
+    let existing = textureLoad(scaled_vram, position);
+    if existing.a != 0.0 {
+        discard;
+    }
+
+    let texel = sample_texture_triangle(input);
+    let blended_color = blend_add(texel, existing, factor);
+
+    let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
+    textureStore(scaled_vram, position, pixel);
+
+    discard;
+}
+
+fn textured_rect_add(input: TexturedRectVertexOutput, factor: f32) -> vec4f {
+    let position = vec2u(input.position.xy);
+    let existing = textureLoad(scaled_vram, position);
+    if existing.a != 0.0 {
+        discard;
+    }
+
+    let texel = sample_texture_rect(input);
+    let blended_color = blend_add(texel, existing, factor);
+
+    let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
+    textureStore(scaled_vram, position, pixel);
+
+    discard;
+}
+
+@fragment
+fn fs_textured_add(input: TexturedVertexOutput) -> @location(0) vec4f {
+    return textured_add(input, 1.0);
+}
+
+@fragment
+fn fs_textured_rect_add(input: TexturedRectVertexOutput) -> @location(0) vec4f {
+    return textured_rect_add(input, 1.0);
+}
+
+fn blend_subtract(texel: vec4f, existing: vec4f) -> vec3f {
+    return select(
+        texel.rgb,
+        saturate(existing.rgb - texel.rgb),
+        texel.a != 0.0,
+    );
+}
+
+@fragment
+fn fs_textured_subtract(input: TexturedVertexOutput) -> @location(0) vec4f {
+    let position = vec2u(input.position.xy);
+    let existing = textureLoad(scaled_vram, position);
+    if existing.a != 0.0 {
+        discard;
+    }
+
+    let texel = sample_texture_triangle(input);
+    let blended_color = blend_subtract(texel, existing);
+
+    let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
+    textureStore(scaled_vram, position, pixel);
+
+    discard;
+}
+
+@fragment
+fn fs_textured_rect_subtract(input: TexturedRectVertexOutput) -> @location(0) vec4f {
+    let position = vec2u(input.position.xy);
+    let existing = textureLoad(scaled_vram, position);
+    if existing.a != 0.0 {
+        discard;
+    }
+
+    let texel = sample_texture_rect(input);
+    let blended_color = blend_subtract(texel, existing);
+
+    let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
+    textureStore(scaled_vram, position, pixel);
+
+    discard;
+}
+
+@fragment
+fn fs_textured_add_quarter(input: TexturedVertexOutput) -> @location(0) vec4f {
+    return textured_add(input, 0.25);
+}
+
+@fragment
+fn fs_textured_rect_add_quarter(input: TexturedRectVertexOutput) -> @location(0) vec4f {
+    return textured_rect_add(input, 0.25);
+}
