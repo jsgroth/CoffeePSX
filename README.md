@@ -2,16 +2,21 @@
 
 Work-in-progress attempt at a PlayStation emulator. Some games are fully playable, but some do not boot or have major issues, and the emulator is missing essential features like memory card management and proper handling of multi-disc games. Currently CLI-only, no GUI.
 
-Currently standalone rather than being an additional backend in [jgenesis](https://github.com/jsgroth/jgenesis) in order to enable easier experimentation for rendering and parallelism. At least in the short term I'm unlikely to merge the two projects due to differences in how video output is rendered and displayed.
+## Goals
 
-The `cdrom` crate is a fork of the `cdrom` crate that [jgenesis](https://github.com/jsgroth/jgenesis) uses for Sega CD, but all changes to it in this repo have been upstreamed (e.g. support for Mode 2 data tracks) because I do not want the two to diverge.
+My primary goals with this project are, in no particular order:
+* Learn how the PS1 worked and how games utilized the hardware by emulating it
+* Learn a bit about graphics programming via a practical application (emulating the PS1 GPU in hardware)
+* Make an emulator that I'd personally be willing to use, even if it's not the best out there
 
 ## Status
 
 Implemented:
 * The R3000-compatible CPU
 * The GTE
-* The GPU, with a software rasterizer
+* The GPU, with both software and hardware rasterizers
+  * Hardware rasterizer uses wgpu with native extensions; should work on Vulkan, DirectX 12, and Metal (has only been tested on Vulkan)
+  * Hardware rasterizer supports 24bpp color rendering and higher resolutions up to 16x native
 * The SPU
 * Most of the CD-ROM controller
 * The MDEC
@@ -20,7 +25,6 @@ Implemented:
 * The hardware timers
 
 Not yet implemented:
-* A hardware rasterizer (would enable enhancements like increased rendering resolution, draw output in 24bpp color, and possibly texture filtering)
 * Accurate timing for memory writes (i.e. implementing the CPU write queue)
   * Though it seems like maybe nothing depends on this?
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work but timings are quite inaccurate right now
@@ -29,10 +33,13 @@ Not yet implemented:
 * Analog controllers and P2 inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
 * A GUI
+* Additional graphical enhancements for the hardware rasterizer (e.g. sub-pixel vertex precision, texture filtering)
 
-## AVX2 Dependency
+## Software Rasterizer AVX2 Dependency
 
-The rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (4th gen i3/i5/i7) and AMD CPUs since Bulldozer (FX-41xx/61xx/81xx). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
+The software rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (4th gen i3/i5/i7) and AMD CPUs since Bulldozer (FX-41xx/61xx/81xx). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
+
+The hardware rasterizer has no such dependency.
 
 ## Build Dependencies
 
@@ -66,7 +73,10 @@ cargo run --release -- -b <bios_path> -d <disc_path>
 
 CUE/BIN and CHD formats are supported. For CUE/BIN, `disc_path` should be the path to the CUE file.
 
-The `-t` flag enables TTY output, printed to stdout.
+Command line flags:
+* `--hardware`: Boot using the hardware rasterizer
+* `--no-vsync`: Disable VSync
+* `-t`: Enable TTY output, printed to stdout
 
 ## Key Bindings
 
@@ -88,8 +98,11 @@ Hotkeys:
 * Load state: F6 key
 * Pause: P key
 * Step to Next Frame: N key
+* Use hardware rasterizer: 0 key
 * Use AVX2 software rasterizer: - key (Minus)
 * Use naive slow software rasterizer: = key (Equals)
+* Decrease resolution scale: [ key (Left square bracket)
+* Increase resolution scale: ] key (Right square bracket)
 * Toggle Auto-Prescaling: / key (Forward Slash)
 * Toggle Bilinear Interpolation: ; key (Semicolon)
 * Toggle VRAM view: ' key (Quote)
