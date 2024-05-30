@@ -1014,17 +1014,21 @@ impl RasterizerInterface for WgpuRasterizer {
             .push(DrawCommand::DrawLine { args, draw_settings: draw_settings.clone() });
     }
 
-    fn draw_rectangle(&mut self, args: DrawRectangleArgs, draw_settings: &DrawSettings) {
-        if !draw_settings.is_drawing_area_valid() {
+    fn draw_rectangle(&mut self, mut args: DrawRectangleArgs, draw_settings: &DrawSettings) {
+        if !draw_settings.is_drawing_area_valid() || args.width == 0 || args.height == 0 {
             return;
         }
 
-        if args.width == 0 || args.height == 0 {
-            return;
-        }
+        // Pre-apply draw offset to handle the draw offset possibly causing the rectangle's
+        // coordinates to wrap.
+        // Skullmonkeys depends on this or many graphics will be missing
+        let top_left = args.top_left + draw_settings.draw_offset;
+        args.top_left = Vertex { x: i11(top_left.x), y: i11(top_left.y) };
+        let draw_settings =
+            DrawSettings { draw_offset: Vertex::new(0, 0), ..draw_settings.clone() };
 
         let Some((bounding_box_top_left, bounding_box_top_right)) =
-            rectangle_bounding_box(&args, draw_settings)
+            rectangle_bounding_box(&args, &draw_settings)
         else {
             return;
         };
@@ -1042,8 +1046,7 @@ impl RasterizerInterface for WgpuRasterizer {
 
         // TODO proper scaled/native sync
 
-        self.draw_commands
-            .push(DrawCommand::DrawRectangle { args, draw_settings: draw_settings.clone() });
+        self.draw_commands.push(DrawCommand::DrawRectangle { args, draw_settings });
     }
 
     fn vram_fill(&mut self, x: u32, y: u32, width: u32, height: u32, color: Color) {
@@ -1293,4 +1296,8 @@ fn get_or_create_frame_texture<'a>(
             view_formats: &[TextureFormat::Rgba8UnormSrgb],
         })
     })
+}
+
+fn i11(value: i32) -> i32 {
+    (value << 21) >> 21
 }
