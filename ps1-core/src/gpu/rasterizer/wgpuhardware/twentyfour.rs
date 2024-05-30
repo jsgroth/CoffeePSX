@@ -4,10 +4,10 @@ use std::mem;
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, ColorTargetState, ColorWrites, Device,
-    FragmentState, FrontFace, MultisampleState, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, PushConstantRange,
-    RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderStages, StorageTextureAccess,
-    Texture, TextureFormat, TextureViewDescriptor, TextureViewDimension, VertexState,
+    FragmentState, FrontFace, MultisampleState, PipelineLayoutDescriptor, PolygonMode,
+    PrimitiveState, PrimitiveTopology, PushConstantRange, RenderPass, RenderPipeline,
+    RenderPipelineDescriptor, ShaderStages, StorageTextureAccess, Texture, TextureFormat,
+    TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 
 #[repr(C)]
@@ -78,12 +78,7 @@ impl TwentyFourBppPipeline {
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: "render_24bpp_pipeline".into(),
             layout: Some(&pipeline_layout),
-            vertex: VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
+            vertex: VertexState { module: &shader, entry_point: "vs_main", buffers: &[] },
             primitive: PrimitiveState {
                 topology: PrimitiveTopology::TriangleStrip,
                 strip_index_format: None,
@@ -98,7 +93,6 @@ impl TwentyFourBppPipeline {
             fragment: Some(FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(ColorTargetState {
                     format: TextureFormat::Rgba8Unorm,
                     blend: None,

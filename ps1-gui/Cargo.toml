@@ -1,9 +1,7 @@
 [package]
-name = "ps1-runner"
+name = "ps1-gui"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 cdrom = { path = "../cdrom" }
@@ -11,15 +9,20 @@ ps1-core = { path = "../ps1-core" }
 
 anyhow = { workspace = true }
 bincode = { workspace = true }
-bytemuck = { workspace = true, features = ["derive"] }
+cfg-if = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
 pollster = { workspace = true }
-rand = { workspace = true }
+rfd = { workspace = true }
 sdl2 = { workspace = true }
-thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+toml = { workspace = true }
 wgpu = { workspace = true }
+windows = { workspace = true, features = ["Win32_Media"] }
 winit = { workspace = true }
 
 [lints]

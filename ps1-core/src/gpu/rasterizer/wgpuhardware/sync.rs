@@ -6,11 +6,11 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType,
     BufferUsages, ColorTargetState, ColorWrites, Device, FilterMode, FragmentState, FrontFace,
-    MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor, PolygonMode,
-    PrimitiveState, PrimitiveTopology, RenderPass, RenderPipeline, RenderPipelineDescriptor,
-    SamplerBindingType, SamplerDescriptor, ShaderStages, StorageTextureAccess, Texture,
-    TextureFormat, TextureSampleType, TextureViewDescriptor, TextureViewDimension, VertexAttribute,
-    VertexBufferLayout, VertexState, VertexStepMode,
+    MultisampleState, PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology,
+    RenderPass, RenderPipeline, RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor,
+    ShaderStages, StorageTextureAccess, Texture, TextureFormat, TextureSampleType,
+    TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexState,
+    VertexStepMode,
 };
 
 #[repr(C)]
@@ -101,7 +101,7 @@ impl NativeScaledSyncPipeline {
             vertex: VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                compilation_options: PipelineCompilationOptions::default(),
+
                 buffers: &[VramSyncVertex::LAYOUT],
             },
             primitive: PrimitiveState {
@@ -118,7 +118,7 @@ impl NativeScaledSyncPipeline {
             fragment: Some(FragmentState {
                 module: &shader,
                 entry_point: "native_to_scaled",
-                compilation_options: PipelineCompilationOptions::default(),
+
                 targets: &[Some(ColorTargetState {
                     format: TextureFormat::Rgba8Unorm,
                     blend: None,
@@ -268,7 +268,7 @@ impl ScaledNativeSyncPipeline {
             vertex: VertexState {
                 module: &shader,
                 entry_point: "vs_main",
-                compilation_options: PipelineCompilationOptions::default(),
+
                 buffers: &[VramSyncVertex::LAYOUT],
             },
             primitive: PrimitiveState {
@@ -285,7 +285,7 @@ impl ScaledNativeSyncPipeline {
             fragment: Some(FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
-                compilation_options: PipelineCompilationOptions::default(),
+
                 targets: &[Some(ColorTargetState {
                     format: TextureFormat::R32Uint,
                     blend: None,

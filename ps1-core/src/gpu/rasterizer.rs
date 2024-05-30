@@ -5,7 +5,7 @@ use bincode::{Decode, Encode};
 use std::cmp;
 use std::fmt::{Display, Formatter};
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TexturePage, TextureWindow};
 use crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
@@ -148,10 +148,10 @@ impl Default for RasterizerType {
     }
 }
 
-pub struct Rasterizer(pub Box<dyn RasterizerInterface>);
+pub struct Rasterizer(pub Box<dyn RasterizerInterface + Send + Sync>);
 
 impl Deref for Rasterizer {
-    type Target = Box<dyn RasterizerInterface>;
+    type Target = Box<dyn RasterizerInterface + Send + Sync>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -166,8 +166,8 @@ impl DerefMut for Rasterizer {
 
 impl Rasterizer {
     pub fn new(
-        wgpu_device: &Rc<wgpu::Device>,
-        wgpu_queue: &Rc<wgpu::Queue>,
+        wgpu_device: &Arc<wgpu::Device>,
+        wgpu_queue: &Arc<wgpu::Queue>,
         rasterizer_type: RasterizerType,
         hardware_resolution_scale: u32,
     ) -> Self {
@@ -179,8 +179,8 @@ impl Rasterizer {
                 Self(Box::new(SimdSoftwareRasterizer::new(wgpu_device)))
             }
             RasterizerType::WgpuHardware => Self(Box::new(WgpuRasterizer::new(
-                Rc::clone(wgpu_device),
-                Rc::clone(wgpu_queue),
+                Arc::clone(wgpu_device),
+                Arc::clone(wgpu_queue),
                 hardware_resolution_scale,
             ))),
         }
@@ -193,8 +193,8 @@ impl Rasterizer {
 
     pub fn from_state(
         state: RasterizerState,
-        wgpu_device: &Rc<wgpu::Device>,
-        wgpu_queue: &Rc<wgpu::Queue>,
+        wgpu_device: &Arc<wgpu::Device>,
+        wgpu_queue: &Arc<wgpu::Queue>,
         rasterizer_type: RasterizerType,
         hardware_resolution_scale: u32,
     ) -> Self {
@@ -207,8 +207,8 @@ impl Rasterizer {
             }
             RasterizerType::WgpuHardware => {
                 let rasterizer = WgpuRasterizer::new(
-                    Rc::clone(wgpu_device),
-                    Rc::clone(wgpu_queue),
+                    Arc::clone(wgpu_device),
+                    Arc::clone(wgpu_queue),
                     hardware_resolution_scale,
                 );
                 rasterizer.copy_vram_from(&state.vram);
@@ -410,7 +410,6 @@ impl ClearPipeline {
             vertex: wgpu::VertexState {
                 module: &clear_module,
                 entry_point: "vs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[],
             },
             primitive: wgpu::PrimitiveState {
@@ -427,7 +426,6 @@ impl ClearPipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &clear_module,
                 entry_point: "fs_main",
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: frame_format,
                     blend: None,

@@ -23,7 +23,7 @@ use crate::gpu::registers::Registers;
 use crate::gpu::{rasterizer, Color, Vertex, Vram, WgpuResources};
 use std::collections::HashMap;
 use std::ops::{BitOr, BitOrAssign, Range};
-use std::rc::Rc;
+use std::sync::Arc;
 use std::{cmp, iter};
 use wgpu::{
     BindGroup, Buffer, BufferDescriptor, BufferUsages, CommandBuffer, CommandEncoder,
@@ -149,8 +149,8 @@ const SCALED_NATIVE_SYNC_DELAY: u8 = 5;
 
 #[derive(Debug)]
 pub struct WgpuRasterizer {
-    device: Rc<Device>,
-    queue: Rc<Queue>,
+    device: Arc<Device>,
+    queue: Arc<Queue>,
     resolution_scale: u32,
     // rgba8unorm at scaled resolution; used for rendering
     scaled_vram: Texture,
@@ -177,7 +177,7 @@ pub struct WgpuRasterizer {
 }
 
 impl WgpuRasterizer {
-    pub fn new(device: Rc<Device>, queue: Rc<Queue>, resolution_scale: u32) -> Self {
+    pub fn new(device: Arc<Device>, queue: Arc<Queue>, resolution_scale: u32) -> Self {
         log::info!("Creating wgpu hardware rasterizer with resolution scale {resolution_scale}");
 
         let scaled_vram = device.create_texture(&TextureDescriptor {
@@ -1286,7 +1286,8 @@ fn get_or_create_frame_texture<'a>(
             sample_count: 1,
             dimension: TextureDimension::D2,
             format: TextureFormat::Rgba8Unorm,
-            usage: TextureUsages::COPY_DST
+            usage: TextureUsages::COPY_SRC
+                | TextureUsages::COPY_DST
                 | TextureUsages::TEXTURE_BINDING
                 | TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[TextureFormat::Rgba8UnormSrgb],

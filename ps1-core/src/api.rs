@@ -19,8 +19,9 @@ use cdrom::reader::CdRom;
 use cdrom::CdRomError;
 use proc_macros::SaveState;
 use std::fmt::{Display, Formatter};
-use std::rc::Rc;
+use std::sync::Arc;
 use thiserror::Error;
+use wgpu::{CommandBuffer, Texture};
 
 pub use crate::gpu::DisplayConfig;
 
@@ -102,8 +103,8 @@ pub enum TickError<RErr, AErr, SErr> {
 
 pub struct UnserializedFields {
     disc: Option<CdRom>,
-    wgpu_device: Rc<wgpu::Device>,
-    wgpu_queue: Rc<wgpu::Queue>,
+    wgpu_device: Arc<wgpu::Device>,
+    wgpu_queue: Arc<wgpu::Queue>,
     display_config: DisplayConfig,
 }
 
@@ -133,8 +134,8 @@ pub struct Ps1Emulator {
 #[derive(Debug)]
 pub struct Ps1EmulatorBuilder {
     bios_rom: Vec<u8>,
-    wgpu_device: Rc<wgpu::Device>,
-    wgpu_queue: Rc<wgpu::Queue>,
+    wgpu_device: Arc<wgpu::Device>,
+    wgpu_queue: Arc<wgpu::Queue>,
     display_config: DisplayConfig,
     disc: Option<CdRom>,
     memory_card_1: Option<Vec<u8>>,
@@ -145,8 +146,8 @@ impl Ps1EmulatorBuilder {
     #[must_use]
     pub fn new(
         bios_rom: Vec<u8>,
-        wgpu_device: Rc<wgpu::Device>,
-        wgpu_queue: Rc<wgpu::Queue>,
+        wgpu_device: Arc<wgpu::Device>,
+        wgpu_queue: Arc<wgpu::Queue>,
     ) -> Self {
         Self {
             bios_rom,
@@ -248,8 +249,8 @@ impl Ps1Emulator {
     /// Will return an error if the BIOS ROM is invalid.
     pub fn new(
         bios_rom: Vec<u8>,
-        wgpu_device: Rc<wgpu::Device>,
-        wgpu_queue: Rc<wgpu::Queue>,
+        wgpu_device: Arc<wgpu::Device>,
+        wgpu_queue: Arc<wgpu::Queue>,
         display_config: DisplayConfig,
         disc: Option<CdRom>,
         memory_card_1: Option<Vec<u8>>,
@@ -290,6 +291,18 @@ impl Ps1Emulator {
     #[must_use]
     pub fn cpu_pc(&self) -> u32 {
         self.cpu.pc()
+    }
+
+    /// # Errors
+    ///
+    /// Will return an error if the EXE does not appear to be a PS1 executable based on the header.
+    pub fn run_until_exe_sideloaded(&mut self, exe: &[u8]) -> Ps1Result<()> {
+        while self.cpu.pc() != 0x80030000 {
+            let _ =
+                self.tick(Ps1Inputs::default(), &mut NullOutput, &mut NullOutput, &mut NullOutput);
+        }
+
+        self.sideload_exe(exe)
     }
 
     /// # Errors
@@ -524,5 +537,36 @@ impl Ps1Emulator {
             tty_enabled: state.tty_enabled,
             tty_buffer: state.tty_buffer,
         }
+    }
+}
+
+struct NullOutput;
+
+impl Renderer for NullOutput {
+    type Err = String;
+
+    fn render_frame(
+        &mut self,
+        _command_buffers: impl Iterator<Item = CommandBuffer>,
+        _frame: &Texture,
+        _pixel_aspect_ratio: f64,
+    ) -> Result<(), Self::Err> {
+        Ok(())
+    }
+}
+
+impl AudioOutput for NullOutput {
+    type Err = String;
+
+    fn queue_samples(&mut self, _samples: &[(f64, f64)]) -> Result<(), Self::Err> {
+        Ok(())
+    }
+}
+
+impl SaveWriter for NullOutput {
+    type Err = String;
+
+    fn save_memory_card_1(&mut self, _card_data: &[u8]) -> Result<(), Self::Err> {
+        Ok(())
     }
 }

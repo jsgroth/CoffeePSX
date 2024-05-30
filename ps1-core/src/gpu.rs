@@ -20,7 +20,7 @@ use bincode::{Decode, Encode};
 use cfg_if::cfg_if;
 use proc_macros::SaveState;
 use std::ops::Add;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::gpu::rasterizer::Rasterizer;
 
@@ -55,8 +55,8 @@ impl Default for DisplayConfig {
 
 #[derive(Debug)]
 pub struct WgpuResources {
-    pub device: Rc<wgpu::Device>,
-    pub queue: Rc<wgpu::Queue>,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     pub queued_command_buffers: Vec<wgpu::CommandBuffer>,
     pub display_config: DisplayConfig,
 }
@@ -98,8 +98,8 @@ fn check_rasterizer_type(rasterizer_type: RasterizerType) -> RasterizerType {
 
 impl Gpu {
     pub fn new(
-        wgpu_device: Rc<wgpu::Device>,
-        wgpu_queue: Rc<wgpu::Queue>,
+        wgpu_device: Arc<wgpu::Device>,
+        wgpu_queue: Arc<wgpu::Queue>,
         mut display_config: DisplayConfig,
     ) -> Self {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
@@ -213,18 +213,18 @@ impl Gpu {
         }
     }
 
-    pub fn get_wgpu_resources(&self) -> (Rc<wgpu::Device>, Rc<wgpu::Queue>, DisplayConfig) {
+    pub fn get_wgpu_resources(&self) -> (Arc<wgpu::Device>, Arc<wgpu::Queue>, DisplayConfig) {
         (
-            Rc::clone(&self.wgpu_resources.device),
-            Rc::clone(&self.wgpu_resources.queue),
+            Arc::clone(&self.wgpu_resources.device),
+            Arc::clone(&self.wgpu_resources.queue),
             self.wgpu_resources.display_config,
         )
     }
 
     pub fn from_state(
         state: GpuState,
-        wgpu_device: Rc<wgpu::Device>,
-        wgpu_queue: Rc<wgpu::Queue>,
+        wgpu_device: Arc<wgpu::Device>,
+        wgpu_queue: Arc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
         let rasterizer = Rasterizer::from_state(

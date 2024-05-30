@@ -19,19 +19,15 @@ struct VertexOutput {
 
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var output: VertexOutput;
-    output.position = VERTICES[vertex_index];
-    output.texture_coords = TEXTURE_COORDS[vertex_index];
-
-    return output;
+    return VertexOutput(VERTICES[vertex_index], TEXTURE_COORDS[vertex_index]);
 }
 
 @group(0) @binding(0)
-var frame_texture: texture_2d<f32>;
-@group(0) @binding(1)
 var frame_sampler: sampler;
+@group(1) @binding(0)
+var frame: texture_2d<f32>;
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4f {
-    return textureSample(frame_texture, frame_sampler, input.texture_coords);
+    return textureSample(frame, frame_sampler, input.texture_coords);
 }

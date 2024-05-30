@@ -3,7 +3,7 @@ members = [
     "cdrom",
     "proc-macros",
     "ps1-core",
-    "ps1-runner",
+    "ps1-gui",
 ]
 resolver = "2"
 
@@ -15,15 +15,22 @@ cfg-if = "1"
 chd = "0.3"
 clap = "4"
 crc = "3"
+egui = "0.27"
+egui-wgpu = "0.27"
+egui-winit = "0.27"
 env_logger = "0.11"
 log = "0.4"
 pollster = "0.3"
 proc-bitfield = "0.4"
 rand = "0.8"
 regex = "1"
+rfd = "0.14"
 sdl2 = "0.36"
+serde = "1"
 thiserror = "1"
-wgpu = "0.20"
+toml = "0.8"
+wgpu = "0.19"
+windows = "0.56"
 winit = "0.29"
 
 [profile.dev-fast]

@@ -1,18 +1,12 @@
 # ps1-emu
 
-Work-in-progress attempt at a PlayStation emulator. Some games are fully playable, but some do not boot or have major issues, and the emulator is missing essential features like memory card management and proper handling of multi-disc games. Currently CLI-only, no GUI.
-
-## Goals
-
-My primary goals with this project are, in no particular order:
-* Learn how the PS1 worked and how games utilized the hardware by emulating it
-* Learn a bit about graphics programming via a practical application (emulating the PS1 GPU in hardware)
-* Make an emulator that I'd personally be willing to use, even if it's not the best out there
+Work-in-progress attempt at a PlayStation emulator. Some games are fully playable, but some do not boot or have major issues, and the emulator is missing essential features like memory card management and proper handling of multi-disc games.
 
 ## Status
 
 Implemented:
 * The R3000-compatible CPU
+  * Currently implemented using a pure interpreter; performance could be a lot better
 * The GTE
 * The GPU, with both software and hardware rasterizers
   * Hardware rasterizer uses wgpu with native extensions; should work on Vulkan, DirectX 12, and Metal (has only been tested on Vulkan)
@@ -20,20 +14,20 @@ Implemented:
 * The SPU
 * Most of the CD-ROM controller
 * The MDEC
+* The hardware timers
 * Digital controllers, P1 only
 * Memory card, port 1 only and shared across all games
-* The hardware timers
 
 Not yet implemented:
-* Accurate timing for memory writes (i.e. implementing the CPU write queue)
-  * Though it seems like maybe nothing depends on this?
+* Analog controllers and P2 inputs
+* Configurable inputs and gamepad support
+* More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
+* Additional graphical enhancements for the hardware rasterizer (e.g. sub-pixel vertex precision, texture filtering)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work but timings are quite inaccurate right now
 * Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio
   * There are possibly no games that use 8-bit CD-XA audio samples?
-* Analog controllers and P2 inputs
-* More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
-* A GUI
-* Additional graphical enhancements for the hardware rasterizer (e.g. sub-pixel vertex precision, texture filtering)
+* Accurate timing for memory writes (i.e. implementing the CPU write queue)
+  * It seems like maybe nothing depends on this?
 
 ## Software Rasterizer AVX2 Dependency
 
@@ -46,8 +40,13 @@ The hardware rasterizer has no such dependency.
 This project uses [SDL2](https://www.libsdl.org/) for audio.
 
 Linux (Debian-based):
-```
+```shell
 sudo apt install libsdl2-dev
+```
+
+MacOS:
+```shell
+brew install sdl2
 ```
 
 Windows:
@@ -55,28 +54,17 @@ Windows:
 
 ## Build & Run
 
-To run a BIOS standalone:
-
-```
-cargo run --release -- -b <bios_path>
-```
-
-To run a PS1 EXE (sideloaded after the BIOS is initialized):
-```
-cargo run --release -- -b <bios_path> -e <exe_path>
+To run the GUI:
+```shell
+cargo run --release
 ```
 
-To run a disc:
-```
-cargo run --release -- -b <bios_path> -d <disc_path>
+To run in headless mode (no GUI window, will exit when the emulator window is closed):
+```shell
+cargo run --release -- --headless -f /path/to/file.cue
 ```
 
-CUE/BIN and CHD formats are supported. For CUE/BIN, `disc_path` should be the path to the CUE file.
-
-Command line flags:
-* `--hardware`: Boot using the hardware rasterizer
-* `--no-vsync`: Disable VSync
-* `-t`: Enable TTY output, printed to stdout
+PS1 EXE files, CUE/BIN disc images, and CHD disc images are supported.
 
 ## Key Bindings
 
@@ -99,14 +87,10 @@ Hotkeys:
 * Pause: P key
 * Step to Next Frame: N key
 * Use hardware rasterizer: 0 key
-* Use AVX2 software rasterizer: - key (Minus)
-* Use naive slow software rasterizer: = key (Equals)
+* Use software rasterizer: - key (Minus)
 * Decrease resolution scale: [ key (Left square bracket)
 * Increase resolution scale: ] key (Right square bracket)
-* Toggle Auto-Prescaling: / key (Forward Slash)
-* Toggle Bilinear Interpolation: ; key (Semicolon)
 * Toggle VRAM view: ' key (Quote)
-* Toggle Vertical Overscan Cropping: . key (Period)
 * Exit: Esc key
 
 ## Screenshot
