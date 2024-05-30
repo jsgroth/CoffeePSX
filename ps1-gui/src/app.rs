@@ -520,7 +520,7 @@ impl App {
                 .column(Column::auto().at_most(500.0))
                 .column(Column::auto())
                 .column(Column::remainder())
-                .header(30.0, |mut row| {
+                .header(25.0, |mut row| {
                     row.col(|ui| {
                         ui.vertical_centered(|ui| {
                             ui.heading("Name");
