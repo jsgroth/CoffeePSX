@@ -1,6 +1,6 @@
 use crate::config::{AppConfig, Rasterizer, VideoConfig};
 use crate::emuthread::{EmulationThreadHandle, EmulatorThreadCommand, Ps1Button};
-use crate::{FileType, UserEvent};
+use crate::{OpenFileType, UserEvent};
 use anyhow::anyhow;
 use std::cmp;
 use std::ffi::OsStr;
@@ -157,7 +157,7 @@ impl EmulatorState {
         app_config: &mut AppConfig,
     ) -> anyhow::Result<()> {
         match event {
-            Event::UserEvent(UserEvent::FileOpened(FileType::Open, Some(file_path))) => {
+            Event::UserEvent(UserEvent::FileOpened(OpenFileType::Open, Some(file_path))) => {
                 return self.start_emulator(Some(file_path), elwt, app_config);
             }
             Event::UserEvent(UserEvent::RunBios) => {
@@ -259,6 +259,11 @@ impl EmulatorState {
                             Some(Hotkey::StepFrame) => {
                                 emu_thread.send_command(EmulatorThreadCommand::StepFrame);
                             }
+                            Some(Hotkey::FastForward) => {
+                                emu_thread.send_command(EmulatorThreadCommand::FastForward {
+                                    enabled: state == ElementState::Pressed,
+                                });
+                            }
                             None => {}
                         }
                     }
@@ -342,6 +347,7 @@ enum Hotkey {
     LoadState,
     Pause,
     StepFrame,
+    FastForward,
 }
 
 fn check_hotkey(key: PhysicalKey, state: ElementState) -> Option<Hotkey> {
@@ -360,6 +366,7 @@ fn check_hotkey(key: PhysicalKey, state: ElementState) -> Option<Hotkey> {
         KeyCode::F6 if pressed => Some(Hotkey::LoadState),
         KeyCode::KeyP if pressed => Some(Hotkey::Pause),
         KeyCode::KeyN if pressed => Some(Hotkey::StepFrame),
+        KeyCode::Tab => Some(Hotkey::FastForward),
         _ => None,
     }
 }

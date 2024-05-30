@@ -53,6 +53,13 @@ impl QueueAudioOutput {
     pub fn samples_len(&self) -> usize {
         self.audio_queue.lock().unwrap().len()
     }
+
+    pub fn truncate_front(&self, len: usize) {
+        let mut audio_queue = self.audio_queue.lock().unwrap();
+        while audio_queue.len() > len {
+            audio_queue.pop_front();
+        }
+    }
 }
 
 impl AudioOutput for QueueAudioOutput {

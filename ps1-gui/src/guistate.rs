@@ -1,6 +1,6 @@
 use crate::app::App;
 use crate::config::AppConfig;
-use crate::{FileType, UserEvent};
+use crate::{OpenFileType, UserEvent};
 use anyhow::anyhow;
 use egui::ViewportId;
 use egui_wgpu::ScreenDescriptor;
@@ -287,13 +287,23 @@ impl GuiState {
 }
 
 fn async_open_file_dialog(
-    file_type: FileType,
+    file_type: OpenFileType,
     initial_dir: Option<&PathBuf>,
     proxy: &EventLoopProxy<UserEvent>,
 ) {
     let (name, extensions): (_, &[_]) = match file_type {
-        FileType::Open => ("PS1", &["cue", "chd", "exe"]),
-        FileType::BiosPath => ("BIOS", &["bin", "BIN"]),
+        OpenFileType::Open => ("PS1", &["cue", "chd", "exe"]),
+        OpenFileType::BiosPath => ("BIOS", &["bin", "BIN"]),
+        OpenFileType::SearchDir => {
+            let proxy = proxy.clone();
+            thread::spawn(move || {
+                let search_dir = FileDialog::new().pick_folder();
+                proxy
+                    .send_event(UserEvent::FileOpened(OpenFileType::SearchDir, search_dir))
+                    .unwrap();
+            });
+            return;
+        }
     };
 
     let mut file_dialog = FileDialog::new().add_filter(name, extensions);

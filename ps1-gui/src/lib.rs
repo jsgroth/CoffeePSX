@@ -7,15 +7,16 @@ pub mod emuthread;
 pub mod guistate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileType {
+pub enum OpenFileType {
     Open,
     BiosPath,
+    SearchDir,
 }
 
 #[derive(Debug)]
 pub enum UserEvent {
-    OpenFile { file_type: FileType, initial_dir: Option<PathBuf> },
-    FileOpened(FileType, Option<PathBuf>),
+    OpenFile { file_type: OpenFileType, initial_dir: Option<PathBuf> },
+    FileOpened(OpenFileType, Option<PathBuf>),
     RunBios,
     AppConfigChanged,
     Close,

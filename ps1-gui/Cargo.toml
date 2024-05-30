@@ -12,6 +12,7 @@ bincode = { workspace = true }
 cfg-if = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 egui = { workspace = true }
+egui_extras = { workspace = true }
 egui-wgpu = { workspace = true }
 egui-winit = { workspace = true }
 env_logger = { workspace = true }

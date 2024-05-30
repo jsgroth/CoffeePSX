@@ -4,7 +4,7 @@ use ps1_gui::app::App;
 use ps1_gui::config::AppConfig;
 use ps1_gui::emustate::EmulatorState;
 use ps1_gui::guistate::GuiState;
-use ps1_gui::{FileType, UserEvent};
+use ps1_gui::{OpenFileType, UserEvent};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use winit::event::Event;
@@ -65,7 +65,9 @@ fn run_headless(
 ) -> anyhow::Result<()> {
     let mut emu_state = EmulatorState::new();
     let first_event = match path {
-        Some(path) => Event::UserEvent(UserEvent::FileOpened(FileType::Open, Some(path.clone()))),
+        Some(path) => {
+            Event::UserEvent(UserEvent::FileOpened(OpenFileType::Open, Some(path.clone())))
+        }
         None => Event::UserEvent(UserEvent::RunBios),
     };
     emu_state.handle_event(&first_event, &event_loop, config)?;

@@ -56,6 +56,7 @@ pub enum EmulatorThreadCommand {
     LoadState,
     TogglePause,
     StepFrame,
+    FastForward { enabled: bool },
 }
 
 #[derive(Debug)]
@@ -78,6 +79,10 @@ impl<const N: usize> FixedSizeDeque<N> {
     #[must_use]
     fn pop_front(&mut self) -> Option<TextureWithAspectRatio> {
         self.0.pop_front()
+    }
+
+    fn clear(&mut self) {
+        self.0.clear();
     }
 }
 
@@ -292,10 +297,12 @@ fn spawn_emu_thread(
         let mut inputs = Ps1Inputs::default();
         let mut paused = false;
         let mut step_frame = false;
+        let mut fast_forward = false;
 
         loop {
             // TODO configurable threshold
-            if (!paused || step_frame) && (audio_output.samples_len() as u32) < audio_sync_threshold
+            if (!paused || step_frame)
+                && (fast_forward || (audio_output.samples_len() as u32) < audio_sync_threshold)
             {
                 if let Err(err) =
                     process_next_frame(inputs, &mut emulator, &mut renderer, &mut audio_output)
@@ -304,6 +311,10 @@ fn spawn_emu_thread(
                 }
 
                 step_frame = false;
+            }
+
+            if fast_forward && (audio_output.samples_len() as u32) >= 2 * audio_sync_threshold {
+                audio_output.truncate_front(audio_sync_threshold as usize);
             }
 
             while let Ok(command) = command_receiver.try_recv() {
@@ -339,6 +350,15 @@ fn spawn_emu_thread(
                     }
                     EmulatorThreadCommand::StepFrame => {
                         step_frame = true;
+                    }
+                    EmulatorThreadCommand::FastForward { enabled } => {
+                        fast_forward = enabled;
+
+                        // Clear swap chain when fast forward ends to prevent a temporary input
+                        // latency increase due to buffered frames
+                        if !fast_forward {
+                            renderer.clear_swap_chain();
+                        }
                     }
                 }
             }

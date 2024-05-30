@@ -57,6 +57,10 @@ impl SwapChainRenderer {
             }
         }
     }
+
+    pub fn clear_swap_chain(&self) {
+        self.swap_chain.rendered_frames.lock().unwrap().clear();
+    }
 }
 
 impl Renderer for SwapChainRenderer {

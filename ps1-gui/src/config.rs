@@ -161,6 +161,10 @@ impl Default for AudioConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathsConfig {
     pub bios: Option<PathBuf>,
+    #[serde(default)]
+    pub search: Vec<PathBuf>,
+    #[serde(default = "true_fn")]
+    pub search_recursively: bool,
 }
 
 impl Default for PathsConfig {

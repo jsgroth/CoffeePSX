@@ -1,11 +1,15 @@
 use crate::config::{AppConfig, FilterMode, Rasterizer, VSyncMode, WgpuBackend};
-use crate::{FileType, UserEvent};
+use crate::{OpenFileType, UserEvent};
 use egui::{
-    Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Modifiers, Slider, TextEdit,
-    TopBottomPanel, Window,
+    Align, Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Layout, Modifiers,
+    Slider, TextEdit, TopBottomPanel, Vec2, Window,
 };
+use egui_extras::{Column, TableBuilder};
+use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use winit::event_loop::EventLoopProxy;
 
 struct AppState {
@@ -17,11 +21,17 @@ struct AppState {
     audio_sync_threshold_invalid: bool,
     audio_device_queue_size_text: String,
     audio_device_queue_size_invalid: bool,
+    file_list: Rc<[FileMetadata]>,
     last_serialized_config: AppConfig,
+    filter_by_title: String,
+    filter_by_title_lower: String,
+    last_filter_by_title: String,
 }
 
 impl AppState {
     fn new(config: &AppConfig) -> Self {
+        let file_list = do_file_search(&config.paths.search, config.paths.search_recursively, "");
+
         Self {
             video_window_open: false,
             graphics_window_open: false,
@@ -31,7 +41,11 @@ impl AppState {
             audio_sync_threshold_invalid: false,
             audio_device_queue_size_text: config.audio.device_queue_size.to_string(),
             audio_device_queue_size_invalid: false,
+            file_list: file_list.into(),
             last_serialized_config: config.clone(),
+            filter_by_title: String::new(),
+            filter_by_title_lower: String::new(),
+            last_filter_by_title: String::new(),
         }
     }
 }
@@ -61,8 +75,11 @@ impl App {
     #[allow(clippy::single_match)]
     pub fn handle_event(&mut self, event: &UserEvent) {
         match event {
-            UserEvent::FileOpened(FileType::BiosPath, Some(path)) => {
+            UserEvent::FileOpened(OpenFileType::BiosPath, Some(path)) => {
                 self.config.paths.bios = Some(path.clone());
+            }
+            UserEvent::FileOpened(OpenFileType::SearchDir, Some(path)) => {
+                self.config.paths.search.push(path.clone());
             }
             _ => {}
         }
@@ -71,12 +88,7 @@ impl App {
     #[allow(clippy::missing_panics_doc)]
     pub fn render(&mut self, ctx: &Context, proxy: &EventLoopProxy<UserEvent>) {
         self.render_menu(ctx, proxy);
-
-        CentralPanel::default().show(ctx, |ui| {
-            ui.centered_and_justified(|ui| {
-                ui.label("TODO put something here");
-            });
-        });
+        self.render_central_panel(ctx, proxy);
 
         if self.state.video_window_open {
             self.render_video_window(ctx);
@@ -101,17 +113,34 @@ impl App {
                     self.config_path.display()
                 );
             }
-            self.state.last_serialized_config = self.config.clone();
+            self.state.last_serialized_config.clone_from(&self.config);
+
+            self.refresh_file_list();
 
             proxy.send_event(UserEvent::AppConfigChanged).unwrap();
+        } else if self.state.filter_by_title != self.state.last_filter_by_title {
+            self.refresh_file_list();
+            self.state.last_filter_by_title.clone_from(&self.state.filter_by_title);
         }
+    }
+
+    fn refresh_file_list(&mut self) {
+        self.state.file_list = do_file_search(
+            &self.config.paths.search,
+            self.config.paths.search_recursively,
+            &self.state.filter_by_title_lower,
+        )
+        .into();
     }
 
     fn render_menu(&mut self, ctx: &Context, proxy: &EventLoopProxy<UserEvent>) {
         let open_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::O);
         if ctx.input_mut(|input| input.consume_shortcut(&open_shortcut)) {
             proxy
-                .send_event(UserEvent::OpenFile { file_type: FileType::Open, initial_dir: None })
+                .send_event(UserEvent::OpenFile {
+                    file_type: OpenFileType::Open,
+                    initial_dir: None,
+                })
                 .unwrap();
         }
 
@@ -128,7 +157,7 @@ impl App {
                     if ui.add(open_button).clicked() {
                         proxy
                             .send_event(UserEvent::OpenFile {
-                                file_type: FileType::Open,
+                                file_type: OpenFileType::Open,
                                 initial_dir: None,
                             })
                             .unwrap();
@@ -302,7 +331,7 @@ impl App {
                     &mut self.config.video.async_swap_chain_rendering,
                     "Asynchronous rendering",
                 )
-                .on_hover_text("Can improve performance but can also cause skipped frames and increased input latency")
+                .on_hover_text("Should improve performance, but can cause skipped frames and input latency if GPU cannot keep up")
                 .on_disabled_hover_text(disabled_hover_text);
             });
     }
@@ -400,7 +429,7 @@ impl App {
 
                         proxy
                             .send_event(UserEvent::OpenFile {
-                                file_type: FileType::BiosPath,
+                                file_type: OpenFileType::BiosPath,
                                 initial_dir,
                             })
                             .unwrap();
@@ -408,7 +437,134 @@ impl App {
 
                     ui.label("BIOS path");
                 });
+
+                ui.group(|ui| {
+                    ui.heading("Search paths");
+
+                    for path in self.config.paths.search.clone() {
+                        ui.horizontal(|ui| {
+                            ui.label(path.display().to_string());
+
+                            if ui.button("Remove").clicked() {
+                                self.config.paths.search.retain(|p| p != &path);
+                            }
+                        });
+                    }
+
+                    if ui.button("Add").clicked() {
+                        proxy
+                            .send_event(UserEvent::OpenFile {
+                                file_type: OpenFileType::SearchDir,
+                                initial_dir: None,
+                            })
+                            .unwrap();
+                    }
+                });
+
+                ui.checkbox(&mut self.config.paths.search_recursively, "Search recursively");
             });
+    }
+
+    fn render_central_panel(&mut self, ctx: &Context, proxy: &EventLoopProxy<UserEvent>) {
+        CentralPanel::default().show(ctx, |ui| {
+            let bios_path_configured = self.config.paths.bios.is_some();
+            let search_paths_configured = !self.config.paths.search.is_empty();
+
+            if !bios_path_configured || !search_paths_configured {
+                ui.centered_and_justified(|ui| {
+                    let label = if !bios_path_configured && !search_paths_configured {
+                        "Configure BIOS path and search path(s)"
+                    } else if !bios_path_configured {
+                        "Configure BIOS path"
+                    } else {
+                        "Configure search path(s)"
+                    };
+                    if ui.button(label).clicked() {
+                        self.state.paths_window_open = true;
+                    }
+                });
+
+                return;
+            }
+
+            ui.horizontal(|ui| {
+                if ui
+                    .add(
+                        TextEdit::singleline(&mut self.state.filter_by_title)
+                            .desired_width(500.0)
+                            .hint_text("Filter by name"),
+                    )
+                    .changed()
+                {
+                    self.state.filter_by_title_lower = self.state.filter_by_title.to_lowercase();
+                }
+
+                if ui.button("Clear").clicked() {
+                    self.state.filter_by_title.clear();
+                    self.state.filter_by_title_lower.clear();
+                }
+            });
+
+            ui.add_space(15.0);
+
+            TableBuilder::new(ui)
+                .auto_shrink([false; 2])
+                .striped(true)
+                .max_scroll_height(2000.0)
+                .cell_layout(Layout::left_to_right(Align::Center))
+                .column(Column::auto().at_most(500.0))
+                .column(Column::auto())
+                .column(Column::remainder())
+                .header(30.0, |mut row| {
+                    row.col(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.heading("Name");
+                        });
+                    });
+
+                    row.col(|ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.heading("File Type");
+                        });
+                    });
+
+                    // Blank column to make stripes extend to the right
+                    row.col(|_ui| {});
+                })
+                .body(|mut body| {
+                    let file_list = Rc::clone(&self.state.file_list);
+                    for metadata in file_list.as_ref() {
+                        body.row(30.0, |mut row| {
+                            row.col(|ui| {
+                                if ui
+                                    .add(
+                                        Button::new(&metadata.file_name_no_ext)
+                                            .min_size(Vec2::new(500.0, 25.0))
+                                            .wrap(true),
+                                    )
+                                    .clicked()
+                                {
+                                    proxy
+                                        .send_event(UserEvent::FileOpened(
+                                            OpenFileType::Open,
+                                            Some(metadata.full_path.clone()),
+                                        ))
+                                        .unwrap();
+                                }
+                            });
+
+                            row.col(|ui| {
+                                ui.centered_and_justified(|ui| {
+                                    ui.label(metadata.extension.to_uppercase());
+                                });
+                            });
+
+                            // Blank column to make stripes extend to the right
+                            row.col(|_ui| {});
+                        });
+                    }
+                });
+        });
     }
 
     fn serialize_config(&mut self) -> anyhow::Result<()> {
@@ -432,4 +588,73 @@ fn read_config<P: AsRef<Path>>(path: P) -> anyhow::Result<AppConfig> {
     let config: AppConfig = toml::from_str(&config_str)?;
 
     Ok(config)
+}
+
+#[derive(Debug, Clone)]
+struct FileMetadata {
+    file_name_no_ext: String,
+    extension: String,
+    full_path: PathBuf,
+}
+
+fn do_file_search(
+    search_dirs: &[PathBuf],
+    recursive: bool,
+    filter_by_title: &str,
+) -> Vec<FileMetadata> {
+    let mut visited_dirs = HashSet::new();
+    let mut files = Vec::new();
+    for search_dir in search_dirs {
+        do_file_search_inner(search_dir, recursive, filter_by_title, &mut visited_dirs, &mut files);
+    }
+
+    files.sort_by(|a, b| a.file_name_no_ext.cmp(&b.file_name_no_ext));
+
+    files
+}
+
+fn do_file_search_inner(
+    dir: &Path,
+    recursive: bool,
+    filter_by_title: &str,
+    visited_dirs: &mut HashSet<PathBuf>,
+    out: &mut Vec<FileMetadata>,
+) {
+    if !visited_dirs.insert(dir.into()) {
+        return;
+    }
+
+    let Ok(read_dir) = fs::read_dir(dir) else { return };
+    for dir_entry in read_dir {
+        let Ok(dir_entry) = dir_entry else { continue };
+        let Ok(file_type) = dir_entry.file_type() else { continue };
+
+        let entry_path = dir_entry.path();
+        let path_no_ext = entry_path.with_extension("");
+        let Some(file_name_no_ext) = path_no_ext.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+
+        if !filter_by_title.is_empty() && !file_name_no_ext.to_lowercase().contains(filter_by_title)
+        {
+            continue;
+        }
+
+        if file_type.is_dir() {
+            if recursive {
+                do_file_search_inner(&entry_path, true, filter_by_title, visited_dirs, out);
+            }
+            continue;
+        }
+
+        let Some(extension) = entry_path.extension().and_then(OsStr::to_str) else { continue };
+        if matches!(extension, "exe" | "cue" | "chd") {
+            // TODO check that EXE is a PS1 executable
+            out.push(FileMetadata {
+                file_name_no_ext: file_name_no_ext.into(),
+                extension: extension.into(),
+                full_path: entry_path,
+            });
+        }
+    }
 }
