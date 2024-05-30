@@ -46,29 +46,6 @@ pub enum Rasterizer {
     Hardware,
 }
 
-impl Rasterizer {
-    #[must_use]
-    pub fn to_rasterizer_type(self) -> RasterizerType {
-        cfg_if! {
-            if #[cfg(target_arch = "x86_64")] {
-                match self {
-                    Self::Software => if is_x86_feature_detected!("avx2") {
-                        RasterizerType::SimdSoftware
-                    } else {
-                        RasterizerType::NaiveSoftware
-                    },
-                    Self::Hardware => RasterizerType::WgpuHardware,
-                }
-            } else {
-                match self {
-                    Self::Software => RasterizerType::NaiveSoftware,
-                    Self::Hardware => RasterizerType::WgpuHardware,
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum WgpuBackend {
     #[default]
@@ -106,6 +83,8 @@ pub struct VideoConfig {
     pub window_height: u32,
     #[serde(default)]
     pub rasterizer: Rasterizer,
+    #[serde(default = "true_fn")]
+    pub avx2_software_rasterizer: bool,
     #[serde(default)]
     pub wgpu_backend: WgpuBackend,
     #[serde(default = "default_resolution_scale")]
@@ -133,6 +112,29 @@ fn default_window_height() -> u32 {
 impl Default for VideoConfig {
     fn default() -> Self {
         toml::from_str("").unwrap()
+    }
+}
+
+impl VideoConfig {
+    #[must_use]
+    pub fn rasterizer_type(&self) -> RasterizerType {
+        let use_avx2_software = self.avx2_software_rasterizer && supports_avx2();
+        match (self.rasterizer, use_avx2_software) {
+            (Rasterizer::Software, false) => RasterizerType::NaiveSoftware,
+            (Rasterizer::Software, true) => RasterizerType::SimdSoftware,
+            (Rasterizer::Hardware, _) => RasterizerType::WgpuHardware,
+        }
+    }
+}
+
+#[must_use]
+pub fn supports_avx2() -> bool {
+    cfg_if! {
+        if #[cfg(target_arch = "x86_64")] {
+            is_x86_feature_detected!("avx2")
+        } else {
+            false
+        }
     }
 }
 

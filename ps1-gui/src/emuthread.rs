@@ -142,7 +142,7 @@ impl EmulationThreadHandle {
         let display_config = DisplayConfig {
             crop_vertical_overscan: config.video.crop_vertical_overscan,
             dump_vram: config.video.vram_display,
-            rasterizer_type: config.video.rasterizer.to_rasterizer_type(),
+            rasterizer_type: config.video.rasterizer_type(),
             hardware_resolution_scale: config.video.hardware_resolution_scale,
         };
 
@@ -330,7 +330,7 @@ fn spawn_emu_thread(
                         emulator.update_display_config(DisplayConfig {
                             crop_vertical_overscan: config.video.crop_vertical_overscan,
                             dump_vram: config.video.vram_display,
-                            rasterizer_type: config.video.rasterizer.to_rasterizer_type(),
+                            rasterizer_type: config.video.rasterizer_type(),
                             hardware_resolution_scale: config.video.hardware_resolution_scale,
                         });
                         audio_sync_threshold = config.audio.sync_threshold;

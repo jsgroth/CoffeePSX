@@ -1,5 +1,5 @@
 use crate::config::{AppConfig, FilterMode, Rasterizer, VSyncMode, WgpuBackend};
-use crate::{OpenFileType, UserEvent};
+use crate::{config, OpenFileType, UserEvent};
 use egui::{
     Align, Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Layout, Modifiers,
     Slider, TextEdit, TopBottomPanel, Vec2, Window,
@@ -333,6 +333,11 @@ impl App {
                 )
                 .on_hover_text("Should improve performance, but can cause skipped frames and input latency if GPU cannot keep up")
                 .on_disabled_hover_text(disabled_hover_text);
+
+                ui.add_enabled_ui(!is_hw_rasterizer && config::supports_avx2(), |ui| {
+                    ui.checkbox(&mut self.config.video.avx2_software_rasterizer, "Use AVX2 software rasterizer")
+                        .on_hover_text("Significantly improves software rasterizer performance if AVX2 is supported");
+                });
             });
     }
 
