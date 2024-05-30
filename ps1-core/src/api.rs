@@ -24,6 +24,7 @@ use thiserror::Error;
 use wgpu::{CommandBuffer, Texture};
 
 pub use crate::gpu::DisplayConfig;
+use crate::sio::memcard::MemoryCard;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum ColorDepthBits {
@@ -103,6 +104,7 @@ pub enum TickError<RErr, AErr, SErr> {
 
 pub struct UnserializedFields {
     disc: Option<CdRom>,
+    memory_card_1: MemoryCard,
     wgpu_device: Arc<wgpu::Device>,
     wgpu_queue: Arc<wgpu::Queue>,
     display_config: DisplayConfig,
@@ -506,13 +508,20 @@ impl Ps1Emulator {
 
         UnserializedFields {
             disc: self.cd_controller.take_disc(),
+            memory_card_1: self.sio0.memory_card_1().clone(),
             wgpu_device,
             wgpu_queue,
             display_config,
         }
     }
 
-    pub fn from_state(state: Ps1EmulatorState, unserialized: UnserializedFields) -> Self {
+    pub fn from_state(mut state: Ps1EmulatorState, unserialized: UnserializedFields) -> Self {
+        // Don't load memory cards from save states
+        *state.sio0.memory_card_1() = unserialized.memory_card_1;
+
+        // Important to make the game re-read the memory card header after loading state
+        state.sio0.memory_card_1().clear_written_since_load();
+
         Self {
             cpu: state.cpu,
             gpu: Gpu::from_state(

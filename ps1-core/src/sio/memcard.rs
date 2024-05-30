@@ -39,6 +39,10 @@ impl MemoryCard {
         dirty
     }
 
+    pub fn clear_written_since_load(&mut self) {
+        self.written_since_load = false;
+    }
+
     pub fn data(&self) -> &MemoryCardData {
         &self.data
     }
