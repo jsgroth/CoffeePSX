@@ -319,11 +319,11 @@ impl MemoryControl {
     pub fn read_register(&self, address: u32) -> u32 {
         match address & 0xFFFF {
             0x1000 => {
-                log::warn!("Unimplemented Expansion 1 base address read, returning $1F000000");
+                log::debug!("Unimplemented Expansion 1 base address read, returning $1F000000");
                 0x1F000000
             }
             0x1004 => {
-                log::warn!("Unimplemented Expansion 2 base address read, returning $1F802000");
+                log::debug!("Unimplemented Expansion 2 base address read, returning $1F802000");
                 0x1F802000
             }
             0x1008 => self.expansion_1.into(),
@@ -340,10 +340,10 @@ impl MemoryControl {
     pub fn write_register(&mut self, address: u32, value: u32) {
         match address & 0xFFFF {
             0x1000 => {
-                log::warn!("Unimplemented Expansion 1 base address write: {value:08X}");
+                log::debug!("Unimplemented Expansion 1 base address write: {value:08X}");
             }
             0x1004 => {
-                log::warn!("Unimplemented Expansion 2 base address write: {value:08X}");
+                log::debug!("Unimplemented Expansion 2 base address write: {value:08X}");
             }
             0x1008 => {
                 self.expansion_1 = value.into();

@@ -55,7 +55,7 @@ impl<'a> Bus<'a> {
         memory_map!(address, [
             main_ram => self.memory.read_main_ram_u8(address).into(),
             expansion_1 => {
-                log::warn!("Unhandled 8-bit expansion 1 read {address:08X}");
+                log::debug!("Unhandled 8-bit expansion 1 read {address:08X}");
                 0
             },
             scratchpad => self.memory.read_scratchpad_u8(address).into(),
@@ -69,7 +69,7 @@ impl<'a> Bus<'a> {
         memory_map!(address, [
             main_ram => self.memory.read_main_ram_u16(address).into(),
             expansion_1 => {
-                log::warn!("Unhandled 16-bit expansion 1 read {address:08X}");
+                log::debug!("Unhandled 16-bit expansion 1 read {address:08X}");
                 0
             },
             scratchpad => self.memory.read_scratchpad_u16(address).into(),
@@ -83,7 +83,7 @@ impl<'a> Bus<'a> {
         memory_map!(address, [
             main_ram => self.memory.read_main_ram_u32(address),
             expansion_1 => {
-                log::warn!("Unhandled 32-bit expansion 1 read {address:08X}");
+                log::debug!("Unhandled 32-bit expansion 1 read {address:08X}");
                 0
             },
             scratchpad => self.memory.read_scratchpad_u32(address),
@@ -96,10 +96,10 @@ impl<'a> Bus<'a> {
     pub fn write_u8(&mut self, address: u32, value: u32) {
         memory_map!(address, [
             main_ram => self.memory.write_main_ram_u8(address, value as u8),
-            expansion_1 => unimplemented_register_write("Expansion Device 1", address, value, OpSize::Byte),
+            expansion_1 => unimplemented_expansion_write("Expansion Device 1", address, value, OpSize::Byte),
             scratchpad => self.memory.write_scratchpad_u8(address, value as u8),
             io_registers => self.write_io_register(address, value, OpSize::Byte),
-            expansion_2 => unimplemented_register_write("Expansion Device 2", address, value, OpSize::Byte),
+            expansion_2 => unimplemented_expansion_write("Expansion Device 2", address, value, OpSize::Byte),
             _ => todo!("8-bit write {address:08X} {value:08X}")
         ]);
     }
@@ -107,10 +107,10 @@ impl<'a> Bus<'a> {
     pub fn write_u16(&mut self, address: u32, value: u32) {
         memory_map!(address, [
             main_ram => self.memory.write_main_ram_u16(address, value as u16),
-            expansion_1 => unimplemented_register_write("Expansion Device 1", address, value, OpSize::HalfWord),
+            expansion_1 => unimplemented_expansion_write("Expansion Device 1", address, value, OpSize::HalfWord),
             scratchpad => self.memory.write_scratchpad_u16(address, value as u16),
             io_registers => self.write_io_register(address, value, OpSize::HalfWord),
-            expansion_2 => unimplemented_register_write("Expansion Device 2", address, value, OpSize::HalfWord),
+            expansion_2 => unimplemented_expansion_write("Expansion Device 2", address, value, OpSize::HalfWord),
             _ => todo!("16-bit write {address:08X} {value:08X}")
         ]);
     }
@@ -118,10 +118,10 @@ impl<'a> Bus<'a> {
     pub fn write_u32(&mut self, address: u32, value: u32) {
         memory_map!(address, [
             main_ram => self.memory.write_main_ram_u32(address, value),
-            expansion_1 => unimplemented_register_write("Expansion Device 1", address, value, OpSize::Word),
+            expansion_1 => unimplemented_expansion_write("Expansion Device 1", address, value, OpSize::Word),
             scratchpad => self.memory.write_scratchpad_u32(address, value),
             io_registers => self.write_io_register(address, value, OpSize::Word),
-            expansion_2 => unimplemented_register_write("Expansion Device 2", address, value, OpSize::Word),
+            expansion_2 => unimplemented_expansion_write("Expansion Device 2", address, value, OpSize::Word),
             _ => todo!("32-bit write {address:08X} {value:08X}")
         ]);
     }
@@ -248,6 +248,6 @@ fn read_cd_controller(cd_controller: &mut CdController, address: u32, size: OpSi
     }
 }
 
-fn unimplemented_register_write(name: &str, address: u32, value: u32, size: OpSize) {
-    log::warn!("Unimplemented {name} write: {address:08X} {value:08X} {size:?}");
+fn unimplemented_expansion_write(name: &str, address: u32, value: u32, size: OpSize) {
+    log::debug!("Unimplemented {name} write: {address:08X} {value:08X} {size:?}");
 }

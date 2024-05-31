@@ -534,8 +534,8 @@ impl Spu {
             }
             0x1DB0 => self.volume.write_cd_l(value),
             0x1DB2 => self.volume.write_cd_r(value),
-            0x1DB4 => log::warn!("Unimplemented external audio volume L write: {value:04X}"),
-            0x1DB6 => log::warn!("Unimplemented external audio volume R write: {value:04X}"),
+            0x1DB4 => log::debug!("Unimplemented external audio volume L write: {value:04X}"),
+            0x1DB6 => log::debug!("Unimplemented external audio volume R write: {value:04X}"),
             0x1DC0..=0x1DFF => self.reverb.write_register(address, value),
             _ => todo!("SPU write {address:08X} {value:08X}"),
         }
