@@ -290,7 +290,7 @@ impl Spu {
         &mut self,
         cd_controller: &CdController,
         interrupt_registers: &mut InterruptRegisters,
-    ) -> (f64, f64) {
+    ) -> (i16, i16) {
         self.volume.main_l.clock();
         self.volume.main_r.clock();
         self.noise.clock();
@@ -345,10 +345,6 @@ impl Spu {
         // Mix in CD audio
         let sample_l = (i32::from(sample_l) + i32::from(cd_l)).clamp_to_i16();
         let sample_r = (i32::from(sample_r) + i32::from(cd_r)).clamp_to_i16();
-
-        // Convert from i16 to f64
-        let sample_l = f64::from(sample_l) / -f64::from(i16::MIN);
-        let sample_r = f64::from(sample_r) / -f64::from(i16::MIN);
 
         self.write_to_capture_buffers(raw_cd_l, raw_cd_r);
 

@@ -68,7 +68,7 @@ pub trait AudioOutput {
     /// # Errors
     ///
     /// Should propagate any error encountered while queueing the samples.
-    fn queue_samples(&mut self, samples: &[(f64, f64)]) -> Result<(), Self::Err>;
+    fn queue_samples(&mut self, samples: &[(i16, i16)]) -> Result<(), Self::Err>;
 }
 
 pub trait SaveWriter {
@@ -116,7 +116,7 @@ pub struct Ps1Emulator {
     #[save_state(to = GpuState)]
     gpu: Gpu,
     spu: Spu,
-    audio_buffer: Vec<(f64, f64)>,
+    audio_buffer: Vec<(i16, i16)>,
     #[save_state(to = CdControllerState)]
     cd_controller: CdController,
     mdec: MacroblockDecoder,
@@ -567,7 +567,7 @@ impl Renderer for NullOutput {
 impl AudioOutput for NullOutput {
     type Err = String;
 
-    fn queue_samples(&mut self, _samples: &[(f64, f64)]) -> Result<(), Self::Err> {
+    fn queue_samples(&mut self, _samples: &[(i16, i16)]) -> Result<(), Self::Err> {
         Ok(())
     }
 }
