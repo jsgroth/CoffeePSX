@@ -34,7 +34,7 @@ const VRAM_LEN_HALFWORDS: usize = 1024 * 512;
 type Vram = BoxedArray<u16, VRAM_LEN_HALFWORDS>;
 type VramArray = [u16; VRAM_LEN_HALFWORDS];
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct DisplayConfig {
     pub crop_vertical_overscan: bool,
     pub dump_vram: bool,
@@ -213,12 +213,8 @@ impl Gpu {
         }
     }
 
-    pub fn get_wgpu_resources(&self) -> (Arc<wgpu::Device>, Arc<wgpu::Queue>, DisplayConfig) {
-        (
-            Arc::clone(&self.wgpu_resources.device),
-            Arc::clone(&self.wgpu_resources.queue),
-            self.wgpu_resources.display_config,
-        )
+    pub fn get_wgpu_resources(&self) -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
+        (Arc::clone(&self.wgpu_resources.device), Arc::clone(&self.wgpu_resources.queue))
     }
 
     pub fn from_state(

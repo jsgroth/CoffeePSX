@@ -6,8 +6,7 @@ use anyhow::{anyhow, Context};
 use cdrom::reader::{CdRom, CdRomFileFormat};
 use cfg_if::cfg_if;
 use ps1_core::api::{
-    DisplayConfig, Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, SaveWriter, TickEffect,
-    TickError,
+    Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, SaveWriter, TickEffect, TickError,
 };
 use ps1_core::input::Ps1Inputs;
 use regex::Regex;
@@ -138,17 +137,12 @@ impl EmulationThreadHandle {
         let bios = fs::read(bios_path)
             .with_context(|| format!("Failed to read BIOS from '{}'", bios_path.display()))?;
 
-        let display_config = DisplayConfig {
-            crop_vertical_overscan: config.video.crop_vertical_overscan,
-            dump_vram: config.video.vram_display,
-            rasterizer_type: config.video.rasterizer_type(),
-            hardware_resolution_scale: config.video.hardware_resolution_scale,
-        };
+        let emulator_config = config.to_emulator_config();
 
         let save_writer = FsSaveWriter::from_path(file_path.unwrap_or(&PathBuf::from("global")))?;
 
         let mut builder = Ps1EmulatorBuilder::new(bios, Arc::clone(&device), Arc::clone(&queue))
-            .with_display_config(display_config);
+            .with_config(emulator_config);
 
         if let Ok(card_data) = fs::read(&save_writer.card_1_path) {
             builder = builder.with_memory_card_1(card_data);
@@ -333,12 +327,7 @@ fn spawn_emu_thread(
                         update_digital_inputs(&mut inputs, button, pressed);
                     }
                     EmulatorThreadCommand::UpdateConfig(config) => {
-                        emulator.update_display_config(DisplayConfig {
-                            crop_vertical_overscan: config.video.crop_vertical_overscan,
-                            dump_vram: config.video.vram_display,
-                            rasterizer_type: config.video.rasterizer_type(),
-                            hardware_resolution_scale: config.video.hardware_resolution_scale,
-                        });
+                        emulator.update_config(config.to_emulator_config());
                         audio_sync_threshold = config.audio.sync_threshold;
                     }
                     EmulatorThreadCommand::SaveState => {

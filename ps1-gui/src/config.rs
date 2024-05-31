@@ -1,6 +1,8 @@
 use cfg_if::cfg_if;
+use ps1_core::api::{DisplayConfig, Ps1EmulatorConfig};
 use ps1_core::RasterizerType;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -144,6 +146,8 @@ pub struct AudioConfig {
     pub sync_threshold: u32,
     #[serde(default = "default_device_queue_size")]
     pub device_queue_size: u16,
+    #[serde(default = "default_internal_audio_buffer_size")]
+    pub internal_buffer_size: NonZeroU32,
 }
 
 fn default_audio_sync_threshold() -> u32 {
@@ -152,6 +156,10 @@ fn default_audio_sync_threshold() -> u32 {
 
 fn default_device_queue_size() -> u16 {
     1024
+}
+
+fn default_internal_audio_buffer_size() -> NonZeroU32 {
+    NonZeroU32::new(ps1_core::api::DEFAULT_AUDIO_BUFFER_SIZE).unwrap()
 }
 
 impl Default for AudioConfig {
@@ -188,6 +196,21 @@ pub struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         toml::from_str("").unwrap()
+    }
+}
+
+impl AppConfig {
+    #[must_use]
+    pub fn to_emulator_config(&self) -> Ps1EmulatorConfig {
+        Ps1EmulatorConfig {
+            display: DisplayConfig {
+                crop_vertical_overscan: self.video.crop_vertical_overscan,
+                dump_vram: self.video.vram_display,
+                rasterizer_type: self.video.rasterizer_type(),
+                hardware_resolution_scale: self.video.hardware_resolution_scale,
+            },
+            internal_audio_buffer_size: self.audio.internal_buffer_size,
+        }
     }
 }
 

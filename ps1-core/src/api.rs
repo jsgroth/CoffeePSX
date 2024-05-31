@@ -19,12 +19,14 @@ use cdrom::reader::CdRom;
 use cdrom::CdRomError;
 use proc_macros::SaveState;
 use std::fmt::{Display, Formatter};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use thiserror::Error;
-use wgpu::{CommandBuffer, Texture};
 
 pub use crate::gpu::DisplayConfig;
 use crate::sio::memcard::MemoryCard;
+
+pub const DEFAULT_AUDIO_BUFFER_SIZE: u32 = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
 pub enum ColorDepthBits {
@@ -102,12 +104,27 @@ pub enum TickError<RErr, AErr, SErr> {
     CdRom(#[from] CdRomError),
 }
 
+#[derive(Debug, Clone, Copy, Encode, Decode)]
+pub struct Ps1EmulatorConfig {
+    pub display: DisplayConfig,
+    pub internal_audio_buffer_size: NonZeroU32,
+}
+
+impl Default for Ps1EmulatorConfig {
+    fn default() -> Self {
+        Self {
+            display: DisplayConfig::default(),
+            internal_audio_buffer_size: NonZeroU32::new(DEFAULT_AUDIO_BUFFER_SIZE).unwrap(),
+        }
+    }
+}
+
 pub struct UnserializedFields {
     disc: Option<CdRom>,
     memory_card_1: MemoryCard,
     wgpu_device: Arc<wgpu::Device>,
     wgpu_queue: Arc<wgpu::Queue>,
-    display_config: DisplayConfig,
+    config: Ps1EmulatorConfig,
 }
 
 #[derive(SaveState)]
@@ -129,6 +146,7 @@ pub struct Ps1Emulator {
     timers: Timers,
     scheduler: Scheduler,
     last_render_cycles: u64,
+    config: Ps1EmulatorConfig,
     tty_enabled: bool,
     tty_buffer: String,
 }
@@ -138,7 +156,7 @@ pub struct Ps1EmulatorBuilder {
     bios_rom: Vec<u8>,
     wgpu_device: Arc<wgpu::Device>,
     wgpu_queue: Arc<wgpu::Queue>,
-    display_config: DisplayConfig,
+    config: Ps1EmulatorConfig,
     disc: Option<CdRom>,
     memory_card_1: Option<Vec<u8>>,
     tty_enabled: bool,
@@ -155,7 +173,7 @@ impl Ps1EmulatorBuilder {
             bios_rom,
             wgpu_device,
             wgpu_queue,
-            display_config: DisplayConfig::default(),
+            config: Ps1EmulatorConfig::default(),
             disc: None,
             memory_card_1: None,
             tty_enabled: false,
@@ -181,8 +199,8 @@ impl Ps1EmulatorBuilder {
     }
 
     #[must_use]
-    pub fn with_display_config(mut self, display_config: DisplayConfig) -> Self {
-        self.display_config = display_config;
+    pub fn with_config(mut self, config: Ps1EmulatorConfig) -> Self {
+        self.config = config;
         self
     }
 
@@ -194,7 +212,7 @@ impl Ps1EmulatorBuilder {
             self.bios_rom,
             self.wgpu_device,
             self.wgpu_queue,
-            self.display_config,
+            self.config,
             self.disc,
             self.memory_card_1,
             self.tty_enabled,
@@ -253,7 +271,7 @@ impl Ps1Emulator {
         bios_rom: Vec<u8>,
         wgpu_device: Arc<wgpu::Device>,
         wgpu_queue: Arc<wgpu::Queue>,
-        display_config: DisplayConfig,
+        config: Ps1EmulatorConfig,
         disc: Option<CdRom>,
         memory_card_1: Option<Vec<u8>>,
         tty_enabled: bool,
@@ -262,7 +280,7 @@ impl Ps1Emulator {
 
         let mut emulator = Self {
             cpu: R3000::new(),
-            gpu: Gpu::new(wgpu_device, wgpu_queue, display_config),
+            gpu: Gpu::new(wgpu_device, wgpu_queue, config.display),
             spu: Spu::new(),
             audio_buffer: Vec::with_capacity(1600),
             cd_controller: CdController::new(disc),
@@ -276,6 +294,7 @@ impl Ps1Emulator {
             timers: Timers::new(),
             scheduler: Scheduler::new(),
             last_render_cycles: 0,
+            config,
             tty_enabled,
             tty_buffer: String::new(),
         };
@@ -404,13 +423,19 @@ impl Ps1Emulator {
             .render_frame(command_buffers, frame, pixel_aspect_ratio)
             .map_err(TickError::Render)?;
 
-        audio_output.queue_samples(&self.audio_buffer).map_err(TickError::Audio)?;
-        self.audio_buffer.clear();
+        self.drain_audio_samples(audio_output).map_err(TickError::Audio)?;
 
         let memory_card_1 = self.sio0.memory_card_1();
         if memory_card_1.get_and_clear_dirty() {
             save_writer.save_memory_card_1(memory_card_1.data()).map_err(TickError::SaveWrite)?;
         }
+
+        Ok(())
+    }
+
+    fn drain_audio_samples<A: AudioOutput>(&mut self, audio_output: &mut A) -> Result<(), A::Err> {
+        audio_output.queue_samples(&self.audio_buffer)?;
+        self.audio_buffer.clear();
 
         Ok(())
     }
@@ -450,6 +475,12 @@ impl Ps1Emulator {
                     self.cd_controller.clock(&mut self.interrupt_registers)?;
                     self.audio_buffer
                         .push(self.spu.clock(&self.cd_controller, &mut self.interrupt_registers));
+
+                    if (self.audio_buffer.len() as u32)
+                        >= self.config.internal_audio_buffer_size.get()
+                    {
+                        self.drain_audio_samples(audio_output).map_err(TickError::Audio)?;
+                    }
 
                     self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(
                         event.cpu_cycles + SPU_CLOCK_DIVIDER,
@@ -498,20 +529,21 @@ impl Ps1Emulator {
         }
     }
 
-    pub fn update_display_config(&mut self, display_config: DisplayConfig) {
-        self.gpu.update_display_config(display_config);
+    pub fn update_config(&mut self, config: Ps1EmulatorConfig) {
+        self.gpu.update_display_config(config.display);
+        self.config = config;
     }
 
     #[must_use]
     pub fn take_unserialized_fields(&mut self) -> UnserializedFields {
-        let (wgpu_device, wgpu_queue, display_config) = self.gpu.get_wgpu_resources();
+        let (wgpu_device, wgpu_queue) = self.gpu.get_wgpu_resources();
 
         UnserializedFields {
             disc: self.cd_controller.take_disc(),
             memory_card_1: self.sio0.memory_card_1().clone(),
             wgpu_device,
             wgpu_queue,
-            display_config,
+            config: self.config,
         }
     }
 
@@ -528,7 +560,7 @@ impl Ps1Emulator {
                 state.gpu,
                 unserialized.wgpu_device,
                 unserialized.wgpu_queue,
-                unserialized.display_config,
+                unserialized.config.display,
             ),
             spu: state.spu,
             audio_buffer: state.audio_buffer,
@@ -543,6 +575,7 @@ impl Ps1Emulator {
             timers: state.timers,
             scheduler: state.scheduler,
             last_render_cycles: state.last_render_cycles,
+            config: unserialized.config,
             tty_enabled: state.tty_enabled,
             tty_buffer: state.tty_buffer,
         }
@@ -556,8 +589,8 @@ impl Renderer for NullOutput {
 
     fn render_frame(
         &mut self,
-        _command_buffers: impl Iterator<Item = CommandBuffer>,
-        _frame: &Texture,
+        _command_buffers: impl Iterator<Item = wgpu::CommandBuffer>,
+        _frame: &wgpu::Texture,
         _pixel_aspect_ratio: f64,
     ) -> Result<(), Self::Err> {
         Ok(())

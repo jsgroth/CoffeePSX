@@ -128,7 +128,7 @@ pub trait RasterizerInterface {
     fn clone_vram(&mut self) -> Vram;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub enum RasterizerType {
     NaiveSoftware,
     SimdSoftware,

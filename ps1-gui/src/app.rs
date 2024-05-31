@@ -2,7 +2,7 @@ use crate::config::{AppConfig, FilterMode, Rasterizer, VSyncMode, WgpuBackend};
 use crate::{config, OpenFileType, UserEvent};
 use egui::{
     Align, Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Layout, Modifiers,
-    Slider, TextEdit, TopBottomPanel, Vec2, Window,
+    Slider, TextEdit, TopBottomPanel, Ui, Vec2, Window,
 };
 use egui_extras::{Column, TableBuilder};
 use std::collections::HashSet;
@@ -10,17 +10,48 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::str::FromStr;
 use winit::event_loop::EventLoopProxy;
+
+struct NumericText {
+    value: String,
+    invalid: bool,
+}
+
+impl NumericText {
+    fn new(value: impl ToString) -> Self {
+        Self { value: value.to_string(), invalid: false }
+    }
+
+    fn add_ui<T: Copy + FromStr>(
+        &mut self,
+        ui: &mut Ui,
+        config_value: &mut T,
+        validator: impl FnOnce(T) -> bool,
+    ) {
+        let text_edit = TextEdit::singleline(&mut self.value).desired_width(30.0);
+        if ui.add(text_edit).changed() {
+            match self.value.parse::<T>() {
+                Ok(value) if validator(value) => {
+                    *config_value = value;
+                    self.invalid = false;
+                }
+                _ => {
+                    self.invalid = true;
+                }
+            }
+        }
+    }
+}
 
 struct AppState {
     video_window_open: bool,
     graphics_window_open: bool,
     audio_window_open: bool,
     paths_window_open: bool,
-    audio_sync_threshold_text: String,
-    audio_sync_threshold_invalid: bool,
-    audio_device_queue_size_text: String,
-    audio_device_queue_size_invalid: bool,
+    audio_sync_threshold: NumericText,
+    audio_device_queue_size: NumericText,
+    internal_audio_buffer_size: NumericText,
     file_list: Rc<[FileMetadata]>,
     last_serialized_config: AppConfig,
     filter_by_title: String,
@@ -37,10 +68,9 @@ impl AppState {
             graphics_window_open: false,
             audio_window_open: false,
             paths_window_open: false,
-            audio_sync_threshold_text: config.audio.sync_threshold.to_string(),
-            audio_sync_threshold_invalid: false,
-            audio_device_queue_size_text: config.audio.device_queue_size.to_string(),
-            audio_device_queue_size_invalid: false,
+            audio_sync_threshold: NumericText::new(config.audio.sync_threshold),
+            audio_device_queue_size: NumericText::new(config.audio.device_queue_size),
+            internal_audio_buffer_size: NumericText::new(config.audio.internal_buffer_size),
             file_list: file_list.into(),
             last_serialized_config: config.clone(),
             filter_by_title: String::new(),
@@ -350,29 +380,16 @@ impl App {
                     let hover_text =
                         "Higher values reduce audio stutters but increase audio latency";
 
-                    if ui
-                        .add(
-                            TextEdit::singleline(&mut self.state.audio_sync_threshold_text)
-                                .desired_width(30.0),
-                        )
-                        .on_hover_text(hover_text)
-                        .changed()
-                    {
-                        match self.state.audio_sync_threshold_text.parse::<u32>() {
-                            Ok(value) if value != 0 => {
-                                self.config.audio.sync_threshold = value;
-                                self.state.audio_sync_threshold_invalid = false;
-                            }
-                            _ => {
-                                self.state.audio_sync_threshold_invalid = true;
-                            }
-                        }
-                    }
+                    self.state.audio_sync_threshold.add_ui(
+                        ui,
+                        &mut self.config.audio.sync_threshold,
+                        |value| value != 0,
+                    );
 
                     ui.label("Audio sync threshold (samples)").on_hover_text(hover_text);
                 });
 
-                if self.state.audio_sync_threshold_invalid {
+                if self.state.audio_sync_threshold.invalid {
                     ui.colored_label(
                         Color32::RED,
                         "Audio sync threshold must be a non-negative integer",
@@ -380,31 +397,36 @@ impl App {
                 }
 
                 ui.horizontal(|ui| {
-                    if ui
-                        .add(
-                            TextEdit::singleline(&mut self.state.audio_device_queue_size_text)
-                                .desired_width(30.0),
-                        )
-                        .changed()
-                    {
-                        match self.state.audio_device_queue_size_text.parse::<u16>() {
-                            Ok(value) if value >= 8 && value.count_ones() == 1 => {
-                                self.config.audio.device_queue_size = value;
-                                self.state.audio_device_queue_size_invalid = false;
-                            }
-                            _ => {
-                                self.state.audio_device_queue_size_invalid = true;
-                            }
-                        }
-                    }
+                    self.state.audio_device_queue_size.add_ui(
+                        ui,
+                        &mut self.config.audio.device_queue_size,
+                        |value| value >= 8 && value.count_ones() == 1,
+                    );
 
                     ui.label("Audio device queue size (samples)");
                 });
 
-                if self.state.audio_device_queue_size_invalid {
+                if self.state.audio_device_queue_size.invalid {
                     ui.colored_label(
                         Color32::RED,
                         "Audio device queue size must be a power of two",
+                    );
+                }
+
+                ui.horizontal(|ui| {
+                    self.state.internal_audio_buffer_size.add_ui(
+                        ui,
+                        &mut self.config.audio.internal_buffer_size,
+                        |_value| true,
+                    );
+
+                    ui.label("Internal audio buffer size (samples)");
+                });
+
+                if self.state.internal_audio_buffer_size.invalid {
+                    ui.colored_label(
+                        Color32::RED,
+                        "Internal audio buffer size must be a non-negative integer",
                     );
                 }
             });
