@@ -10,6 +10,7 @@ use ps1_core::api::{
     TickError,
 };
 use ps1_core::input::Ps1Inputs;
+use regex::Regex;
 use sdl2::audio::AudioDevice;
 use sdl2::AudioSubsystem;
 use std::collections::VecDeque;
@@ -19,15 +20,13 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 use std::{fs, io, thread};
 use winit::dpi::PhysicalSize;
 
 mod audio;
 mod renderer;
-
-const MEMORY_CARD_1_PATH: &str = "card1.mcd";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ps1Button {
@@ -146,10 +145,12 @@ impl EmulationThreadHandle {
             hardware_resolution_scale: config.video.hardware_resolution_scale,
         };
 
+        let save_writer = FsSaveWriter::from_path(file_path.unwrap_or(&PathBuf::from("global")))?;
+
         let mut builder = Ps1EmulatorBuilder::new(bios, Arc::clone(&device), Arc::clone(&queue))
             .with_display_config(display_config);
 
-        if let Ok(card_data) = fs::read(MEMORY_CARD_1_PATH) {
+        if let Ok(card_data) = fs::read(&save_writer.card_1_path) {
             builder = builder.with_memory_card_1(card_data);
         }
 
@@ -209,8 +210,7 @@ impl EmulationThreadHandle {
 
         let (command_sender, command_receiver) = mpsc::channel();
 
-        let save_state_path =
-            file_path.map_or(PathBuf::from("bios.ss0"), |path| path.with_extension("ss0"));
+        let save_state_path = determine_save_state_path(file_path)?;
 
         spawn_emu_thread(
             save_state_path,
@@ -218,6 +218,7 @@ impl EmulationThreadHandle {
             swap_chain_renderer,
             audio_output,
             config.audio.sync_threshold,
+            save_writer,
             command_receiver,
         );
 
@@ -291,6 +292,7 @@ fn spawn_emu_thread(
     mut renderer: SwapChainRenderer,
     mut audio_output: QueueAudioOutput,
     mut audio_sync_threshold: u32,
+    mut save_writer: FsSaveWriter,
     command_receiver: Receiver<EmulatorThreadCommand>,
 ) {
     thread::spawn(move || {
@@ -304,9 +306,13 @@ fn spawn_emu_thread(
             if (!paused || step_frame)
                 && (fast_forward || (audio_output.samples_len() as u32) < audio_sync_threshold)
             {
-                if let Err(err) =
-                    process_next_frame(inputs, &mut emulator, &mut renderer, &mut audio_output)
-                {
+                if let Err(err) = process_next_frame(
+                    inputs,
+                    &mut emulator,
+                    &mut renderer,
+                    &mut audio_output,
+                    &mut save_writer,
+                ) {
                     log::error!("Video/audio/save write error: {err:?}");
                 }
 
@@ -336,13 +342,29 @@ fn spawn_emu_thread(
                         audio_sync_threshold = config.audio.sync_threshold;
                     }
                     EmulatorThreadCommand::SaveState => {
-                        if let Err(err) = save_state(&mut emulator, &save_state_path) {
-                            log::info!("Error saving state: {err}");
+                        match save_state(&mut emulator, &save_state_path) {
+                            Ok(()) => {
+                                log::info!("Saved state to '{}'", save_state_path.display());
+                            }
+                            Err(err) => {
+                                log::error!(
+                                    "Error saving state to '{}': {err}",
+                                    save_state_path.display()
+                                );
+                            }
                         }
                     }
                     EmulatorThreadCommand::LoadState => {
-                        if let Err(err) = load_state(&mut emulator, &save_state_path) {
-                            log::info!("Error loading state: {err}");
+                        match load_state(&mut emulator, &save_state_path) {
+                            Ok(()) => {
+                                log::info!("Loaded state from '{}'", save_state_path.display());
+                            }
+                            Err(err) => {
+                                log::error!(
+                                    "Error loading state from '{}': {err}",
+                                    save_state_path.display()
+                                );
+                            }
                         }
                     }
                     EmulatorThreadCommand::TogglePause => {
@@ -373,10 +395,10 @@ fn process_next_frame(
     emulator: &mut Ps1Emulator,
     renderer: &mut SwapChainRenderer,
     audio_output: &mut QueueAudioOutput,
+    save_writer: &mut FsSaveWriter,
 ) -> Result<(), TickError<Never, Never, io::Error>> {
-    while emulator.tick(inputs, renderer, audio_output, &mut FsSaveWriter)?
-        != TickEffect::FrameRendered
-    {}
+    while emulator.tick(inputs, renderer, audio_output, save_writer)? != TickEffect::FrameRendered {
+    }
 
     Ok(())
 }
@@ -451,12 +473,65 @@ fn sleep(duration: Duration) {
     }
 }
 
-struct FsSaveWriter;
+const MEMORY_CARDS_DIRECTORY: &str = "memcards";
+const SAVE_STATES_DIRECTORY: &str = "states";
+
+struct FsSaveWriter {
+    card_1_path: PathBuf,
+}
+
+impl FsSaveWriter {
+    fn from_path(path: &Path) -> anyhow::Result<Self> {
+        static DISC_REGEX: OnceLock<Regex> = OnceLock::new();
+
+        let path_no_ext = path.with_extension("");
+        let file_name_no_ext =
+            path_no_ext.file_name().and_then(OsStr::to_str).ok_or_else(|| {
+                anyhow!("Unable to determine file extension for path: {}", path.display())
+            })?;
+
+        let disc_regex = DISC_REGEX.get_or_init(|| Regex::new(r" \(Disc [1-9]\)$").unwrap());
+
+        let file_name_no_disc = disc_regex.replace(file_name_no_ext, "");
+        let card_1_file_name = format!("{file_name_no_disc}_1.mcd");
+        let card_1_path = PathBuf::from(MEMORY_CARDS_DIRECTORY).join(card_1_file_name);
+
+        ensure_parent_dir_exists(&card_1_path)?;
+
+        Ok(Self { card_1_path })
+    }
+}
+
+fn ensure_parent_dir_exists(path: &Path) -> anyhow::Result<()> {
+    let Some(parent) = path.parent() else { return Ok(()) };
+
+    if !parent.exists() {
+        fs::create_dir_all(parent)?;
+    }
+
+    Ok(())
+}
 
 impl SaveWriter for FsSaveWriter {
     type Err = io::Error;
 
     fn save_memory_card_1(&mut self, card_data: &[u8]) -> Result<(), Self::Err> {
-        fs::write(MEMORY_CARD_1_PATH, card_data)
+        fs::write(&self.card_1_path, card_data)?;
+        log::debug!("Saved memory card 1 to {}", self.card_1_path.display());
+        Ok(())
     }
+}
+
+fn determine_save_state_path(file_path: Option<&Path>) -> anyhow::Result<PathBuf> {
+    let path_no_ext = file_path.unwrap_or(&PathBuf::from("bios")).with_extension("");
+    let file_name_no_ext = path_no_ext.file_name().and_then(OsStr::to_str).ok_or_else(|| {
+        anyhow!("Unable to determine file extension for path: {}", path_no_ext.display())
+    })?;
+
+    let state_file_name = format!("{file_name_no_ext}.sst");
+    let state_path = PathBuf::from(SAVE_STATES_DIRECTORY).join(state_file_name);
+
+    ensure_parent_dir_exists(&state_path)?;
+
+    Ok(state_path)
 }

@@ -2,3 +2,7 @@
 *.iml
 
 /target
+
+/ps1-config.toml
+/memcards
+/states

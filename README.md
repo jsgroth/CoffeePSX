@@ -16,12 +16,13 @@ Implemented:
 * The MDEC
 * The hardware timers
 * Digital controllers, P1 only
-* Memory card, port 1 only and shared across all games
+* Memory card, port 1 only
 
 Not yet implemented:
 * Analog controllers and P2 inputs
 * Configurable inputs and gamepad support
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
+  * Also a memory card manager
 * Additional graphical enhancements for the hardware rasterizer (e.g. sub-pixel vertex precision, texture filtering)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work but timings are quite inaccurate right now
 * Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio

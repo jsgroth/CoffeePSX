@@ -282,7 +282,7 @@ impl SurfaceRenderer {
         });
 
         let viewport = determine_viewport(frame.size(), self.surface_size, pixel_aspect_ratio);
-        log::debug!("Rendering to viewport {viewport:?}");
+        log::trace!("Rendering to viewport {viewport:?}");
 
         let mut encoder =
             self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());

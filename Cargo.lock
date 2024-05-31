@@ -2285,6 +2285,7 @@ dependencies = [
  "log",
  "pollster",
  "ps1-core",
+ "regex",
  "rfd",
  "sdl2",
  "serde",
