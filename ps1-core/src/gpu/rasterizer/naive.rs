@@ -578,20 +578,6 @@ fn draw_triangle_pixel(
         }
     };
 
-    let masked_color = if semi_transparent && (texture_mapping.is_none() || mask_bit) {
-        let existing_pixel = vram[vram_addr];
-        let existing_color = Color::from_15_bit(existing_pixel);
-
-        let semi_transparency_mode = match &texture_mapping {
-            None => semi_transparency_mode,
-            Some(texture_mapping) => texture_mapping.texpage.semi_transparency_mode,
-        };
-
-        semi_transparency_mode.apply(existing_color, textured_color)
-    } else {
-        textured_color
-    };
-
     // Dithering is applied if the dither flag is set and either Gouraud shading or texture
     // modulation is used
     let dithered_color = if draw_settings.dithering_enabled
@@ -600,12 +586,26 @@ fn draw_triangle_pixel(
                 texture_mapping.mode == TextureMappingMode::Modulated
             })) {
         let dither_value = DITHER_TABLE[(py & 3) as usize][(px & 3) as usize];
-        masked_color.dither(dither_value)
+        textured_color.dither(dither_value)
     } else {
-        masked_color
+        textured_color
     };
 
-    vram[vram_addr] = dithered_color.truncate_to_15_bit()
+    let blended_color = if semi_transparent && (texture_mapping.is_none() || mask_bit) {
+        let existing_pixel = vram[vram_addr];
+        let existing_color = Color::from_15_bit(existing_pixel);
+
+        let semi_transparency_mode = match &texture_mapping {
+            None => semi_transparency_mode,
+            Some(texture_mapping) => texture_mapping.texpage.semi_transparency_mode,
+        };
+
+        semi_transparency_mode.apply(existing_color, dithered_color)
+    } else {
+        dithered_color
+    };
+
+    vram[vram_addr] = blended_color.truncate_to_15_bit()
         | (u16::from(mask_bit || draw_settings.force_mask_bit) << 15);
 }
 

@@ -392,22 +392,6 @@ pub unsafe fn rasterize_triangle(
                 );
             }
 
-            // If semi-transparency is enabled, blend existing colors with new colors
-            if let Some(semi_transparency_mode) = semi_transparency_mode {
-                if _mm256_testz_si256(semi_transparency_bits, _mm256_set1_epi16(!0)) == 0 {
-                    let (existing_r, existing_g, existing_b) = convert_15bit_to_24bit(existing);
-                    let semi_transparency_mask =
-                        _mm256_cmpeq_epi16(semi_transparency_bits, _mm256_setzero_si256());
-
-                    (r, g, b) = apply_semi_transparency(
-                        (existing_r, existing_g, existing_b),
-                        (r, g, b),
-                        semi_transparency_mask,
-                        semi_transparency_mode,
-                    );
-                }
-            }
-
             // If dithering is enabled, apply dithering before truncating to RGB555.
             // Dithering is applied only if Gouraud shading or texture color modulation is enabled
             if dithering_enabled
@@ -431,6 +415,22 @@ pub unsafe fn rasterize_triangle(
                     u8_max,
                     _mm256_max_epi16(_mm256_setzero_si256(), _mm256_add_epi16(b, dither_vector)),
                 );
+            }
+
+            // If semi-transparency is enabled, blend existing colors with new colors
+            if let Some(semi_transparency_mode) = semi_transparency_mode {
+                if _mm256_testz_si256(semi_transparency_bits, _mm256_set1_epi16(!0)) == 0 {
+                    let (existing_r, existing_g, existing_b) = convert_15bit_to_24bit(existing);
+                    let semi_transparency_mask =
+                        _mm256_cmpeq_epi16(semi_transparency_bits, _mm256_setzero_si256());
+
+                    (r, g, b) = apply_semi_transparency(
+                        (existing_r, existing_g, existing_b),
+                        (r, g, b),
+                        semi_transparency_mask,
+                        semi_transparency_mode,
+                    );
+                }
             }
 
             // Truncate to RGB555 and OR in bit 15 (either force mask bit or texel bit 15)
