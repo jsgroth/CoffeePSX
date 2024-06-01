@@ -662,26 +662,24 @@ fn do_file_search_inner(
             continue;
         };
 
-        if !filter_by_title.is_empty() && !file_name_no_ext.to_lowercase().contains(filter_by_title)
-        {
-            continue;
-        }
-
-        if file_type.is_dir() {
-            if recursive {
-                do_file_search_inner(&entry_path, true, filter_by_title, visited_dirs, out);
+        if file_type.is_dir() && recursive {
+            do_file_search_inner(&entry_path, true, filter_by_title, visited_dirs, out);
+        } else if file_type.is_file() {
+            if !filter_by_title.is_empty()
+                && !file_name_no_ext.to_lowercase().contains(filter_by_title)
+            {
+                continue;
             }
-            continue;
-        }
 
-        let Some(extension) = entry_path.extension().and_then(OsStr::to_str) else { continue };
-        if matches!(extension, "exe" | "cue" | "chd") {
-            // TODO check that EXE is a PS1 executable
-            out.push(FileMetadata {
-                file_name_no_ext: file_name_no_ext.into(),
-                extension: extension.into(),
-                full_path: entry_path,
-            });
+            let Some(extension) = entry_path.extension().and_then(OsStr::to_str) else { continue };
+            if matches!(extension, "exe" | "cue" | "chd") {
+                // TODO check that EXE is a PS1 executable
+                out.push(FileMetadata {
+                    file_name_no_ext: file_name_no_ext.into(),
+                    extension: extension.into(),
+                    full_path: entry_path,
+                });
+            }
         }
     }
 }
