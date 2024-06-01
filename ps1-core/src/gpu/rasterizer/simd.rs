@@ -123,6 +123,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
 
         log::trace!("Bounding box: ({min_x}, {min_y}) to ({max_x}, {max_y})");
 
+        // SAFETY: Guarded by is_x86_feature_detected!("avx2")
         unsafe {
             avx2::rasterize_triangle(
                 &mut self.vram,
@@ -161,6 +162,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             y: vertex.y + draw_settings.draw_offset.y,
         });
 
+        // SAFETY: Guarded by is_x86_feature_detected!("avx2")
         unsafe {
             avx2::rasterize_line(
                 &mut self.vram,
@@ -198,6 +200,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             return;
         }
 
+        // SAFETY: Guarded by is_x86_feature_detected!("avx2")
         unsafe {
             avx2::rasterize_rectangle(
                 &mut self.vram,

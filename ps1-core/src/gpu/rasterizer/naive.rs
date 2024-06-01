@@ -32,7 +32,6 @@ impl Color {
         let g: u16 = (self.g >> 3).into();
         let b: u16 = (self.b >> 3).into();
 
-        // TODO mask bit?
         r | (g << 5) | (b << 10)
     }
 
@@ -46,29 +45,28 @@ impl Color {
 }
 
 impl SemiTransparencyMode {
-    fn apply(self, back: Color, front: Color) -> Color {
+    fn apply(self, back: u16, front: u16) -> u16 {
         match self {
-            Self::Average => apply_semi_transparency(back, front, |b, f| {
-                ((u16::from(b) + u16::from(f)) / 2) as u8
-            }),
-            Self::Add => apply_semi_transparency(back, front, |b, f| {
-                cmp::min(255, u16::from(b) + u16::from(f)) as u8
-            }),
+            Self::Average => apply_semi_transparency(back, front, |b, f| (b + f) / 2),
+            Self::Add => apply_semi_transparency(back, front, |b, f| cmp::min(31, b + f)),
             Self::Subtract => apply_semi_transparency(back, front, |b, f| {
-                cmp::max(0, i16::from(b) - i16::from(f)) as u8
+                cmp::max(0, (b as i16) - (f as i16)) as u16
             }),
-            Self::AddQuarter => apply_semi_transparency(back, front, |b, f| {
-                cmp::min(255, u16::from(b) + u16::from(f / 4)) as u8
-            }),
+            Self::AddQuarter => {
+                apply_semi_transparency(back, front, |b, f| cmp::min(31, b + (f / 4)))
+            }
         }
     }
 }
 
-fn apply_semi_transparency<F>(back: Color, front: Color, op: F) -> Color
+fn apply_semi_transparency<F>(back: u16, front: u16, op: F) -> u16
 where
-    F: Fn(u8, u8) -> u8,
+    F: Fn(u16, u16) -> u16,
 {
-    Color::rgb(op(back.r, front.r), op(back.g, front.g), op(back.b, front.b))
+    let r = op(back & 0x1F, front & 0x1F);
+    let g = op((back >> 5) & 0x1F, (front >> 5) & 0x1F);
+    let b = op((back >> 10) & 0x1F, (front >> 10) & 0x1F);
+    r | (g << 5) | (b << 10)
 }
 
 #[derive(Debug)]
@@ -565,8 +563,6 @@ fn draw_triangle_pixel(
                 return;
             }
 
-            // TODO semi-transparency / mask bit
-
             let raw_texture_color = Color::from_15_bit(texture_pixel);
 
             let texture_color = match texture_mapping.mode {
@@ -591,22 +587,22 @@ fn draw_triangle_pixel(
         textured_color
     };
 
+    let truncated_color = dithered_color.truncate_to_15_bit();
+
     let blended_color = if semi_transparent && (texture_mapping.is_none() || mask_bit) {
         let existing_pixel = vram[vram_addr];
-        let existing_color = Color::from_15_bit(existing_pixel);
 
         let semi_transparency_mode = match &texture_mapping {
             None => semi_transparency_mode,
             Some(texture_mapping) => texture_mapping.texpage.semi_transparency_mode,
         };
 
-        semi_transparency_mode.apply(existing_color, dithered_color)
+        semi_transparency_mode.apply(existing_pixel, truncated_color)
     } else {
-        dithered_color
+        truncated_color
     };
 
-    vram[vram_addr] = blended_color.truncate_to_15_bit()
-        | (u16::from(mask_bit || draw_settings.force_mask_bit) << 15);
+    vram[vram_addr] = blended_color | (u16::from(mask_bit || draw_settings.force_mask_bit) << 15);
 }
 
 pub(super) fn draw_line_pixel(
@@ -626,22 +622,21 @@ pub(super) fn draw_line_pixel(
         return;
     }
 
-    let color = if semi_transparency {
-        let existing_color = Color::from_15_bit(vram[vram_addr]);
-        semi_transparency_mode.apply(existing_color, raw_color)
+    let dithered_color = if draw_settings.dithering_enabled {
+        let dither_value = DITHER_TABLE[(v.y & 3) as usize][(v.x & 3) as usize];
+        raw_color.dither(dither_value)
     } else {
         raw_color
     };
 
-    let dithered_color = if draw_settings.dithering_enabled {
-        let dither_value = DITHER_TABLE[(v.y & 3) as usize][(v.x & 3) as usize];
-        color.dither(dither_value)
+    let color = if semi_transparency {
+        let existing_color = vram[vram_addr];
+        semi_transparency_mode.apply(existing_color, dithered_color.truncate_to_15_bit())
     } else {
-        color
+        dithered_color.truncate_to_15_bit()
     };
 
-    vram[vram_addr] =
-        dithered_color.truncate_to_15_bit() | (u16::from(draw_settings.force_mask_bit) << 15);
+    vram[vram_addr] = color | (u16::from(draw_settings.force_mask_bit) << 15);
 }
 
 struct SoftwareRectangleArgs {
@@ -694,13 +689,13 @@ fn draw_solid_rectangle(
             }
 
             let color = if semi_transparent {
-                let existing_color = Color::from_15_bit(vram[vram_addr]);
-                semi_transparency_mode.apply(existing_color, color)
+                let existing_color = vram[vram_addr];
+                semi_transparency_mode.apply(existing_color, color.truncate_to_15_bit())
             } else {
-                color
+                color.truncate_to_15_bit()
             };
 
-            vram[vram_addr] = color.truncate_to_15_bit() | forced_mask_bit;
+            vram[vram_addr] = color | forced_mask_bit;
         }
     }
 }
@@ -766,14 +761,13 @@ fn draw_textured_rectangle(
 
             let texture_mask_bit = texture_pixel & 0x8000 != 0;
             let masked_color = if semi_transparent && texture_mask_bit {
-                let existing_color = Color::from_15_bit(vram[vram_addr]);
-                semi_transparency_mode.apply(existing_color, texture_color)
+                let existing_color = vram[vram_addr];
+                semi_transparency_mode.apply(existing_color, texture_color.truncate_to_15_bit())
             } else {
-                texture_color
+                texture_color.truncate_to_15_bit()
             };
 
-            vram[vram_addr] = masked_color.truncate_to_15_bit()
-                | (u16::from(texture_mask_bit | force_mask_bit) << 15);
+            vram[vram_addr] = masked_color | (u16::from(texture_mask_bit | force_mask_bit) << 15);
         }
     }
 }

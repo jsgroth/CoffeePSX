@@ -203,6 +203,9 @@ unsafe fn i11_epi16(value: __m256i) -> __m256i {
 
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "avx2")]
+/// # Safety
+///
+/// This function must only be called when running on a CPU that supports AVX2 instructions.
 pub unsafe fn rasterize_triangle(
     vram: &mut AlignedVram,
     &DrawSettings {
@@ -417,10 +420,15 @@ pub unsafe fn rasterize_triangle(
                 );
             }
 
+            // Truncate color from from 8-bit RGB components to 5-bit
+            r = _mm256_srli_epi16::<3>(r);
+            g = _mm256_srli_epi16::<3>(g);
+            b = _mm256_srli_epi16::<3>(b);
+
             // If semi-transparency is enabled, blend existing colors with new colors
             if let Some(semi_transparency_mode) = semi_transparency_mode {
                 if _mm256_testz_si256(semi_transparency_bits, _mm256_set1_epi16(!0)) == 0 {
-                    let (existing_r, existing_g, existing_b) = convert_15bit_to_24bit(existing);
+                    let (existing_r, existing_g, existing_b) = split_15bit_color(existing);
                     let semi_transparency_mask =
                         _mm256_cmpeq_epi16(semi_transparency_bits, _mm256_setzero_si256());
 
@@ -433,8 +441,8 @@ pub unsafe fn rasterize_triangle(
                 }
             }
 
-            // Truncate to RGB555 and OR in bit 15 (either force mask bit or texel bit 15)
-            let color = _mm256_or_si256(convert_24bit_to_15bit(r, g, b), mask_bits);
+            // Combine color components and OR in bit 15 (either force mask bit or texel bit 15)
+            let color = _mm256_or_si256(combine_rgb_components(r, g, b), mask_bits);
 
             // Store the row of pixels, using the write mask to control which are written
             _mm256_store_si256(
@@ -730,24 +738,24 @@ unsafe fn blend_average(back: __m256i, front: __m256i) -> __m256i {
 }
 
 // Apply additive blending: B + F
-// Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 255]
+// Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 31]
 #[target_feature(enable = "avx2")]
 unsafe fn blend_add(back: __m256i, front: __m256i) -> __m256i {
-    _mm256_adds_epu8(back, front)
+    _mm256_min_epi16(_mm256_add_epi16(back, front), _mm256_set1_epi16(0x1F))
 }
 
 // Apply subtractive blending: B - F
-// Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 255]
+// Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 31]
 #[target_feature(enable = "avx2")]
 unsafe fn blend_subtract(back: __m256i, front: __m256i) -> __m256i {
-    _mm256_subs_epu8(back, front)
+    _mm256_max_epi16(_mm256_sub_epi16(back, front), _mm256_setzero_si256())
 }
 
 // Apply partial additive blending: B + F/4
-// Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 255]
+// Input vectors should be i16x16 and the return value is i16x16, with each lane clamped to [0, 31]
 #[target_feature(enable = "avx2")]
 unsafe fn blend_add_quarter(back: __m256i, front: __m256i) -> __m256i {
-    _mm256_adds_epu8(back, _mm256_srli_epi16::<2>(front))
+    _mm256_min_epi16(_mm256_adds_epu8(back, _mm256_srli_epi16::<2>(front)), _mm256_set1_epi16(0x1F))
 }
 
 const LOW_SHUFFLE_MASK: &[u8; 32] = &[
@@ -773,19 +781,11 @@ unsafe fn unpack_epi16_vector(v: __m256i) -> (__m256i, __m256i) {
     (low, high)
 }
 
-// Convert a 24-bit color value to 15-bit colors by truncating the lowest 3 bits of each component
+// Combine 5-bit RGB color components into 15bpp color values.
 // Input vectors should be i16x16 and the return value is i16x16
 #[target_feature(enable = "avx2")]
-unsafe fn convert_24bit_to_15bit(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
-    let mask = _mm256_set1_epi16(0xF8);
-
-    _mm256_or_si256(
-        _mm256_srli_epi16::<3>(r),
-        _mm256_or_si256(
-            _mm256_slli_epi16::<2>(_mm256_and_si256(g, mask)),
-            _mm256_slli_epi16::<7>(_mm256_and_si256(b, mask)),
-        ),
-    )
+unsafe fn combine_rgb_components(r: __m256i, g: __m256i, b: __m256i) -> __m256i {
+    _mm256_or_si256(r, _mm256_or_si256(_mm256_slli_epi16::<5>(g), _mm256_slli_epi16::<10>(b)))
 }
 
 // Convert a raw 15-bit color value from VRAM to individual 8-bit RGB color components
@@ -800,8 +800,23 @@ unsafe fn convert_15bit_to_24bit(texels: __m256i) -> (__m256i, __m256i, __m256i)
     (r, g, b)
 }
 
+// Split a raw 15-bit color value from VRAM into the separate 5-bit RGB color components.
+// Input vector should be i16x16 and the return values are i16x16
+#[target_feature(enable = "avx2")]
+unsafe fn split_15bit_color(texels: __m256i) -> (__m256i, __m256i, __m256i) {
+    let mask = _mm256_set1_epi16(0x001F);
+    let r = _mm256_and_si256(texels, mask);
+    let g = _mm256_and_si256(_mm256_srli_epi16::<5>(texels), mask);
+    let b = _mm256_and_si256(_mm256_srli_epi16::<10>(texels), mask);
+
+    (r, g, b)
+}
+
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "avx2")]
+/// # Safety
+///
+/// This function must only be called when running on a CPU that supports AVX2 instructions.
 pub unsafe fn rasterize_rectangle(
     vram: &mut AlignedVram,
     &DrawSettings {
@@ -963,12 +978,17 @@ pub unsafe fn rasterize_rectangle(
                 }
             }
 
+            // Truncate color from from 8-bit RGB components to 5-bit
+            r = _mm256_srli_epi16::<3>(r);
+            g = _mm256_srli_epi16::<3>(g);
+            b = _mm256_srli_epi16::<3>(b);
+
             // If semi-transparency is enabled, blend existing colors with new colors
             if let Some(semi_transparency_mode) = semi_transparency_mode {
                 let semi_transparency_mask =
                     _mm256_cmpeq_epi16(semi_transparency_bits, _mm256_setzero_si256());
 
-                let (existing_r, existing_g, existing_b) = convert_15bit_to_24bit(existing);
+                let (existing_r, existing_g, existing_b) = split_15bit_color(existing);
                 (r, g, b) = apply_semi_transparency(
                     (existing_r, existing_g, existing_b),
                     (r, g, b),
@@ -977,8 +997,8 @@ pub unsafe fn rasterize_rectangle(
                 );
             }
 
-            // Truncate to RGB555 and OR in the mask bit (force mask bit or texel bit 15)
-            let color = _mm256_or_si256(convert_24bit_to_15bit(r, g, b), mask_bits);
+            // Combine color components and OR in the mask bit (force mask bit or texel bit 15)
+            let color = _mm256_or_si256(combine_rgb_components(r, g, b), mask_bits);
 
             // Store the row of 16 pixels, using the write mask to control which are written
             _mm256_store_si256(
@@ -994,6 +1014,9 @@ pub unsafe fn rasterize_rectangle(
 
 #[allow(clippy::too_many_arguments)]
 #[target_feature(enable = "avx2")]
+/// # Safety
+///
+/// This function must only be called when running on a CPU that supports AVX2 instructions.
 pub unsafe fn rasterize_line(
     vram: &mut AlignedVram,
     vertices: [Vertex; 2],
