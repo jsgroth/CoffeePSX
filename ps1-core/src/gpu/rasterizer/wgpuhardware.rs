@@ -17,14 +17,15 @@ use crate::gpu::rasterizer::wgpuhardware::sync::{
 use crate::gpu::rasterizer::wgpuhardware::twentyfour::TwentyFourBppPipeline;
 use crate::gpu::rasterizer::{
     vertices_valid, ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs,
-    DrawTriangleArgs, FrameCoords, FrameSize, RasterizerInterface, VramVramBlitArgs,
+    DrawTriangleArgs, FrameCoords, FrameSize, RasterizerInterface, TriangleShading,
+    TriangleTextureMapping, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{rasterizer, Color, Vertex, Vram, WgpuResources};
 use std::collections::HashMap;
 use std::ops::{BitOr, BitOrAssign, Range};
 use std::sync::Arc;
-use std::{cmp, iter};
+use std::{array, cmp, iter};
 use wgpu::{
     BindGroup, Buffer, BufferDescriptor, BufferUsages, CommandBuffer, CommandEncoder,
     CommandEncoderDescriptor, ComputePassDescriptor, Device, Extent3d, ImageCopyBuffer,
@@ -1017,7 +1018,11 @@ impl RasterizerInterface for WgpuRasterizer {
 
         self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
 
-        // TODO proper scaled/native sync
+        if self.config.resolution_scale != 1 {
+            if let Some(command) = check_for_tiny_triangle(&args, draw_settings) {
+                self.draw_commands.push(command);
+            }
+        }
 
         self.draw_commands
             .push(DrawCommand::DrawTriangle { args, draw_settings: draw_settings.clone() });
@@ -1290,6 +1295,98 @@ fn rectangle_bounding_box(
     }
 
     Some((Vertex::new(min_x, min_y), Vertex::new(max_x, max_y)))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IndexedVertex {
+    idx: usize,
+    v: Vertex,
+}
+
+// Check if the three triangle vertices form a right triangle that is either 1 pixel wide or 1 pixel
+// tall. If so, add an extra draw command that will draw an opposing right triangle and form a
+// 1xN or Nx1 rectangle. Doom depends on this for correct rendering at higher resolutions
+fn check_for_tiny_triangle(
+    args: &DrawTriangleArgs,
+    draw_settings: &DrawSettings,
+) -> Option<DrawCommand> {
+    // Skip the later sorts/checks if all vertices have different X coordinates or Y coordinates
+    if (args.vertices[0].x != args.vertices[1].x
+        && args.vertices[0].x != args.vertices[2].x
+        && args.vertices[1].x != args.vertices[2].x)
+        || (args.vertices[0].y != args.vertices[1].y
+            && args.vertices[0].y != args.vertices[2].y
+            && args.vertices[1].y != args.vertices[2].y)
+    {
+        return None;
+    }
+
+    let mut vertices: [_; 3] = array::from_fn(|i| IndexedVertex { idx: i, v: args.vertices[i] });
+
+    // Check if the triangle is one pixel wide
+    vertices.sort_by(|a, b| a.v.x.cmp(&b.v.x));
+    if vertices[0].v.x == vertices[1].v.x && vertices[0].v.x + 1 == vertices[2].v.x {
+        if vertices[0].v.y == vertices[2].v.y {
+            let vertex = Vertex::new(vertices[2].v.x, vertices[1].v.y);
+            return Some(expand_tiny_triangle(args, draw_settings, vertices, 1, vertex));
+        } else if vertices[1].v.y == vertices[2].v.y {
+            let vertex = Vertex::new(vertices[2].v.x, vertices[0].v.y);
+            return Some(expand_tiny_triangle(args, draw_settings, vertices, 0, vertex));
+        }
+    }
+
+    // Check if the triangle is one pixel tall
+    vertices.sort_by(|a, b| a.v.y.cmp(&b.v.y));
+    if vertices[0].v.y == vertices[1].v.y && vertices[0].v.y + 1 == vertices[2].v.y {
+        if vertices[0].v.x == vertices[2].v.x {
+            let vertex = Vertex::new(vertices[1].v.x, vertices[2].v.y);
+            return Some(expand_tiny_triangle(args, draw_settings, vertices, 1, vertex));
+        } else if vertices[1].v.x == vertices[2].v.x {
+            let vertex = Vertex::new(vertices[0].v.x, vertices[2].v.y);
+            return Some(expand_tiny_triangle(args, draw_settings, vertices, 0, vertex));
+        }
+    }
+
+    None
+}
+
+fn expand_tiny_triangle(
+    args: &DrawTriangleArgs,
+    draw_settings: &DrawSettings,
+    vertices: [IndexedVertex; 3],
+    expand_idx: usize,
+    fourth_vertex: Vertex,
+) -> DrawCommand {
+    DrawCommand::DrawTriangle {
+        args: DrawTriangleArgs {
+            vertices: [
+                args.vertices[vertices[2].idx],
+                args.vertices[vertices[expand_idx].idx],
+                fourth_vertex,
+            ],
+            shading: match args.shading {
+                TriangleShading::Flat(color) => TriangleShading::Flat(color),
+                TriangleShading::Gouraud(colors) => {
+                    let expand_color = colors[vertices[expand_idx].idx];
+                    TriangleShading::Gouraud([colors[vertices[2].idx], expand_color, expand_color])
+                }
+            },
+            semi_transparent: args.semi_transparent,
+            semi_transparency_mode: args.semi_transparency_mode,
+            texture_mapping: args.texture_mapping.map(|mapping| TriangleTextureMapping {
+                u: {
+                    let expand_u = mapping.u[vertices[expand_idx].idx];
+                    [mapping.u[vertices[2].idx], expand_u, expand_u]
+                },
+                v: {
+                    let expand_v = mapping.v[vertices[expand_idx].idx];
+                    [mapping.v[vertices[2].idx], expand_v, expand_v]
+                },
+                ..mapping
+            }),
+        },
+        draw_settings: draw_settings.clone(),
+    }
 }
 
 fn get_or_create_frame_texture<'a>(
