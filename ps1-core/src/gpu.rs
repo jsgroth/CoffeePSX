@@ -25,6 +25,7 @@ use std::sync::Arc;
 use crate::gpu::rasterizer::Rasterizer;
 
 use crate::boxedarray::BoxedArray;
+use crate::gpu::rasterizer::wgpuhardware::WgpuRasterizerConfig;
 use crate::interrupts::InterruptRegisters;
 pub use rasterizer::{RasterizerState, RasterizerType};
 pub use registers::VideoMode;
@@ -40,6 +41,8 @@ pub struct DisplayConfig {
     pub dump_vram: bool,
     pub rasterizer_type: RasterizerType,
     pub hardware_resolution_scale: u32,
+    pub high_color: bool,
+    pub dithering_allowed: bool,
 }
 
 impl Default for DisplayConfig {
@@ -49,6 +52,18 @@ impl Default for DisplayConfig {
             dump_vram: false,
             rasterizer_type: RasterizerType::default(),
             hardware_resolution_scale: 4,
+            high_color: true,
+            dithering_allowed: true,
+        }
+    }
+}
+
+impl DisplayConfig {
+    pub(crate) fn to_wgpu_rasterizer_config(self) -> WgpuRasterizerConfig {
+        WgpuRasterizerConfig {
+            resolution_scale: self.hardware_resolution_scale,
+            high_color: self.high_color,
+            dithering_allowed: self.dithering_allowed,
         }
     }
 }
@@ -104,12 +119,7 @@ impl Gpu {
     ) -> Self {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
-        let rasterizer = Rasterizer::new(
-            &wgpu_device,
-            &wgpu_queue,
-            display_config.rasterizer_type,
-            display_config.hardware_resolution_scale,
-        );
+        let rasterizer = Rasterizer::new(&wgpu_device, &wgpu_queue, display_config);
 
         let wgpu_resources = WgpuResources {
             device: wgpu_device,
@@ -195,20 +205,20 @@ impl Gpu {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
         let prev_rasterizer_type = self.wgpu_resources.display_config.rasterizer_type;
-        let prev_resolution_scale = self.wgpu_resources.display_config.hardware_resolution_scale;
+        let prev_wgpu_rasterizer_config =
+            self.wgpu_resources.display_config.to_wgpu_rasterizer_config();
         self.wgpu_resources.display_config = display_config;
 
         if prev_rasterizer_type != display_config.rasterizer_type
             || (display_config.rasterizer_type == RasterizerType::WgpuHardware
-                && prev_resolution_scale != display_config.hardware_resolution_scale)
+                && (prev_wgpu_rasterizer_config != display_config.to_wgpu_rasterizer_config()))
         {
             let vram = self.rasterizer.clone_vram();
             self.rasterizer = Rasterizer::from_state(
                 RasterizerState { vram },
                 &self.wgpu_resources.device,
                 &self.wgpu_resources.queue,
-                display_config.rasterizer_type,
-                display_config.hardware_resolution_scale,
+                display_config,
             );
         }
     }
@@ -223,13 +233,8 @@ impl Gpu {
         wgpu_queue: Arc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
-        let rasterizer = Rasterizer::from_state(
-            state.rasterizer,
-            &wgpu_device,
-            &wgpu_queue,
-            display_config.rasterizer_type,
-            display_config.hardware_resolution_scale,
-        );
+        let rasterizer =
+            Rasterizer::from_state(state.rasterizer, &wgpu_device, &wgpu_queue, display_config);
 
         Self {
             registers: state.registers,

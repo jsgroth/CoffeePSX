@@ -3,24 +3,25 @@
 //
 //   scaled_vram_copy: texture_storage_2d<rgba8unorm, read>
 //
-//   draw_settings: struct {
-//       resolution_scale: u32,
-//       ...
-//   }
+//   draw_settings: DrawSettings
 
 struct DrawSettings {
     force_mask_bit: u32,
     resolution_scale: u32,
+    high_color: u32,
+    dithering: u32,
 }
 
 struct UntexturedVertex {
     @location(0) position: vec2i,
     @location(1) color: vec3u,
+    @location(2) ditherable: u32,
 }
 
 struct UntexturedVertexOutput {
     @builtin(position) position: vec4f,
     @location(0) color: vec3f,
+    @location(1) ditherable: u32,
 }
 
 fn vram_position_to_vertex(position: vec2i) -> vec4f {
@@ -47,23 +48,9 @@ struct TexturedVertex {
     @location(4) tex_window_mask: vec2u,
     @location(5) tex_window_offset: vec2u,
     @location(6) clut: vec2u,
-    @location(7) color_depth: u32,
-    @location(8) modulated: u32,
-    @location(9) other_positions: vec4i,
-    @location(10) other_uv: vec4u,
-}
-
-struct TexturedRectVertex {
-    @location(0) position: vec2i,
-    @location(1) color: vec3u,
-    @location(2) texpage: vec2u,
-    @location(3) tex_window_mask: vec2u,
-    @location(4) tex_window_offset: vec2u,
-    @location(5) clut: vec2u,
-    @location(6) color_depth: u32,
-    @location(7) modulated: u32,
-    @location(8) base_position: vec2i,
-    @location(9) base_uv: vec2u,
+    @location(7) flags: u32,
+    @location(8) other_positions: vec4i,
+    @location(9) other_uv: vec4u,
 }
 
 struct TexturedVertexOutput {
@@ -74,9 +61,42 @@ struct TexturedVertexOutput {
     @location(3) tex_window_mask: vec2u,
     @location(4) tex_window_offset: vec2u,
     @location(5) clut: vec2u,
-    @location(6) color_depth: u32,
-    @location(7) modulated: u32,
-    @location(8) uv_round_direction: vec2i,
+    @location(6) flags: u32,
+    @location(7) uv_round_direction: vec2i,
+}
+
+const COLOR_DEPTH_FLAGS: u32 = 3;
+const MODULATED_FLAG: u32 = 4;
+const DITHERABLE_FLAG: u32 = 8;
+
+struct Flags {
+    color_depth: u32,
+    modulated: bool,
+    ditherable: bool,
+}
+
+fn parse_flags(flags: u32) -> Flags {
+    return Flags(
+        flags & COLOR_DEPTH_FLAGS,
+        (flags & MODULATED_FLAG) != 0,
+        (flags & DITHERABLE_FLAG) != 0,
+    );
+}
+
+fn flags_ditherable(flags: u32) -> bool {
+    return (flags & DITHERABLE_FLAG) != 0;
+}
+
+struct TexturedRectVertex {
+    @location(0) position: vec2i,
+    @location(1) color: vec3u,
+    @location(2) texpage: vec2u,
+    @location(3) tex_window_mask: vec2u,
+    @location(4) tex_window_offset: vec2u,
+    @location(5) clut: vec2u,
+    @location(6) flags: u32,
+    @location(7) base_position: vec2i,
+    @location(8) base_uv: vec2u,
 }
 
 struct TexturedRectVertexOutput {
@@ -86,10 +106,9 @@ struct TexturedRectVertexOutput {
     @location(2) tex_window_mask: vec2u,
     @location(3) tex_window_offset: vec2u,
     @location(4) clut: vec2u,
-    @location(5) color_depth: u32,
-    @location(6) modulated: u32,
-    @location(7) base_position: vec2i,
-    @location(8) base_uv: vec2u,
+    @location(5) flags: u32,
+    @location(6) base_position: vec2i,
+    @location(7) base_uv: vec2u,
 }
 
 fn compute_dx(component: vec3i, v0: vec2i, v1: vec2i, v2: vec2i) -> i32 {
@@ -157,8 +176,16 @@ fn apply_texture_window(uv: vec2u, mask: vec2u, offset: vec2u) -> vec2u {
 }
 
 fn apply_modulation(texel: vec4f, input_color: vec3f) -> vec4f {
-    let rgb = floor(texel.rgb * 1.9921875 * input_color * 255.0) / 255.0;
+    let rgb = saturate(floor(texel.rgb * 1.9921875 * input_color * 255.0) / 255.0);
     return vec4f(rgb, texel.a);
+}
+
+fn convert_texel_low_color(texel: vec3u) -> vec3f {
+    return vec3f(texel << vec3u(3)) / 255.0;
+}
+
+fn convert_texel_high_color(texel: vec3u) -> vec3f {
+    return vec3f(texel) / 31.0;
 }
 
 fn sample_texture(
@@ -168,13 +195,12 @@ fn sample_texture(
     tex_window_mask: vec2u,
     tex_window_offset: vec2u,
     clut: vec2u,
-    color_depth: u32,
-    modulated: u32,
+    flags: Flags,
 ) -> vec4f {
     let uv = apply_texture_window(input_uv, tex_window_mask, tex_window_offset);
 
     var color: u32;
-    switch (color_depth) {
+    switch (flags.color_depth) {
         case 0u: {
             color = read_4bpp_texture(uv, texpage, clut);
         }
@@ -190,13 +216,18 @@ fn sample_texture(
         discard;
     }
 
-    let r = f32(color & 0x1F) / 31.0;
-    let g = f32((color >> 5) & 0x1F) / 31.0;
-    let b = f32((color >> 10) & 0x1F) / 31.0;
-    let a = f32((color >> 15) & 1);
-    var texel = vec4f(r, g, b, a);
+    let texel_parsed = (vec3u(color) >> vec3u(0, 5, 10)) & vec3u(0x1F);
+    var texel_rgb: vec3f;
+    if draw_settings.high_color != 0 {
+        texel_rgb = convert_texel_high_color(texel_parsed);
+    } else {
+        texel_rgb = convert_texel_low_color(texel_parsed);
+    }
 
-    if modulated != 0 {
+    let a = f32((color >> 15) & 1);
+    var texel = vec4f(texel_rgb, a);
+
+    if flags.modulated {
         texel = apply_modulation(texel, input_color);
     }
 
@@ -207,7 +238,7 @@ fn sample_15bpp_texture(
     input_color: vec3f,
     scaled_uv: vec2u,
     texpage: vec2u,
-    modulated: u32,
+    modulated: bool,
 ) -> vec4f {
     let scale = draw_settings.resolution_scale;
     let x = (scale * texpage.x + scaled_uv.x) % (scale * 1024);
@@ -218,7 +249,15 @@ fn sample_15bpp_texture(
         discard;
     }
 
-    if modulated != 0 {
+    if draw_settings.high_color == 0 {
+        // Mask out the lowest 3 bits of each component
+        let texel_rgb = round(8.0 * floor(texel.rgb * 255.0 / 8.0)) / 255.0;
+        texel.r = texel_rgb.r;
+        texel.g = texel_rgb.g;
+        texel.b = texel_rgb.b;
+    }
+
+    if modulated {
         texel = apply_modulation(texel, input_color);
     }
 
@@ -236,7 +275,9 @@ fn round_uv(uv: vec2f, round_direction: vec2i) -> vec2u {
 }
 
 fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
-    if input.color_depth == TEXTURE_15BPP {
+    let flags = parse_flags(input.flags);
+
+    if flags.color_depth == TEXTURE_15BPP {
         let fractional_uv = fract(input.uv);
         let integral_uv = vec2u(input.uv);
         let masked_uv = apply_texture_window(integral_uv, input.tex_window_mask, input.tex_window_offset);
@@ -245,7 +286,7 @@ fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
         let fractional_uv_scaled = round_uv(f32(scale) * fractional_uv, input.uv_round_direction);
         let scaled_uv = scale * masked_uv + fractional_uv_scaled;
 
-        return sample_15bpp_texture(input.color, scaled_uv, input.texpage, input.modulated);
+        return sample_15bpp_texture(input.color, scaled_uv, input.texpage, flags.modulated);
     }
 
     let uv = round_uv(input.uv, input.uv_round_direction);
@@ -257,8 +298,7 @@ fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
         input.tex_window_mask,
         input.tex_window_offset,
         input.clut,
-        input.color_depth,
-        input.modulated,
+        flags,
     );
 }
 
@@ -267,10 +307,12 @@ fn sample_texture_rect(input: TexturedRectVertexOutput) -> vec4f {
         / i32(draw_settings.resolution_scale);
     let uv = (input.base_uv + vec2u(uv_offset)) & vec2u(255, 255);
 
-    if input.color_depth == TEXTURE_15BPP {
+    let flags = parse_flags(input.flags);
+
+    if flags.color_depth == TEXTURE_15BPP {
         let scale = draw_settings.resolution_scale;
         let scaled_uv = scale * uv + (vec2u(input.position.xy) % scale);
-        return sample_15bpp_texture(input.color, scaled_uv, input.texpage, input.modulated);
+        return sample_15bpp_texture(input.color, scaled_uv, input.texpage, flags.modulated);
     }
 
     return sample_texture(
@@ -280,7 +322,46 @@ fn sample_texture_rect(input: TexturedRectVertexOutput) -> vec4f {
         input.tex_window_mask,
         input.tex_window_offset,
         input.clut,
-        input.color_depth,
-        input.modulated,
+        flags,
     );
+}
+
+fn truncate_color(color: vec3f) -> vec3f {
+    // Truncate from 24bpp to 15bpp
+    let truncated = vec3u(round(color * 255.0)) >> vec3u(3);
+    return vec3f(truncated) / 31.0;
+}
+
+var<private> DITHER_TABLE: array<vec4f, 4> = array<vec4f, 4>(
+    vec4f(-0.01568627450980392, 0.0, -0.011764705882352941, 0.00392156862745098),
+    vec4f(0.00784313725490196, -0.00784313725490196, 0.011764705882352941, -0.00392156862745098),
+    vec4f(-0.011764705882352941, 0.00392156862745098, -0.01568627450980392, 0.0),
+    vec4f(0.011764705882352941, -0.00392156862745098, 0.00784313725490196, -0.00784313725490196),
+);
+
+fn apply_dither(color: vec3f, position: vec2u) -> vec3f {
+    let dither = DITHER_TABLE[position.y & 3][position.x & 3];
+    return saturate(color + vec3f(dither));
+}
+
+fn finalize_color_tri(pixel: vec4f, position: vec2f, ditherable: bool) -> vec4f {
+    var color = pixel.rgb;
+
+    if draw_settings.dithering != 0 && ditherable {
+        color = apply_dither(color, vec2u(position));
+    }
+
+    if draw_settings.high_color == 0 {
+        color = truncate_color(color);
+    }
+
+    return vec4f(color, pixel.a);
+}
+
+fn finalize_color_rect(pixel: vec4f) -> vec4f {
+    if draw_settings.high_color == 0 {
+        return vec4f(truncate_color(pixel.rgb), pixel.a);
+    }
+
+    return pixel;
 }

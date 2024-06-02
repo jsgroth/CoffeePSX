@@ -168,10 +168,9 @@ impl Rasterizer {
     pub fn new(
         wgpu_device: &Arc<wgpu::Device>,
         wgpu_queue: &Arc<wgpu::Queue>,
-        rasterizer_type: RasterizerType,
-        hardware_resolution_scale: u32,
+        config: DisplayConfig,
     ) -> Self {
-        match rasterizer_type {
+        match config.rasterizer_type {
             RasterizerType::NaiveSoftware => {
                 Self(Box::new(NaiveSoftwareRasterizer::new(wgpu_device)))
             }
@@ -181,7 +180,7 @@ impl Rasterizer {
             RasterizerType::WgpuHardware => Self(Box::new(WgpuRasterizer::new(
                 Arc::clone(wgpu_device),
                 Arc::clone(wgpu_queue),
-                hardware_resolution_scale,
+                config.to_wgpu_rasterizer_config(),
             ))),
         }
     }
@@ -195,10 +194,9 @@ impl Rasterizer {
         state: RasterizerState,
         wgpu_device: &Arc<wgpu::Device>,
         wgpu_queue: &Arc<wgpu::Queue>,
-        rasterizer_type: RasterizerType,
-        hardware_resolution_scale: u32,
+        config: DisplayConfig,
     ) -> Self {
-        match rasterizer_type {
+        match config.rasterizer_type {
             RasterizerType::NaiveSoftware => {
                 Self(Box::new(NaiveSoftwareRasterizer::from_vram(wgpu_device, &state.vram)))
             }
@@ -209,7 +207,7 @@ impl Rasterizer {
                 let rasterizer = WgpuRasterizer::new(
                     Arc::clone(wgpu_device),
                     Arc::clone(wgpu_queue),
-                    hardware_resolution_scale,
+                    config.to_wgpu_rasterizer_config(),
                 );
                 rasterizer.copy_vram_from(&state.vram);
                 Self(Box::new(rasterizer))

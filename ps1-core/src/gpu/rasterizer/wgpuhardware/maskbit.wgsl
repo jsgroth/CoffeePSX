@@ -15,7 +15,8 @@ fn fs_untextured_average(input: UntexturedVertexOutput) -> @location(0) vec4f {
         discard;
     }
 
-    let blended_color = saturate(0.5 * input.color + 0.5 * existing.rgb);
+    let input_color = finalize_color_tri(vec4f(input.color, 0.0), input.position.xy, input.ditherable != 0);
+    let blended_color = saturate(0.5 * input_color.rgb + 0.5 * existing.rgb);
     let pixel = vec4f(blended_color, f32(draw_settings.force_mask_bit));
     textureStore(scaled_vram, position, pixel);
 
@@ -38,7 +39,7 @@ fn fs_textured_average(input: TexturedVertexOutput) -> @location(0) vec4f {
         discard;
     }
 
-    let texel = sample_texture_triangle(input);
+    let texel = finalize_color_tri(sample_texture_triangle(input), input.position.xy, flags_ditherable(input.flags));
     let blended_color = blend_average(texel, existing);
 
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
@@ -55,7 +56,7 @@ fn fs_textured_rect_average(input: TexturedRectVertexOutput) -> @location(0) vec
         discard;
     }
 
-    let texel = sample_texture_rect(input);
+    let texel = finalize_color_rect(sample_texture_rect(input));
     let blended_color = blend_average(texel, existing);
 
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
@@ -79,7 +80,7 @@ fn textured_add(input: TexturedVertexOutput, factor: f32) -> vec4f {
         discard;
     }
 
-    let texel = sample_texture_triangle(input);
+    let texel = finalize_color_tri(sample_texture_triangle(input), input.position.xy, flags_ditherable(input.flags));
     let blended_color = blend_add(texel, existing, factor);
 
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
@@ -95,7 +96,7 @@ fn textured_rect_add(input: TexturedRectVertexOutput, factor: f32) -> vec4f {
         discard;
     }
 
-    let texel = sample_texture_rect(input);
+    let texel = finalize_color_rect(sample_texture_rect(input));
     let blended_color = blend_add(texel, existing, factor);
 
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
@@ -130,7 +131,7 @@ fn fs_textured_subtract(input: TexturedVertexOutput) -> @location(0) vec4f {
         discard;
     }
 
-    let texel = sample_texture_triangle(input);
+    let texel = finalize_color_tri(sample_texture_triangle(input), input.position.xy, flags_ditherable(input.flags));
     let blended_color = blend_subtract(texel, existing);
 
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
@@ -147,7 +148,7 @@ fn fs_textured_rect_subtract(input: TexturedRectVertexOutput) -> @location(0) ve
         discard;
     }
 
-    let texel = sample_texture_rect(input);
+    let texel = finalize_color_rect(sample_texture_rect(input));
     let blended_color = blend_subtract(texel, existing);
 
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));

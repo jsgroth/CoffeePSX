@@ -1,7 +1,7 @@
 use crate::gpu::gp0::{
     DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
 };
-use crate::gpu::rasterizer::wgpuhardware::include_wgsl_concat;
+use crate::gpu::rasterizer::wgpuhardware::{include_wgsl_concat, WgpuRasterizerConfig};
 use crate::gpu::rasterizer::{
     DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading, RectangleTextureMapping,
     TextureMapping, TextureMappingMode, TriangleShading, TriangleTextureMapping,
@@ -26,11 +26,20 @@ use wgpu::{
 struct ShaderDrawSettings {
     force_mask_bit: u32,
     resolution_scale: u32,
+    high_color: u32,
+    dithering: u32,
 }
 
 impl ShaderDrawSettings {
-    fn new(draw_settings: &DrawSettings, resolution_scale: u32) -> Self {
-        Self { force_mask_bit: draw_settings.force_mask_bit.into(), resolution_scale }
+    fn new(draw_settings: &DrawSettings, config: WgpuRasterizerConfig) -> Self {
+        let dithering =
+            config.dithering_allowed && !config.high_color && draw_settings.dithering_enabled;
+        Self {
+            force_mask_bit: draw_settings.force_mask_bit.into(),
+            resolution_scale: config.resolution_scale,
+            high_color: config.high_color.into(),
+            dithering: dithering.into(),
+        }
     }
 }
 
@@ -39,10 +48,12 @@ impl ShaderDrawSettings {
 struct UntexturedVertex {
     position: [i32; 2],
     color: [u32; 3],
+    ditherable: u32,
 }
 
 impl UntexturedVertex {
-    const ATTRIBUTES: [VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Sint32x2, 1 => Uint32x3];
+    const ATTRIBUTES: [VertexAttribute; 3] =
+        wgpu::vertex_attr_array![0 => Sint32x2, 1 => Uint32x3, 2 => Uint32];
 
     const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
         array_stride: mem::size_of::<Self>() as u64,
@@ -61,8 +72,7 @@ struct TexturedVertex {
     tex_window_mask: [u32; 2],
     tex_window_offset: [u32; 2],
     clut: [u32; 2],
-    color_depth: u32,
-    modulated: u32,
+    flags: u32,
     other_positions: [i32; 4],
     other_uv: [u32; 4],
 }
@@ -92,7 +102,7 @@ fn vertex_color_depth(color_depth: TextureColorDepthBits) -> u32 {
 }
 
 impl TexturedVertex {
-    const ATTRIBUTES: [VertexAttribute; 11] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [VertexAttribute; 10] = wgpu::vertex_attr_array![
         0 => Sint32x2,
         1 => Uint32x3,
         2 => Uint32x2,
@@ -101,9 +111,8 @@ impl TexturedVertex {
         5 => Uint32x2,
         6 => Uint32x2,
         7 => Uint32,
-        8 => Uint32,
-        9 => Sint32x4,
-        10 => Uint32x4,
+        8 => Sint32x4,
+        9 => Uint32x4,
     ];
 
     const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
@@ -116,7 +125,11 @@ impl TexturedVertex {
         positions: [[i32; 2]; 3],
         colors: [Color; 3],
         texture_mapping: &TriangleTextureMapping,
+        ditherable: bool,
     ) -> [Self; 3] {
+        let flags =
+            generate_flags(texture_mapping.texpage.color_depth, texture_mapping.mode, ditherable);
+
         array::from_fn(|i| {
             let j = (i + 1) % 3;
             let k = (i + 2) % 3;
@@ -129,8 +142,7 @@ impl TexturedVertex {
                 tex_window_mask: vertex_tex_window_mask(texture_mapping.window),
                 tex_window_offset: vertex_tex_window_offset(texture_mapping.window),
                 clut: vertex_clut(texture_mapping),
-                color_depth: vertex_color_depth(texture_mapping.texpage.color_depth),
-                modulated: (texture_mapping.mode == TextureMappingMode::Modulated).into(),
+                flags,
                 other_positions: [
                     positions[j][0],
                     positions[j][1],
@@ -148,6 +160,18 @@ impl TexturedVertex {
     }
 }
 
+fn generate_flags(
+    color_depth: TextureColorDepthBits,
+    mode: TextureMappingMode,
+    ditherable: bool,
+) -> u32 {
+    // Must match Flags in draw_common.wgsl
+    let color_depth_bits = vertex_color_depth(color_depth);
+    let modulated_bit = u32::from(mode == TextureMappingMode::Modulated) << 2;
+    let ditherable_bit = u32::from(ditherable) << 3;
+    color_depth_bits | modulated_bit | ditherable_bit
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod)]
 struct TexturedRectVertex {
@@ -157,14 +181,13 @@ struct TexturedRectVertex {
     tex_window_mask: [u32; 2],
     tex_window_offset: [u32; 2],
     clut: [u32; 2],
-    color_depth: u32,
-    modulated: u32,
+    flags: u32,
     base_position: [i32; 2],
     base_uv: [u32; 2],
 }
 
 impl TexturedRectVertex {
-    const ATTRIBUTES: [VertexAttribute; 10] = wgpu::vertex_attr_array![
+    const ATTRIBUTES: [VertexAttribute; 9] = wgpu::vertex_attr_array![
         0 => Sint32x2,
         1 => Uint32x3,
         2 => Uint32x2,
@@ -172,9 +195,8 @@ impl TexturedRectVertex {
         4 => Uint32x2,
         5 => Uint32x2,
         6 => Uint32,
-        7 => Uint32,
-        8 => Sint32x2,
-        9 => Uint32x2,
+        7 => Sint32x2,
+        8 => Uint32x2,
     ];
 
     const LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
@@ -191,6 +213,9 @@ impl TexturedRectVertex {
         let top_left = args.top_left + draw_settings.draw_offset;
         let vertices = rect_vertices(args, draw_settings.draw_offset);
 
+        let flags =
+            generate_flags(texture_mapping.texpage.color_depth, texture_mapping.mode, false);
+
         array::from_fn(|i| Self {
             position: [vertices[i].x, vertices[i].y],
             color: [args.color.r.into(), args.color.g.into(), args.color.b.into()],
@@ -198,8 +223,7 @@ impl TexturedRectVertex {
             tex_window_mask: vertex_tex_window_mask(texture_mapping.window),
             tex_window_offset: vertex_tex_window_offset(texture_mapping.window),
             clut: vertex_clut(texture_mapping),
-            color_depth: vertex_color_depth(texture_mapping.texpage.color_depth),
-            modulated: (texture_mapping.mode == TextureMappingMode::Modulated).into(),
+            flags,
             base_position: [top_left.x, top_left.y],
             base_uv: [texture_mapping.u[0].into(), texture_mapping.v[0].into()],
         })
@@ -707,12 +731,12 @@ impl DrawPipelines {
     pub fn draw<'rpass>(
         &'rpass mut self,
         buffers: &'rpass DrawBuffers,
-        resolution_scale: u32,
+        config: WgpuRasterizerConfig,
         render_pass: &mut RenderPass<'rpass>,
     ) {
         for batch in self.batches.drain(..) {
-            let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
-            set_scissor_rect(render_pass, &batch.draw_settings, resolution_scale);
+            let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, config);
+            set_scissor_rect(render_pass, &batch.draw_settings, config.resolution_scale);
 
             let check_mask_bit = batch.draw_settings.check_mask_bit;
 
@@ -930,15 +954,19 @@ fn add_triangle_to_batch(
         TriangleShading::Gouraud(colors) => colors,
     };
 
+    let gouraud_shaded = matches!(args.shading, TriangleShading::Gouraud(..));
     match &args.texture_mapping {
         Some(mapping) => {
-            textured_buffer.extend(TexturedVertex::new_vertices(positions, colors, mapping));
+            let ditherable = gouraud_shaded || mapping.mode == TextureMappingMode::Modulated;
+            textured_buffer
+                .extend(TexturedVertex::new_vertices(positions, colors, mapping, ditherable));
         }
         None => {
             for (i, position) in positions.into_iter().enumerate() {
                 untextured_buffer.push(UntexturedVertex {
                     position,
                     color: [colors[i].r.into(), colors[i].g.into(), colors[i].b.into()],
+                    ditherable: gouraud_shaded.into(),
                 });
             }
         }
@@ -1053,7 +1081,11 @@ fn add_line_to_batch(
 
     for range in [0..3, 1..4] {
         for i in range {
-            untextured_buffer.push(UntexturedVertex { position: positions[i], color: colors[i] });
+            untextured_buffer.push(UntexturedVertex {
+                position: positions[i],
+                color: colors[i],
+                ditherable: true.into(),
+            });
         }
     }
 
@@ -1385,12 +1417,12 @@ impl MaskBitPipelines {
     pub fn draw<'rpass>(
         &'rpass mut self,
         buffers: &'rpass DrawBuffers,
-        resolution_scale: u32,
+        config: WgpuRasterizerConfig,
         render_pass: &mut RenderPass<'rpass>,
     ) {
         for batch in self.batches.drain(..) {
-            let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, resolution_scale);
-            set_scissor_rect(render_pass, &batch.draw_settings, resolution_scale);
+            let draw_settings = ShaderDrawSettings::new(&batch.draw_settings, config);
+            set_scissor_rect(render_pass, &batch.draw_settings, config.resolution_scale);
 
             match batch.pipeline {
                 DrawPipeline::UntexturedTriangle(Some(SemiTransparencyMode::Average)) => {

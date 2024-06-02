@@ -91,6 +91,10 @@ pub struct VideoConfig {
     pub wgpu_backend: WgpuBackend,
     #[serde(default = "default_resolution_scale")]
     pub hardware_resolution_scale: u32,
+    #[serde(default = "true_fn")]
+    pub hardware_high_color: bool,
+    #[serde(default = "true_fn")]
+    pub hardware_15bpp_dithering: bool,
     #[serde(default)]
     pub async_swap_chain_rendering: bool,
 }
@@ -208,6 +212,8 @@ impl AppConfig {
                 dump_vram: self.video.vram_display,
                 rasterizer_type: self.video.rasterizer_type(),
                 hardware_resolution_scale: self.video.hardware_resolution_scale,
+                high_color: self.video.hardware_high_color,
+                dithering_allowed: self.video.hardware_15bpp_dithering,
             },
             internal_audio_buffer_size: self.audio.internal_buffer_size,
         }

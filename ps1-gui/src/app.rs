@@ -346,6 +346,19 @@ impl App {
                         });
                     });
 
+                    ui.group(|ui| {
+                        ui.label("Draw command color depth")
+                            .on_disabled_hover_text(disabled_hover_text);
+
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut self.config.video.hardware_high_color, false, "15bpp (Native)")
+                                .on_disabled_hover_text(disabled_hover_text);
+                            ui.radio_value(&mut self.config.video.hardware_high_color, true, "24bpp (High color)")
+                                .on_hover_text("Works very well with most games but sometimes changes a game's look (e.g. Silent Hill)")
+                                .on_disabled_hover_text(disabled_hover_text);
+                        });
+                    });
+
                     ui.horizontal(|ui| {
                         ui.label("Resolution scale:").on_disabled_hover_text(disabled_hover_text);
 
@@ -354,6 +367,12 @@ impl App {
                             1..=16,
                         ))
                         .on_disabled_hover_text(disabled_hover_text);
+                    });
+
+                    ui.add_enabled_ui(!self.config.video.hardware_high_color, |ui| {
+                        ui.checkbox(&mut self.config.video.hardware_15bpp_dithering, "Dithering enabled")
+                            .on_hover_text("Whether to respect the PS1 GPU's dithering flag")
+                            .on_disabled_hover_text("Hardware rasterizer 15bpp mode only");
                     });
                 });
 

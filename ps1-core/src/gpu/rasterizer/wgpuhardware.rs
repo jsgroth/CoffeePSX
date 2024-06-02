@@ -142,6 +142,15 @@ impl BitOrAssign for HazardCheck {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WgpuRasterizerConfig {
+    pub resolution_scale: u32,
+    // Render draw command output in 24bpp color instead of native 15bpp color
+    pub high_color: bool,
+    // Whether the dithering flag is respected; only functional in 15bpp color mode
+    pub dithering_allowed: bool,
+}
+
 // Hack: Limit how rapidly the rasterizer will sync the VRAMs; this fixes terrible performance in
 // Valkyrie Profile whenever Freya is onscreen. Her ripple effects are drawn using a bunch of
 // textured quads that sample from nearby in the current frame buffer.
@@ -151,7 +160,7 @@ const SCALED_NATIVE_SYNC_DELAY: u8 = 5;
 pub struct WgpuRasterizer {
     device: Arc<Device>,
     queue: Arc<Queue>,
-    resolution_scale: u32,
+    config: WgpuRasterizerConfig,
     // rgba8unorm at scaled resolution; used for rendering
     scaled_vram: Texture,
     // rgba8unorm at scaled resolution; used for 15bpp texture sampling
@@ -177,9 +186,15 @@ pub struct WgpuRasterizer {
 }
 
 impl WgpuRasterizer {
-    pub fn new(device: Arc<Device>, queue: Arc<Queue>, resolution_scale: u32) -> Self {
-        log::info!("Creating wgpu hardware rasterizer with resolution scale {resolution_scale}");
+    pub fn new(device: Arc<Device>, queue: Arc<Queue>, config: WgpuRasterizerConfig) -> Self {
+        log::info!(
+            "Creating wgpu hardware rasterizer with resolution_scale={}, high_color={}, 15bpp_dithering={}",
+            config.resolution_scale,
+            config.high_color,
+            config.dithering_allowed
+        );
 
+        let resolution_scale = config.resolution_scale;
         let scaled_vram = device.create_texture(&TextureDescriptor {
             label: "scaled_vram_texture".into(),
             size: Extent3d {
@@ -267,7 +282,7 @@ impl WgpuRasterizer {
         Self {
             device,
             queue,
-            resolution_scale,
+            config,
             scaled_vram,
             scaled_vram_copy,
             native_vram,
@@ -342,7 +357,7 @@ impl WgpuRasterizer {
         let frame = get_or_create_frame_texture(
             &self.device,
             frame_size,
-            self.resolution_scale,
+            self.config.resolution_scale,
             &mut self.frame_textures,
         );
 
@@ -478,7 +493,7 @@ impl WgpuRasterizer {
                 ..RenderPassDescriptor::default()
             });
 
-            self.draw_pipelines.draw(&draw_buffers, self.resolution_scale, &mut render_pass);
+            self.draw_pipelines.draw(&draw_buffers, self.config, &mut render_pass);
         }
     }
 
@@ -524,7 +539,7 @@ impl WgpuRasterizer {
                 ..RenderPassDescriptor::default()
             });
 
-            self.mask_bit_pipelines.draw(&draw_buffers, self.resolution_scale, &mut render_pass);
+            self.mask_bit_pipelines.draw(&draw_buffers, self.config, &mut render_pass);
         }
     }
 
@@ -621,7 +636,11 @@ impl WgpuRasterizer {
             for draw_command in &self.draw_commands[draw_command_range] {
                 let DrawCommand::VramCopy { args } = draw_command else { continue };
 
-                self.vram_copy_pipeline.dispatch(args, self.resolution_scale, &mut compute_pass);
+                self.vram_copy_pipeline.dispatch(
+                    args,
+                    self.config.resolution_scale,
+                    &mut compute_pass,
+                );
             }
         }
     }
@@ -680,8 +699,9 @@ impl WgpuRasterizer {
             return;
         }
 
-        let scaled_position = position.map(|value| value * self.resolution_scale);
-        let scaled_size = size.map(|value| value * self.resolution_scale);
+        let resolution_scale = self.config.resolution_scale;
+        let scaled_position = position.map(|value| value * resolution_scale);
+        let scaled_size = size.map(|value| value * resolution_scale);
 
         let copy_origin = Origin3d { x: scaled_position[0], y: scaled_position[1], z: 0 };
 
@@ -1143,10 +1163,11 @@ impl RasterizerInterface for WgpuRasterizer {
             );
         }
 
+        let resolution_scale = self.config.resolution_scale;
         let frame = get_or_create_frame_texture(
             &self.device,
             frame_size,
-            self.resolution_scale,
+            resolution_scale,
             &mut self.frame_textures,
         );
 
@@ -1161,8 +1182,8 @@ impl RasterizerInterface for WgpuRasterizer {
                 texture: &self.scaled_vram,
                 mip_level: 0,
                 origin: Origin3d {
-                    x: self.resolution_scale * source_x,
-                    y: self.resolution_scale * source_y,
+                    x: resolution_scale * source_x,
+                    y: resolution_scale * source_y,
                     z: 0,
                 },
                 aspect: TextureAspect::All,
@@ -1171,15 +1192,15 @@ impl RasterizerInterface for WgpuRasterizer {
                 texture: frame,
                 mip_level: 0,
                 origin: Origin3d {
-                    x: self.resolution_scale * frame_coords.display_x_start,
-                    y: self.resolution_scale * frame_coords.display_y_start,
+                    x: resolution_scale * frame_coords.display_x_start,
+                    y: resolution_scale * frame_coords.display_y_start,
                     z: 0,
                 },
                 aspect: TextureAspect::All,
             },
             Extent3d {
-                width: self.resolution_scale * frame_coords.display_width,
-                height: self.resolution_scale * frame_coords.display_height,
+                width: resolution_scale * frame_coords.display_width,
+                height: resolution_scale * frame_coords.display_height,
                 depth_or_array_layers: 1,
             },
         );

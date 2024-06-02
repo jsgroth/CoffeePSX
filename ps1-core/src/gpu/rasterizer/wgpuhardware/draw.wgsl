@@ -6,7 +6,7 @@ fn vs_untextured(input: UntexturedVertex) -> UntexturedVertexOutput {
 
     let color = vec3f(input.color) / 255.0;
 
-    return UntexturedVertexOutput(position, color);
+    return UntexturedVertexOutput(position, color, input.ditherable);
 }
 
 @vertex
@@ -27,8 +27,7 @@ fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
         input.tex_window_mask,
         input.tex_window_offset,
         input.clut,
-        input.color_depth,
-        input.modulated,
+        input.flags,
         uv_round_direction,
     );
 }
@@ -45,8 +44,7 @@ fn vs_textured_rect(input: TexturedRectVertex) -> TexturedRectVertexOutput {
         input.tex_window_mask,
         input.tex_window_offset,
         input.clut,
-        input.color_depth,
-        input.modulated,
+        input.flags,
         input.base_position,
         input.base_uv,
     );
@@ -54,19 +52,21 @@ fn vs_textured_rect(input: TexturedRectVertex) -> TexturedRectVertexOutput {
 
 @fragment
 fn fs_untextured_opaque(input: UntexturedVertexOutput) -> @location(0) vec4f {
-    return vec4f(input.color, f32(draw_settings.force_mask_bit));
+    let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
+    return finalize_color_tri(color, input.position.xy, input.ditherable != 0);
 }
 
 @fragment
 fn fs_untextured_average(input: UntexturedVertexOutput) -> SemiTransparentOutput {
     let color = vec4f(input.color, f32(draw_settings.force_mask_bit));
     let blend = vec4f(0.5);
-    return SemiTransparentOutput(color, blend);
+    return SemiTransparentOutput(finalize_color_tri(color, input.position.xy, input.ditherable != 0), blend);
 }
 
 @fragment
 fn fs_untextured_add_quarter(input: UntexturedVertexOutput) -> @location(0) vec4f {
-    return vec4f(0.25 * input.color, f32(draw_settings.force_mask_bit));
+    let color = vec4f(0.25 * input.color, f32(draw_settings.force_mask_bit));
+    return finalize_color_tri(color, input.position.xy, input.ditherable != 0);
 }
 
 @group(0) @binding(0)
@@ -78,14 +78,14 @@ var scaled_vram_copy: texture_storage_2d<rgba8unorm, read>;
 fn fs_textured_opaque(input: TexturedVertexOutput) -> @location(0) vec4f {
     var color = sample_texture_triangle(input);
     color.a = max(color.a, f32(draw_settings.force_mask_bit));
-    return color;
+    return finalize_color_tri(color, input.position.xy, flags_ditherable(input.flags));
 }
 
 @fragment
 fn fs_textured_rect_opaque(input: TexturedRectVertexOutput) -> @location(0) vec4f {
     var color = sample_texture_rect(input);
     color.a = max(color.a, f32(draw_settings.force_mask_bit));
-    return color;
+    return finalize_color_rect(color);
 }
 
 fn average_blend(texel: vec4f) -> vec4f {
@@ -100,7 +100,10 @@ fn fs_textured_average(input: TexturedVertexOutput) -> SemiTransparentOutput {
 
     let blend = average_blend(texel);
 
-    return SemiTransparentOutput(color, blend);
+    return SemiTransparentOutput(
+        finalize_color_tri(color, input.position.xy, flags_ditherable(input.flags)),
+        blend,
+    );
 }
 
 @fragment
@@ -110,7 +113,7 @@ fn fs_textured_rect_average(input: TexturedRectVertexOutput) -> SemiTransparentO
 
     let blend = average_blend(texel);
 
-    return SemiTransparentOutput(color, blend);
+    return SemiTransparentOutput(finalize_color_rect(color), blend);
 }
 
 fn additive_blend(texel: vec4f) -> vec4f {
@@ -125,7 +128,10 @@ fn fs_textured_add(input: TexturedVertexOutput) -> SemiTransparentOutput {
 
     let blend = additive_blend(texel);
 
-    return SemiTransparentOutput(color, blend);
+    return SemiTransparentOutput(
+        finalize_color_tri(color, input.position.xy, flags_ditherable(input.flags)),
+        blend,
+    );
 }
 
 @fragment
@@ -135,47 +141,49 @@ fn fs_textured_rect_add(input: TexturedRectVertexOutput) -> SemiTransparentOutpu
 
     let blend = additive_blend(texel);
 
-    return SemiTransparentOutput(color, blend);
+    return SemiTransparentOutput(finalize_color_rect(color), blend);
 }
 
 @fragment
 fn fs_textured_subtract_opaque_texels(input: TexturedVertexOutput) -> @location(0) vec4f {
-    let color = sample_texture_triangle(input);
-    if color.a != 0.0 {
+    let texel = sample_texture_triangle(input);
+    if texel.a != 0.0 {
         discard;
     }
 
-    return vec4f(color.rgb, f32(draw_settings.force_mask_bit));
+    let color = vec4f(texel.rgb, f32(draw_settings.force_mask_bit));
+    return finalize_color_tri(color, input.position.xy, flags_ditherable(input.flags));
 }
 
 @fragment
 fn fs_textured_subtract_transparent_texels(input: TexturedVertexOutput) -> @location(0) vec4f {
-    let color = sample_texture_triangle(input);
-    if color.a == 0.0 {
+    let texel = sample_texture_triangle(input);
+    if texel.a == 0.0 {
         discard;
     }
 
-    return vec4f(color.rgb, 1.0);
+    return finalize_color_tri(texel, input.position.xy, flags_ditherable(input.flags));
 }
 
 @fragment
 fn fs_textured_rect_subtract_opaque_texels(input: TexturedRectVertexOutput) -> @location(0) vec4f {
-    let color = sample_texture_rect(input);
-    if color.a != 0.0 {
+    let texel = sample_texture_rect(input);
+    if texel.a != 0.0 {
         discard;
     }
 
-    return vec4f(color.rgb, f32(draw_settings.force_mask_bit));
+    let color = vec4f(texel.rgb, f32(draw_settings.force_mask_bit));
+    return finalize_color_rect(color);
 }
 
 @fragment
 fn fs_textured_rect_subtract_transparent_texels(input: TexturedRectVertexOutput) -> @location(0) vec4f {
-    let color = sample_texture_rect(input);
-    if color.a == 0.0 {
+    let texel = sample_texture_rect(input);
+    if texel.a == 0.0 {
         discard;
     }
 
-    return vec4f(color.rgb, 1.0);
+    return finalize_color_rect(texel);
 }
 
 fn add_quarter_premultiply(texel: vec4f) -> vec3f {
@@ -190,7 +198,10 @@ fn fs_textured_add_quarter(input: TexturedVertexOutput) -> SemiTransparentOutput
 
     let blend = additive_blend(texel);
 
-    return SemiTransparentOutput(color, blend);
+    return SemiTransparentOutput(
+        finalize_color_tri(color, input.position.xy, flags_ditherable(input.flags)),
+        blend,
+    );
 }
 
 @fragment
@@ -201,5 +212,5 @@ fn fs_textured_rect_add_quarter(input: TexturedRectVertexOutput) -> SemiTranspar
 
     let blend = additive_blend(texel);
 
-    return SemiTransparentOutput(color, blend);
+    return SemiTransparentOutput(finalize_color_rect(color), blend);
 }
