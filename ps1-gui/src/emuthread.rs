@@ -471,7 +471,7 @@ struct FsSaveWriter {
 
 impl FsSaveWriter {
     fn from_path(path: &Path) -> anyhow::Result<Self> {
-        static DISC_REGEX: OnceLock<Regex> = OnceLock::new();
+        static DISC_REV_REGEX: OnceLock<Regex> = OnceLock::new();
 
         let path_no_ext = path.with_extension("");
         let file_name_no_ext =
@@ -479,9 +479,10 @@ impl FsSaveWriter {
                 anyhow!("Unable to determine file extension for path: {}", path.display())
             })?;
 
-        let disc_regex = DISC_REGEX.get_or_init(|| Regex::new(r" \(Disc [1-9]\)$").unwrap());
+        let disc_rev_regex = DISC_REV_REGEX
+            .get_or_init(|| Regex::new(r"( \(Disc [1-9]\))?( \(Rev [1-9]\))?$").unwrap());
 
-        let file_name_no_disc = disc_regex.replace(file_name_no_ext, "");
+        let file_name_no_disc = disc_rev_regex.replace(file_name_no_ext, "");
         let card_1_file_name = format!("{file_name_no_disc}_1.mcd");
         let card_1_path = PathBuf::from(MEMORY_CARDS_DIRECTORY).join(card_1_file_name);
 
