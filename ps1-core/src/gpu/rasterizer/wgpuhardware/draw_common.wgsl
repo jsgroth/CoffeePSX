@@ -273,7 +273,7 @@ fn round_uv(uv: vec2f, duv: vec2f) -> vec2u {
     // This doesn't make a whole lot of sense but it seems to work decently with both 2D and 3D graphics.
     // The basic idea is to round in the direction that U and V would change when moving up and left, but not to round
     // too far if dU or dV is very small
-    let clamped_duv = clamp(0.5 * duv, vec2f(-0.5), vec2f(0.5));
+    let clamped_duv = clamp(duv, vec2f(-0.5), vec2f(0.5));
     return vec2u(round(uv - clamped_duv));
 }
 
