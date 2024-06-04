@@ -15,9 +15,7 @@ fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
     let color = vec3f(input.color) / 255.0;
     let uv = vec2f(input.uv);
 
-    let uv_round_direction = compute_uv_round_direction(
-        input.position, input.uv, input.other_positions, input.other_uv,
-    );
+    let duv = compute_duv(input.position, input.uv, input.other_positions, input.other_uv);
 
     return TexturedVertexOutput(
         position,
@@ -28,7 +26,7 @@ fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
         input.tex_window_offset,
         input.clut,
         input.flags,
-        uv_round_direction,
+        duv,
     );
 }
 

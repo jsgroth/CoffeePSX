@@ -62,7 +62,8 @@ struct TexturedVertexOutput {
     @location(4) tex_window_offset: vec2u,
     @location(5) clut: vec2u,
     @location(6) flags: u32,
-    @location(7) uv_round_direction: vec2i,
+    // vec2(dU/dX + dU/dY, dV/dX + dV/dY)
+    @location(7) @interpolate(flat) duv: vec2f,
 }
 
 const COLOR_DEPTH_FLAGS: u32 = 3;
@@ -123,25 +124,25 @@ fn compute_dy(component: vec3i, v0: vec2i, v1: vec2i, v2: vec2i) -> i32 {
         + component[2] * (v1.x - v0.x);
 }
 
-fn compute_uv_round_direction(vert0: vec2i, uv0: vec2u, other_positions: vec4i, other_uv: vec4u) -> vec2i {
+fn compute_duv(vert0: vec2i, uv0: vec2u, other_positions: vec4i, other_uv: vec4u) -> vec2f {
     let vert1 = other_positions.xy;
     let vert2 = other_positions.zw;
     let uv1 = other_uv.xy;
     let uv2 = other_uv.zw;
 
-    let cpz_sign = sign((vert1.x - vert0.x) * (vert2.y - vert0.y) - (vert1.y - vert0.y) * (vert2.x - vert0.x));
+    let denominator = f32((vert1.x - vert0.x) * (vert2.y - vert0.y) - (vert1.y - vert0.y) * (vert2.x - vert0.x));
 
     let u = vec3i(vec3u(uv0.x, uv1.x, uv2.x));
     let v = vec3i(vec3u(uv0.y, uv1.y, uv2.y));
 
-    let du_dx = cpz_sign * compute_dx(u, vert0, vert1, vert2);
-    let du_dy = cpz_sign * compute_dy(u, vert0, vert1, vert2);
-    let dv_dx = cpz_sign * compute_dx(v, vert0, vert1, vert2);
-    let dv_dy = cpz_sign * compute_dy(v, vert0, vert1, vert2);
+    let du_dx = compute_dx(u, vert0, vert1, vert2);
+    let du_dy = compute_dy(u, vert0, vert1, vert2);
+    let dv_dx = compute_dx(v, vert0, vert1, vert2);
+    let dv_dy = compute_dy(v, vert0, vert1, vert2);
 
-    let u_sign = sign(-du_dx - du_dy);
-    let v_sign = sign(-dv_dx - dv_dy);
-    return vec2i(u_sign, v_sign);
+    let du = f32(du_dx + du_dy) / denominator;
+    let dv = f32(dv_dx + dv_dy) / denominator;
+    return vec2f(du, dv);
 }
 
 struct SemiTransparentOutput {
@@ -264,14 +265,16 @@ fn sample_15bpp_texture(
     return texel;
 }
 
-fn round_uv(uv: vec2f, round_direction: vec2i) -> vec2u {
+fn round_uv(uv: vec2f, duv: vec2f) -> vec2u {
     if draw_settings.resolution_scale == 1 {
         return vec2u(round(uv));
     }
 
-    let u = select(floor(uv.x), ceil(uv.x), round_direction.x >= 0);
-    let v = select(floor(uv.y), ceil(uv.y), round_direction.y >= 0);
-    return vec2u(u32(u), u32(v));
+    // This doesn't make a whole lot of sense but it seems to work decently with both 2D and 3D graphics.
+    // The basic idea is to round in the direction that U and V would change when moving up and left, but not to round
+    // too far if dU or dV is very small
+    let clamped_duv = clamp(0.5 * duv, vec2f(-0.5), vec2f(0.5));
+    return vec2u(round(uv - clamped_duv));
 }
 
 fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
@@ -283,13 +286,13 @@ fn sample_texture_triangle(input: TexturedVertexOutput) -> vec4f {
         let masked_uv = apply_texture_window(integral_uv, input.tex_window_mask, input.tex_window_offset);
 
         let scale = draw_settings.resolution_scale;
-        let fractional_uv_scaled = round_uv(f32(scale) * fractional_uv, input.uv_round_direction);
+        let fractional_uv_scaled = round_uv(f32(scale) * fractional_uv, input.duv);
         let scaled_uv = scale * masked_uv + fractional_uv_scaled;
 
         return sample_15bpp_texture(input.color, scaled_uv, input.texpage, flags.modulated);
     }
 
-    let uv = round_uv(input.uv, input.uv_round_direction);
+    let uv = round_uv(input.uv, input.duv);
 
     return sample_texture(
         input.color,
