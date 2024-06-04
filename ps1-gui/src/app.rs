@@ -302,13 +302,13 @@ impl App {
 
                     ui.horizontal(|ui| {
                         ui.radio_value(
-                            &mut self.config.video.rasterizer,
+                            &mut self.config.graphics.rasterizer,
                             Rasterizer::Software,
                             "Software",
                         )
                         .on_hover_text("CPU-based; more accurate but no enhancements");
                         ui.radio_value(
-                            &mut self.config.video.rasterizer,
+                            &mut self.config.graphics.rasterizer,
                             Rasterizer::Hardware,
                             "Hardware (wgpu)",
                         )
@@ -316,7 +316,7 @@ impl App {
                     });
                 });
 
-                let is_hw_rasterizer = self.config.video.rasterizer == Rasterizer::Hardware;
+                let is_hw_rasterizer = self.config.graphics.rasterizer == Rasterizer::Hardware;
                 let disabled_hover_text = "Hardware rasterizer only";
 
                 ui.add_enabled_ui(is_hw_rasterizer, |ui| {
@@ -326,25 +326,25 @@ impl App {
 
                         ui.horizontal(|ui| {
                             ui.radio_value(
-                                &mut self.config.video.wgpu_backend,
+                                &mut self.config.graphics.wgpu_backend,
                                 WgpuBackend::Auto,
                                 "Auto",
                             )
                             .on_disabled_hover_text(disabled_hover_text);
                             ui.radio_value(
-                                &mut self.config.video.wgpu_backend,
+                                &mut self.config.graphics.wgpu_backend,
                                 WgpuBackend::Vulkan,
                                 "Vulkan",
                             )
                             .on_disabled_hover_text(disabled_hover_text);
                             ui.radio_value(
-                                &mut self.config.video.wgpu_backend,
+                                &mut self.config.graphics.wgpu_backend,
                                 WgpuBackend::DirectX12,
                                 "DirectX 12",
                             )
                             .on_disabled_hover_text(disabled_hover_text);
                             ui.radio_value(
-                                &mut self.config.video.wgpu_backend,
+                                &mut self.config.graphics.wgpu_backend,
                                 WgpuBackend::Metal,
                                 "Metal",
                             )
@@ -357,9 +357,9 @@ impl App {
                             .on_disabled_hover_text(disabled_hover_text);
 
                         ui.horizontal(|ui| {
-                            ui.radio_value(&mut self.config.video.hardware_high_color, false, "15bpp (Native)")
+                            ui.radio_value(&mut self.config.graphics.hardware_high_color, false, "15bpp (Native)")
                                 .on_disabled_hover_text(disabled_hover_text);
-                            ui.radio_value(&mut self.config.video.hardware_high_color, true, "24bpp (High color)")
+                            ui.radio_value(&mut self.config.graphics.hardware_high_color, true, "24bpp (High color)")
                                 .on_hover_text("Works very well with most games but sometimes changes a game's look (e.g. Silent Hill)")
                                 .on_disabled_hover_text(disabled_hover_text);
                         });
@@ -369,29 +369,50 @@ impl App {
                         ui.label("Resolution scale:").on_disabled_hover_text(disabled_hover_text);
 
                         ui.add(Slider::new(
-                            &mut self.config.video.hardware_resolution_scale,
+                            &mut self.config.graphics.hardware_resolution_scale,
                             1..=16,
                         ))
                         .on_disabled_hover_text(disabled_hover_text);
                     });
 
-                    ui.add_enabled_ui(!self.config.video.hardware_high_color, |ui| {
-                        ui.checkbox(&mut self.config.video.hardware_15bpp_dithering, "Dithering enabled")
+                    ui.add_enabled_ui(!self.config.graphics.hardware_high_color, |ui| {
+                        ui.checkbox(&mut self.config.graphics.hardware_15bpp_dithering, "Dithering enabled")
                             .on_hover_text("Whether to respect the PS1 GPU's dithering flag")
                             .on_disabled_hover_text("Hardware rasterizer 15bpp mode only");
                     });
                 });
 
                 ui.checkbox(
-                    &mut self.config.video.async_swap_chain_rendering,
+                    &mut self.config.graphics.async_swap_chain_rendering,
                     "Asynchronous rendering",
                 )
-                .on_hover_text("Should improve performance, but can cause skipped frames and input latency if GPU cannot keep up")
+                .on_hover_text("Should improve performance, but can cause skipped frames and input latency")
                 .on_disabled_hover_text(disabled_hover_text);
 
                 ui.add_enabled_ui(!is_hw_rasterizer && config::supports_avx2(), |ui| {
-                    ui.checkbox(&mut self.config.video.avx2_software_rasterizer, "Use AVX2 software rasterizer")
+                    ui.checkbox(&mut self.config.graphics.avx2_software_rasterizer, "Use AVX2 software rasterizer")
                         .on_hover_text("Significantly improves software rasterizer performance if AVX2 is supported");
+                });
+
+                ui.add_enabled_ui(is_hw_rasterizer, |ui| {
+                    ui.group(|ui| {
+                        ui.label("PGXP (Enhanced vertex coordinate precision)")
+                            .on_disabled_hover_text(disabled_hover_text);
+
+                        ui.checkbox(&mut self.config.graphics.pgxp_enabled, "Enabled")
+                            .on_hover_text("Reduces model wobble in most 3D games")
+                            .on_disabled_hover_text(disabled_hover_text);
+
+                        ui.add_enabled_ui(self.config.graphics.pgxp_enabled, |ui| {
+                            ui.checkbox(&mut self.config.graphics.pgxp_precise_culling, "High-precision culling")
+                                .on_hover_text("Perform culling calculations using high-precision vertex coordinates")
+                                .on_disabled_hover_text("Requires PGXP");
+
+                            ui.checkbox(&mut self.config.graphics.pgxp_perspective_texture_mapping, "Perspective-correct texture mapping")
+                                .on_hover_text("Reduces affine texture warping in most 3D games")
+                                .on_disabled_hover_text("Requires PGXP");
+                        });
+                    });
                 });
             });
     }

@@ -15,6 +15,7 @@ use crate::cpu::gte::fixedpoint::{
 };
 use crate::cpu::gte::registers::{Flag, Register};
 use crate::num::U32Ext;
+use crate::pgxp::{PgxpConfig, PgxpGteRegisters, PreciseVertex};
 use bincode::{Decode, Encode};
 use std::array;
 
@@ -76,16 +77,17 @@ pub struct GeometryTransformationEngine {
     r: [u32; 64],
     // MAC1-3 need to be stored at 44-bit resolution to correctly handle commands when sf=0
     mac: [i64; 4],
+    pgxp: PgxpGteRegisters,
+    pgxp_config: PgxpConfig,
 }
 
 impl GeometryTransformationEngine {
-    pub fn new() -> Self {
-        Self { r: array::from_fn(|_| 0), mac: [0; 4] }
+    pub fn new(pgxp_config: PgxpConfig) -> Self {
+        Self { r: array::from_fn(|_| 0), mac: [0; 4], pgxp: PgxpGteRegisters::new(), pgxp_config }
     }
 
-    pub fn load_word(&mut self, register: u32, value: u32) {
-        // TODO load delay?
-        self.write_register(register, value);
+    pub fn update_pgxp_config(&mut self, pgxp_config: PgxpConfig) {
+        self.pgxp_config = pgxp_config;
     }
 
     pub fn read_register(&self, register: u32) -> u32 {
@@ -119,6 +121,18 @@ impl GeometryTransformationEngine {
         value
     }
 
+    pub fn read_register_pgxp(&self, register: u32) -> PreciseVertex {
+        match register {
+            // SXY0
+            12 => self.pgxp.sxy[0],
+            // SXY1
+            13 => self.pgxp.sxy[1],
+            // SXY2 / SXYP
+            14 | 15 => self.pgxp.sxy[2],
+            _ => PreciseVertex::INVALID,
+        }
+    }
+
     pub fn write_register(&mut self, register: u32, value: u32) {
         log::trace!("GTE register write: R{register} = {value:08X} ({})", Register::name(register));
 
@@ -140,6 +154,25 @@ impl GeometryTransformationEngine {
                 self.r[Register::IR3] = ((value >> 10) & 0x1F) << 7;
             }
             _ => self.r[register as usize] = value,
+        }
+    }
+
+    pub fn write_register_pgxp(&mut self, register: u32, vertex: PreciseVertex) {
+        log::trace!(
+            "GTE PGXP register write: R{register} = {vertex:?} ({})",
+            Register::name(register)
+        );
+
+        match register {
+            // SXY0
+            12 => self.pgxp.sxy[0] = vertex,
+            // SXY1
+            13 => self.pgxp.sxy[1] = vertex,
+            // SXY2
+            14 => self.pgxp.sxy[2] = vertex,
+            // SXYP
+            15 => self.pgxp.push_fifo(vertex),
+            _ => {}
         }
     }
 

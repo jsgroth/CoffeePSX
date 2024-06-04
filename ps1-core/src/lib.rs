@@ -10,6 +10,7 @@ mod interrupts;
 mod mdec;
 mod memory;
 mod num;
+mod pgxp;
 mod scheduler;
 mod sio;
 mod spu;

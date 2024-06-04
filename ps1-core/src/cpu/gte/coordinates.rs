@@ -72,6 +72,15 @@ impl GeometryTransformationEngine {
     pub(super) fn nclip(&mut self) -> u32 {
         log::trace!("GTE NCLIP");
 
+        if self.pgxp_config.precise_nclip() {
+            if self.pgxp.all_valid() {
+                self.nclip_pgxp();
+                return 7;
+            }
+
+            log::debug!("PGXP: NCLIP not all vertices found");
+        }
+
         let (sx0, sy0) = self.read_screen_xy(Register::SXY0);
         let (sx1, sy1) = self.read_screen_xy(Register::SXY1);
         let (sx2, sy2) = self.read_screen_xy(Register::SXY2);
@@ -81,6 +90,25 @@ impl GeometryTransformationEngine {
         self.r[Register::MAC0] = i64::from(mac0) as u32;
 
         7
+    }
+
+    fn nclip_pgxp(&mut self) {
+        let v0 = self.pgxp.sxy[0];
+        let v1 = self.pgxp.sxy[1];
+        let v2 = self.pgxp.sxy[2];
+
+        let mac0 =
+            v0.x * v1.y + v1.x * v2.y + v2.x * v0.y - v0.x * v2.y - v1.x * v0.y - v2.x * v1.y;
+        let value = if mac0 > 0.0 {
+            mac0.ceil() as i64
+        } else if mac0 < 0.0 {
+            mac0.floor() as i64
+        } else {
+            0
+        };
+
+        self.check_mac0_overflow(FixedPointDecimal::<0>::new(value));
+        self.r[Register::MAC0] = value as u32;
     }
 
     // AVSZ3: Average of three Z values
@@ -169,15 +197,23 @@ impl GeometryTransformationEngine {
 
         let div_result = gte_divide(&mut self.r);
 
-        let mac0 = div_result * ir1 + ofx;
-        self.check_mac0_overflow(mac0);
-        let sx = mac0.shift_to::<0>();
+        let sx_decimal = div_result * ir1 + ofx;
+        self.check_mac0_overflow(sx_decimal);
+        let sx = sx_decimal.shift_to::<0>();
 
-        let mac0 = div_result * ir2 + ofy;
-        self.check_mac0_overflow(mac0);
-        let sy = mac0.shift_to::<0>();
+        let sy_decimal = div_result * ir2 + ofy;
+        self.check_mac0_overflow(sy_decimal);
+        let sy = sy_decimal.shift_to::<0>();
 
         self.push_screen_xy(sx, sy);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.convert_and_push_fifo(
+                sx_decimal.into(),
+                sy_decimal.into(),
+                clamped_sz3 as u16,
+            );
+        }
 
         if with_depth != WithDepthCalculation::Yes {
             return;

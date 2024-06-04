@@ -49,6 +49,7 @@ macro_rules! include_wgsl_concat {
     }
 }
 
+use crate::pgxp::PgxpConfig;
 use include_wgsl_concat;
 
 const VRAM_WIDTH: u32 = 1024;
@@ -152,6 +153,25 @@ pub struct WgpuRasterizerConfig {
     pub dithering_allowed: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct InternalConfig {
+    resolution_scale: u32,
+    high_color: bool,
+    dithering_allowed: bool,
+    pgxp_perspective_texture_mapping: bool,
+}
+
+impl InternalConfig {
+    fn new(rasterizer_config: WgpuRasterizerConfig, pgxp_config: PgxpConfig) -> Self {
+        Self {
+            resolution_scale: rasterizer_config.resolution_scale,
+            high_color: rasterizer_config.high_color,
+            dithering_allowed: rasterizer_config.dithering_allowed,
+            pgxp_perspective_texture_mapping: pgxp_config.perspective_texture_mapping(),
+        }
+    }
+}
+
 // Hack: Limit how rapidly the rasterizer will sync the VRAMs; this fixes terrible performance in
 // Valkyrie Profile whenever Freya is onscreen. Her ripple effects are drawn using a bunch of
 // textured quads that sample from nearby in the current frame buffer.
@@ -161,7 +181,7 @@ const SCALED_NATIVE_SYNC_DELAY: u8 = 5;
 pub struct WgpuRasterizer {
     device: Arc<Device>,
     queue: Arc<Queue>,
-    config: WgpuRasterizerConfig,
+    config: InternalConfig,
     // rgba8unorm at scaled resolution; used for rendering
     scaled_vram: Texture,
     // rgba8unorm at scaled resolution; used for 15bpp texture sampling
@@ -187,15 +207,20 @@ pub struct WgpuRasterizer {
 }
 
 impl WgpuRasterizer {
-    pub fn new(device: Arc<Device>, queue: Arc<Queue>, config: WgpuRasterizerConfig) -> Self {
+    pub fn new(
+        device: Arc<Device>,
+        queue: Arc<Queue>,
+        rasterizer_config: WgpuRasterizerConfig,
+        pgxp_config: PgxpConfig,
+    ) -> Self {
         log::info!(
             "Creating wgpu hardware rasterizer with resolution_scale={}, high_color={}, 15bpp_dithering={}",
-            config.resolution_scale,
-            config.high_color,
-            config.dithering_allowed
+            rasterizer_config.resolution_scale,
+            rasterizer_config.high_color,
+            rasterizer_config.dithering_allowed
         );
 
-        let resolution_scale = config.resolution_scale;
+        let resolution_scale = rasterizer_config.resolution_scale;
         let scaled_vram = device.create_texture(&TextureDescriptor {
             label: "scaled_vram_texture".into(),
             size: Extent3d {
@@ -283,7 +308,7 @@ impl WgpuRasterizer {
         Self {
             device,
             queue,
-            config,
+            config: InternalConfig::new(rasterizer_config, pgxp_config),
             scaled_vram,
             scaled_vram_copy,
             native_vram,
@@ -1001,12 +1026,6 @@ impl RasterizerInterface for WgpuRasterizer {
             return;
         }
 
-        let Some((bounding_box_top_left, bounding_box_top_right)) =
-            triangle_bounding_box(&args, draw_settings)
-        else {
-            return;
-        };
-
         self.scaled_native_sync_delay = self.scaled_native_sync_delay.saturating_sub(1);
 
         if self.check_textured_triangle_bounding_box(&args) == HazardCheck::Found {
@@ -1016,9 +1035,13 @@ impl RasterizerInterface for WgpuRasterizer {
             self.scaled_native_sync_delay = SCALED_NATIVE_SYNC_DELAY;
         }
 
-        self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
+        if let Some((bounding_box_top_left, bounding_box_top_right)) =
+            triangle_bounding_box(&args, draw_settings)
+        {
+            self.hazard_tracker.mark_rendered(bounding_box_top_left, bounding_box_top_right);
+        }
 
-        if self.config.resolution_scale != 1 {
+        if self.config.resolution_scale != 1 && args.pgxp_vertices.is_none() {
             if let Some(command) = check_for_tiny_triangle(&args, draw_settings) {
                 self.draw_commands.push(command);
             }
@@ -1364,6 +1387,7 @@ fn expand_tiny_triangle(
                 args.vertices[vertices[expand_idx].idx],
                 fourth_vertex,
             ],
+            pgxp_vertices: None,
             shading: match args.shading {
                 TriangleShading::Flat(color) => TriangleShading::Flat(color),
                 TriangleShading::Gouraud(colors) => {

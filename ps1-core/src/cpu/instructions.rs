@@ -148,9 +148,25 @@ impl R3000 {
 
     // ADDU: Add unsigned word
     fn addu(&mut self, opcode: u32) {
-        let operand_l = self.registers.gpr[parse_rs(opcode) as usize];
-        let operand_r = self.registers.gpr[parse_rt(opcode) as usize];
-        self.registers.write_gpr(parse_rd(opcode), operand_l.wrapping_add(operand_r));
+        let rs = parse_rs(opcode) as usize;
+        let rt = parse_rt(opcode) as usize;
+        let rd = parse_rd(opcode);
+
+        let operand_l = self.registers.gpr[rs];
+        let operand_r = self.registers.gpr[rt];
+        self.registers.write_gpr(rd, operand_l.wrapping_add(operand_r));
+
+        // Hack until PGXP CPU mode is properly implemented - removes wobble in models outside of
+        // battle in Final Fantasy 8
+        if self.pgxp_config.enabled {
+            if operand_l == 0 {
+                self.pgxp.write_gpr(rd, self.pgxp.gpr[rt]);
+                log::trace!("PGXP: R{rd} = {:?}", self.pgxp.gpr[rt]);
+            } else if operand_r == 0 {
+                self.pgxp.write_gpr(rd, self.pgxp.gpr[rs]);
+                log::trace!("PGXP: R{rd} = {:?}", self.pgxp.gpr[rs]);
+            }
+        }
     }
 
     // ADDI: Add immediate word
@@ -325,8 +341,15 @@ impl R3000 {
             return Err(Exception::AddressErrorLoad(address));
         }
 
+        let rt = parse_rt(opcode);
         let word = self.bus_read_u32(bus, address);
-        self.registers.write_gpr_delayed(parse_rt(opcode), word);
+        self.registers.write_gpr_delayed(rt, word);
+
+        if self.pgxp_config.enabled {
+            let vertex = bus.read_pgxp(address);
+            self.pgxp.write_gpr_delayed(rt, vertex);
+            log::trace!("PGXP: R{rt} = {vertex:?}");
+        }
 
         Ok(())
     }
@@ -456,8 +479,14 @@ impl R3000 {
             return Err(Exception::AddressErrorStore(address));
         }
 
-        let word = self.registers.gpr[parse_rt(opcode) as usize];
+        let rt = parse_rt(opcode) as usize;
+        let word = self.registers.gpr[rt];
         self.bus_write_u32(bus, address, word);
+
+        if self.pgxp_config.enabled {
+            let vertex = self.pgxp.gpr[rt];
+            bus.write_pgxp(address, vertex);
+        }
 
         Ok(())
     }
@@ -598,21 +627,38 @@ impl R3000 {
     // MFCz: Move from coprocessor
     fn mfcz(&mut self, opcode: u32) {
         let register = parse_rd(opcode);
-        let value = match parse_coprocessor(opcode) {
+        let coprocessor = parse_coprocessor(opcode);
+        let value = match coprocessor {
             0 => self.cp0.read_register(register),
             2 => self.gte.read_register(register),
             cp => todo!("MFC{cp} {register}"),
         };
-        self.registers.write_gpr_delayed(parse_rt(opcode), value);
+
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr_delayed(rt, value);
+
+        if self.pgxp_config.enabled && coprocessor == 2 {
+            let vertex = self.gte.read_register_pgxp(register);
+            self.pgxp.write_gpr_delayed(rt, vertex);
+            log::trace!("PGXP: R{rt} = {vertex:?}");
+        }
     }
 
     // MTCz: Move to coprocessor
     fn mtcz(&mut self, opcode: u32) {
         let register = parse_rd(opcode);
-        let value = self.registers.gpr[parse_rt(opcode) as usize];
+        let rt = parse_rt(opcode) as usize;
+        let value = self.registers.gpr[rt];
         match parse_coprocessor(opcode) {
             0 => self.cp0.write_register(register, value),
-            2 => self.gte.write_register(register, value),
+            2 => {
+                self.gte.write_register(register, value);
+
+                if self.pgxp_config.enabled {
+                    let vertex = self.pgxp.gpr[rt];
+                    self.gte.write_register_pgxp(register, vertex);
+                }
+            }
             cp => todo!("MTC{cp} {register} {value:08X}"),
         }
     }
@@ -664,7 +710,13 @@ impl R3000 {
 
         let value = self.bus_read_u32(bus, address);
 
-        self.gte.load_word(parse_rt(opcode), value);
+        let rt = parse_rt(opcode);
+        self.gte.write_register(rt, value);
+
+        if self.pgxp_config.enabled {
+            let vertex = bus.read_pgxp(address);
+            self.gte.write_register_pgxp(rt, vertex);
+        }
 
         Ok(())
     }
@@ -681,8 +733,14 @@ impl R3000 {
             return Err(Exception::AddressErrorLoad(address));
         }
 
-        let value = self.gte.read_register(parse_rt(opcode));
+        let rt = parse_rt(opcode);
+        let value = self.gte.read_register(rt);
         self.bus_write_u32(bus, address, value);
+
+        if self.pgxp_config.enabled {
+            let vertex = self.gte.read_register_pgxp(rt);
+            bus.write_pgxp(address, vertex);
+        }
 
         Ok(())
     }

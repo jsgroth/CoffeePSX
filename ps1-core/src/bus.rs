@@ -7,6 +7,7 @@ use crate::gpu::Gpu;
 use crate::interrupts::InterruptRegisters;
 use crate::mdec::MacroblockDecoder;
 use crate::memory::{Memory, MemoryControl};
+use crate::pgxp::PreciseVertex;
 use crate::scheduler::Scheduler;
 use crate::sio::{SerialPort0, SerialPort1};
 use crate::spu::Spu;
@@ -93,6 +94,14 @@ impl<'a> Bus<'a> {
         ])
     }
 
+    pub fn read_pgxp(&self, address: u32) -> PreciseVertex {
+        match address & 0x1FFFFFFF {
+            0x00000000..=0x007FFFFF => self.memory.read_main_ram_pgxp(address),
+            0x1F800000..=0x1F8003FF => self.memory.read_scratchpad_pgxp(address),
+            _ => PreciseVertex::INVALID,
+        }
+    }
+
     pub fn write_u8(&mut self, address: u32, value: u32) {
         memory_map!(address, [
             main_ram => self.memory.write_main_ram_u8(address, value as u8),
@@ -124,6 +133,14 @@ impl<'a> Bus<'a> {
             expansion_2 => unimplemented_expansion_write("Expansion Device 2", address, value, OpSize::Word),
             _ => todo!("32-bit write {address:08X} {value:08X}")
         ]);
+    }
+
+    pub fn write_pgxp(&mut self, address: u32, vertex: PreciseVertex) {
+        match address & 0x1FFFFFFF {
+            0x00000000..=0x007FFFFF => self.memory.write_main_ram_pgxp(address, vertex),
+            0x1F800000..=0x1F8003FF => self.memory.write_scratchpad_pgxp(address, vertex),
+            _ => {}
+        }
     }
 
     pub fn hardware_interrupt_pending(&self) -> bool {

@@ -1,6 +1,6 @@
 //! Rasterizer interface and dispatch code
 
-use crate::api::DisplayConfig;
+use crate::api::{DisplayConfig, PgxpConfig};
 use bincode::{Decode, Encode};
 use std::cmp;
 use std::fmt::{Display, Formatter};
@@ -13,6 +13,7 @@ use crate::gpu::rasterizer::simd::SimdSoftwareRasterizer;
 use crate::gpu::rasterizer::wgpuhardware::WgpuRasterizer;
 use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::gpu::{Color, Vertex, VideoMode, Vram, WgpuResources};
+use crate::pgxp::PreciseVertex;
 
 pub mod naive;
 #[cfg(target_arch = "x86_64")]
@@ -57,6 +58,7 @@ pub type RectangleTextureMapping = TextureMapping<1>;
 #[derive(Debug)]
 pub struct DrawTriangleArgs {
     pub vertices: [Vertex; 3],
+    pub pgxp_vertices: Option<[PreciseVertex; 3]>,
     pub shading: TriangleShading,
     pub semi_transparent: bool,
     pub semi_transparency_mode: SemiTransparencyMode,
@@ -168,9 +170,10 @@ impl Rasterizer {
     pub fn new(
         wgpu_device: &Arc<wgpu::Device>,
         wgpu_queue: &Arc<wgpu::Queue>,
-        config: DisplayConfig,
+        display_config: DisplayConfig,
+        pgxp_config: PgxpConfig,
     ) -> Self {
-        match config.rasterizer_type {
+        match display_config.rasterizer_type {
             RasterizerType::NaiveSoftware => {
                 Self(Box::new(NaiveSoftwareRasterizer::new(wgpu_device)))
             }
@@ -180,7 +183,8 @@ impl Rasterizer {
             RasterizerType::WgpuHardware => Self(Box::new(WgpuRasterizer::new(
                 Arc::clone(wgpu_device),
                 Arc::clone(wgpu_queue),
-                config.to_wgpu_rasterizer_config(),
+                display_config.to_wgpu_rasterizer_config(),
+                pgxp_config,
             ))),
         }
     }
@@ -194,9 +198,10 @@ impl Rasterizer {
         state: RasterizerState,
         wgpu_device: &Arc<wgpu::Device>,
         wgpu_queue: &Arc<wgpu::Queue>,
-        config: DisplayConfig,
+        display_config: DisplayConfig,
+        pgxp_config: PgxpConfig,
     ) -> Self {
-        match config.rasterizer_type {
+        match display_config.rasterizer_type {
             RasterizerType::NaiveSoftware => {
                 Self(Box::new(NaiveSoftwareRasterizer::from_vram(wgpu_device, &state.vram)))
             }
@@ -207,7 +212,8 @@ impl Rasterizer {
                 let rasterizer = WgpuRasterizer::new(
                     Arc::clone(wgpu_device),
                     Arc::clone(wgpu_queue),
-                    config.to_wgpu_rasterizer_config(),
+                    display_config.to_wgpu_rasterizer_config(),
+                    pgxp_config,
                 );
                 rasterizer.copy_vram_from(&state.vram);
                 Self(Box::new(rasterizer))

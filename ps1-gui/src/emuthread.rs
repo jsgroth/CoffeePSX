@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, VideoConfig};
+use crate::config::{AppConfig, GraphicsConfig};
 use crate::emuthread::audio::{AudioQueue, QueueAudioCallback, QueueAudioOutput};
 use crate::emuthread::renderer::{SurfaceRenderer, SwapChainRenderer};
 use crate::Never;
@@ -99,7 +99,7 @@ pub struct EmulatorSwapChain {
 }
 
 impl EmulatorSwapChain {
-    fn new(video_config: &VideoConfig) -> Self {
+    fn new(video_config: &GraphicsConfig) -> Self {
         Self {
             rendered_frames: Arc::new(Mutex::new(SwapChainTextureBuffer::new())),
             returned_frames: Arc::new(Mutex::new(VecDeque::with_capacity(SWAP_CHAIN_LEN))),
@@ -107,7 +107,7 @@ impl EmulatorSwapChain {
         }
     }
 
-    fn update_config(&self, config: &VideoConfig) {
+    fn update_config(&self, config: &GraphicsConfig) {
         self.async_rendering.store(config.async_swap_chain_rendering, Ordering::Relaxed);
     }
 }
@@ -183,7 +183,7 @@ impl EmulationThreadHandle {
             None => builder.build()?,
         };
 
-        let swap_chain = EmulatorSwapChain::new(&config.video);
+        let swap_chain = EmulatorSwapChain::new(&config.graphics);
         let swap_chain_renderer =
             SwapChainRenderer::new(Arc::clone(&device), Arc::clone(&queue), swap_chain.clone());
 
@@ -240,7 +240,7 @@ impl EmulationThreadHandle {
 
     #[allow(clippy::missing_errors_doc)]
     pub fn handle_config_change(&mut self, config: &AppConfig) -> anyhow::Result<()> {
-        self.swap_chain.update_config(&config.video);
+        self.swap_chain.update_config(&config.graphics);
         self.surface_renderer.update_config(&config.video);
 
         if config.audio.device_queue_size != self.audio_device.spec().samples {

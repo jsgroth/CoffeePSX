@@ -9,6 +9,7 @@ use bincode::de::read::Reader;
 use bincode::de::{BorrowDecoder, Decoder};
 use bincode::error::DecodeError;
 use bincode::{BorrowDecode, Decode, Encode};
+use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
 #[repr(transparent)]
@@ -21,15 +22,9 @@ impl<T, const LEN: usize> From<Box<[T; LEN]>> for BoxedArray<T, LEN> {
     }
 }
 
-impl<const LEN: usize> BoxedArray<u8, LEN> {
+impl<T: Debug + Clone + Default, const LEN: usize> BoxedArray<T, LEN> {
     pub fn new() -> Self {
-        Self(vec![0; LEN].into_boxed_slice().try_into().unwrap())
-    }
-}
-
-impl<const LEN: usize> BoxedArray<u16, LEN> {
-    pub fn new() -> Self {
-        Self(vec![0; LEN].into_boxed_slice().try_into().unwrap())
+        Self(vec![T::default(); LEN].into_boxed_slice().try_into().unwrap())
     }
 }
 

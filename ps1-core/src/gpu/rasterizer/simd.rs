@@ -85,6 +85,7 @@ impl RasterizerInterface for SimdSoftwareRasterizer {
             semi_transparent,
             semi_transparency_mode,
             mut texture_mapping,
+            ..
         }: DrawTriangleArgs,
         draw_settings: &DrawSettings,
     ) {

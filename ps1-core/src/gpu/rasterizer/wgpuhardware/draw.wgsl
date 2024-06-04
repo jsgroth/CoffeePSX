@@ -11,11 +11,19 @@ fn vs_untextured(input: UntexturedVertex) -> UntexturedVertexOutput {
 
 @vertex
 fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
-    let position = vram_position_to_vertex(input.position);
+    var position = vram_position_to_vertex(input.position);
+    if draw_settings.perspective_texture_mapping != 0 {
+        let z = (input.position.z + 1.0) / 65536.0;
+        position.x *= z;
+        position.y *= z;
+        position.z = z;
+        position.w = z;
+    }
+
     let color = vec3f(input.color) / 255.0;
     let uv = vec2f(input.uv);
 
-    let duv = compute_duv(input.position, input.uv, input.other_positions, input.other_uv);
+    let duv = compute_duv(input.integer_position, input.uv, input.other_positions, input.other_uv);
 
     return TexturedVertexOutput(
         position,
@@ -32,7 +40,8 @@ fn vs_textured(input: TexturedVertex) -> TexturedVertexOutput {
 
 @vertex
 fn vs_textured_rect(input: TexturedRectVertex) -> TexturedRectVertexOutput {
-    let position = vram_position_to_vertex(input.position);
+    let input_position = vec3f(vec2f(input.position), 0.0);
+    let position = vram_position_to_vertex(input_position);
     let color = vec3f(input.color) / 255.0;
 
     return TexturedRectVertexOutput(

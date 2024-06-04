@@ -27,6 +27,7 @@ use crate::gpu::rasterizer::Rasterizer;
 use crate::boxedarray::BoxedArray;
 use crate::gpu::rasterizer::wgpuhardware::WgpuRasterizerConfig;
 use crate::interrupts::InterruptRegisters;
+use crate::pgxp::{PgxpConfig, PreciseVertex};
 pub use rasterizer::{RasterizerState, RasterizerType};
 pub use registers::VideoMode;
 
@@ -85,6 +86,7 @@ pub struct Gpu {
     wgpu_resources: WgpuResources,
     #[save_state(to = RasterizerState)]
     rasterizer: Rasterizer,
+    pgxp_config: PgxpConfig,
 }
 
 #[must_use]
@@ -116,10 +118,11 @@ impl Gpu {
         wgpu_device: Arc<wgpu::Device>,
         wgpu_queue: Arc<wgpu::Queue>,
         mut display_config: DisplayConfig,
+        pgxp_config: PgxpConfig,
     ) -> Self {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
-        let rasterizer = Rasterizer::new(&wgpu_device, &wgpu_queue, display_config);
+        let rasterizer = Rasterizer::new(&wgpu_device, &wgpu_queue, display_config, pgxp_config);
 
         let wgpu_resources = WgpuResources {
             device: wgpu_device,
@@ -134,6 +137,7 @@ impl Gpu {
             gpu_read_buffer: 0,
             wgpu_resources,
             rasterizer,
+            pgxp_config,
         }
     }
 
@@ -159,7 +163,11 @@ impl Gpu {
     }
 
     pub fn write_gp0_command(&mut self, value: u32) {
-        self.handle_gp0_write(value);
+        self.handle_gp0_write(value, PreciseVertex::INVALID);
+    }
+
+    pub fn write_gp0_command_pgxp(&mut self, value: u32, vertex: PreciseVertex) {
+        self.handle_gp0_write(value, vertex);
     }
 
     pub fn write_gp1_command(
@@ -201,17 +209,20 @@ impl Gpu {
         }
     }
 
-    pub fn update_display_config(&mut self, mut display_config: DisplayConfig) {
+    pub fn update_config(&mut self, mut display_config: DisplayConfig, pgxp_config: PgxpConfig) {
         display_config.rasterizer_type = check_rasterizer_type(display_config.rasterizer_type);
 
         let prev_rasterizer_type = self.wgpu_resources.display_config.rasterizer_type;
         let prev_wgpu_rasterizer_config =
             self.wgpu_resources.display_config.to_wgpu_rasterizer_config();
+        let prev_pgxp_config = self.pgxp_config;
         self.wgpu_resources.display_config = display_config;
+        self.pgxp_config = pgxp_config;
 
         if prev_rasterizer_type != display_config.rasterizer_type
             || (display_config.rasterizer_type == RasterizerType::WgpuHardware
-                && (prev_wgpu_rasterizer_config != display_config.to_wgpu_rasterizer_config()))
+                && (prev_wgpu_rasterizer_config != display_config.to_wgpu_rasterizer_config()
+                    || prev_pgxp_config != pgxp_config))
         {
             let vram = self.rasterizer.clone_vram();
             self.rasterizer = Rasterizer::from_state(
@@ -219,6 +230,7 @@ impl Gpu {
                 &self.wgpu_resources.device,
                 &self.wgpu_resources.queue,
                 display_config,
+                pgxp_config,
             );
         }
     }
@@ -233,8 +245,13 @@ impl Gpu {
         wgpu_queue: Arc<wgpu::Queue>,
         display_config: DisplayConfig,
     ) -> Self {
-        let rasterizer =
-            Rasterizer::from_state(state.rasterizer, &wgpu_device, &wgpu_queue, display_config);
+        let rasterizer = Rasterizer::from_state(
+            state.rasterizer,
+            &wgpu_device,
+            &wgpu_queue,
+            display_config,
+            state.pgxp_config,
+        );
 
         Self {
             registers: state.registers,
@@ -247,6 +264,7 @@ impl Gpu {
                 display_config,
             },
             rasterizer,
+            pgxp_config: state.pgxp_config,
         }
     }
 }

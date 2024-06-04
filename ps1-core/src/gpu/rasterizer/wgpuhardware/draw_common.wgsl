@@ -10,10 +10,11 @@ struct DrawSettings {
     resolution_scale: u32,
     high_color: u32,
     dithering: u32,
+    perspective_texture_mapping: u32,
 }
 
 struct UntexturedVertex {
-    @location(0) position: vec2i,
+    @location(0) position: vec3f,
     @location(1) color: vec3u,
     @location(2) ditherable: u32,
 }
@@ -24,9 +25,9 @@ struct UntexturedVertexOutput {
     @location(1) ditherable: u32,
 }
 
-fn vram_position_to_vertex(position: vec2i) -> vec4f {
-    var x = f32(position.x - 512) / 512.0;
-    var y = -f32(position.y - 256) / 256.0;
+fn vram_position_to_vertex(position: vec3f) -> vec4f {
+    var x = (position.x - 512.0) / 512.0;
+    var y = -(position.y - 256.0) / 256.0;
 
     if draw_settings.resolution_scale == 1 {
         x += 0.5 / 512.0;
@@ -41,7 +42,7 @@ const TEXTURE_8BPP: u32 = 1;
 const TEXTURE_15BPP: u32 = 2;
 
 struct TexturedVertex {
-    @location(0) position: vec2i,
+    @location(0) position: vec3f,
     @location(1) color: vec3u,
     @location(2) uv: vec2u,
     @location(3) texpage: vec2u,
@@ -49,8 +50,9 @@ struct TexturedVertex {
     @location(5) tex_window_offset: vec2u,
     @location(6) clut: vec2u,
     @location(7) flags: u32,
-    @location(8) other_positions: vec4i,
-    @location(9) other_uv: vec4u,
+    @location(8) integer_position: vec2i,
+    @location(9) other_positions: vec4i,
+    @location(10) other_uv: vec4u,
 }
 
 struct TexturedVertexOutput {

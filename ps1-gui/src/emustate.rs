@@ -27,7 +27,7 @@ impl EmulatorWindow {
     fn new(
         file_path: Option<&Path>,
         elwt: &EventLoopWindowTarget<UserEvent>,
-        video_config: &VideoConfig,
+        config: &AppConfig,
     ) -> anyhow::Result<Self> {
         let window_title = match file_path {
             Some(file_path) => file_path
@@ -38,14 +38,14 @@ impl EmulatorWindow {
                 .to_string(),
             None => "(BIOS)".into(),
         };
-        let window_size = LogicalSize::new(video_config.window_width, video_config.window_height);
+        let window_size = LogicalSize::new(config.video.window_width, config.video.window_height);
         let window = WindowBuilder::new()
             .with_title(window_title)
             .with_inner_size(window_size)
             .build(elwt)?;
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: video_config.wgpu_backend.to_wgpu(),
+            backends: config.graphics.wgpu_backend.to_wgpu(),
             ..wgpu::InstanceDescriptor::default()
         });
 
@@ -72,11 +72,11 @@ impl EmulatorWindow {
 
         let surface_capabilities = surface.get_capabilities(&adapter);
 
-        let present_mode = video_config.vsync_mode.to_present_mode();
+        let present_mode = config.video.vsync_mode.to_present_mode();
         if !surface_capabilities.present_modes.contains(&present_mode) {
             return Err(anyhow!(
                 "wgpu surface does not support requested VSync mode {:?}",
-                video_config.vsync_mode
+                config.video.vsync_mode
             ));
         }
 
@@ -102,7 +102,7 @@ impl EmulatorWindow {
             format: surface_format,
             width: window.inner_size().width,
             height: window.inner_size().height,
-            present_mode: video_config.vsync_mode.to_present_mode(),
+            present_mode: config.video.vsync_mode.to_present_mode(),
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::default(),
             view_formats: vec![],
@@ -213,17 +213,17 @@ impl EmulatorState {
                                 ));
                             }
                             Some(Hotkey::EnableHardwareRasterizer) => {
-                                app_config.video.rasterizer = Rasterizer::Hardware;
+                                app_config.graphics.rasterizer = Rasterizer::Hardware;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
                                     app_config.clone(),
                                 ));
                                 log::info!(
                                     "Using hardware rasterizer with resolution scale {}",
-                                    app_config.video.hardware_resolution_scale
+                                    app_config.graphics.hardware_resolution_scale
                                 );
                             }
                             Some(Hotkey::EnableSoftwareRasterizer) => {
-                                app_config.video.rasterizer = Rasterizer::Software;
+                                app_config.graphics.rasterizer = Rasterizer::Software;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
                                     app_config.clone(),
                                 ));
@@ -231,8 +231,8 @@ impl EmulatorState {
                             }
                             Some(Hotkey::DecreaseResolutionScale) => {
                                 let scale =
-                                    cmp::max(1, app_config.video.hardware_resolution_scale - 1);
-                                app_config.video.hardware_resolution_scale = scale;
+                                    cmp::max(1, app_config.graphics.hardware_resolution_scale - 1);
+                                app_config.graphics.hardware_resolution_scale = scale;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
                                     app_config.clone(),
                                 ));
@@ -240,8 +240,8 @@ impl EmulatorState {
                             }
                             Some(Hotkey::IncreaseResolutionScale) => {
                                 let scale =
-                                    cmp::min(16, app_config.video.hardware_resolution_scale + 1);
-                                app_config.video.hardware_resolution_scale = scale;
+                                    cmp::min(16, app_config.graphics.hardware_resolution_scale + 1);
+                                app_config.graphics.hardware_resolution_scale = scale;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
                                     app_config.clone(),
                                 ));
@@ -289,7 +289,7 @@ impl EmulatorState {
             emu_thread.send_command(EmulatorThreadCommand::Stop);
         }
 
-        let window = EmulatorWindow::new(file_path, elwt, &app_config.video)?;
+        let window = EmulatorWindow::new(file_path, elwt, app_config)?;
 
         let emu_thread = EmulationThreadHandle::spawn(
             file_path,

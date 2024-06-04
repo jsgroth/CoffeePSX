@@ -3,15 +3,16 @@
 use crate::api::{Ps1Error, Ps1Result};
 use crate::boxedarray::BoxedArray;
 use crate::num::U32Ext;
+use crate::pgxp::{PgxpMemory, PreciseVertex};
 use bincode::{Decode, Encode};
 
 const BIOS_ROM_LEN: usize = 512 * 1024;
-const MAIN_RAM_LEN: usize = 2 * 1024 * 1024;
-const SCRATCHPAD_LEN: usize = 1024;
+pub const MAIN_RAM_LEN: usize = 2 * 1024 * 1024;
+pub const SCRATCHPAD_LEN: usize = 1024;
 
 const BIOS_ROM_MASK: u32 = (BIOS_ROM_LEN - 1) as u32;
 pub const MAIN_RAM_MASK: u32 = (MAIN_RAM_LEN - 1) as u32;
-const SCRATCHPAD_MASK: u32 = (SCRATCHPAD_LEN - 1) as u32;
+pub const SCRATCHPAD_MASK: u32 = (SCRATCHPAD_LEN - 1) as u32;
 
 type BiosRom = BoxedArray<u8, BIOS_ROM_LEN>;
 type MainRam = BoxedArray<u8, MAIN_RAM_LEN>;
@@ -22,6 +23,7 @@ pub struct Memory {
     bios_rom: BiosRom,
     main_ram: MainRam,
     scratchpad: Scratchpad,
+    pgxp: PgxpMemory,
 }
 
 macro_rules! impl_read_u8 {
@@ -88,7 +90,12 @@ impl Memory {
         let mut scratchpad = Scratchpad::new();
         scratchpad.fill_with(rand::random);
 
-        Ok(Self { bios_rom: BiosRom::from(bios_rom), main_ram, scratchpad })
+        Ok(Self {
+            bios_rom: BiosRom::from(bios_rom),
+            main_ram,
+            scratchpad,
+            pgxp: PgxpMemory::new(),
+        })
     }
 
     pub fn read_bios_u8(&self, address: u32) -> u8 {
@@ -115,6 +122,10 @@ impl Memory {
         impl_read_u32!(self.main_ram, MAIN_RAM_MASK, address)
     }
 
+    pub fn read_main_ram_pgxp(&self, address: u32) -> PreciseVertex {
+        self.pgxp.read_main_ram(address)
+    }
+
     pub fn write_main_ram_u8(&mut self, address: u32, value: u8) {
         impl_write_u8!(self.main_ram, MAIN_RAM_MASK, address, value);
     }
@@ -125,6 +136,10 @@ impl Memory {
 
     pub fn write_main_ram_u32(&mut self, address: u32, value: u32) {
         impl_write_u32!(self.main_ram, MAIN_RAM_MASK, address, value);
+    }
+
+    pub fn write_main_ram_pgxp(&mut self, address: u32, vertex: PreciseVertex) {
+        self.pgxp.write_main_ram(address, vertex);
     }
 
     pub fn read_scratchpad_u8(&self, address: u32) -> u8 {
@@ -139,6 +154,10 @@ impl Memory {
         impl_read_u32!(self.scratchpad, SCRATCHPAD_MASK, address)
     }
 
+    pub fn read_scratchpad_pgxp(&self, address: u32) -> PreciseVertex {
+        self.pgxp.read_scratchpad(address)
+    }
+
     pub fn write_scratchpad_u8(&mut self, address: u32, value: u8) {
         impl_write_u8!(self.scratchpad, SCRATCHPAD_MASK, address, value);
     }
@@ -149,6 +168,10 @@ impl Memory {
 
     pub fn write_scratchpad_u32(&mut self, address: u32, value: u32) {
         impl_write_u32!(self.scratchpad, SCRATCHPAD_MASK, address, value);
+    }
+
+    pub fn write_scratchpad_pgxp(&mut self, address: u32, vertex: PreciseVertex) {
+        self.pgxp.write_scratchpad(address, vertex);
     }
 
     pub fn copy_to_main_ram(&mut self, data: &[u8], ram_addr: u32) {

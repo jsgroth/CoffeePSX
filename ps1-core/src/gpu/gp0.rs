@@ -9,6 +9,7 @@ use crate::gpu::rasterizer::{
 };
 use crate::gpu::{Color, Gpu, Vertex};
 use crate::num::U32Ext;
+use crate::pgxp::PreciseVertex;
 use bincode::{Decode, Encode};
 use std::array;
 
@@ -313,6 +314,7 @@ const PARAMETERS_LEN: usize = 11;
 pub struct Gp0State {
     pub command_state: Gp0CommandState,
     pub parameters: [u32; PARAMETERS_LEN],
+    pub pgxp_parameters: [PreciseVertex; PARAMETERS_LEN],
     pub global_texture_page: TexturePage,
     pub texture_window: TextureWindow,
     pub draw_settings: DrawSettings,
@@ -324,6 +326,7 @@ impl Gp0State {
         Self {
             command_state: Gp0CommandState::default(),
             parameters: array::from_fn(|_| 0),
+            pgxp_parameters: array::from_fn(|_| PreciseVertex::default()),
             global_texture_page: TexturePage::default(),
             texture_window: TextureWindow::default(),
             draw_settings: DrawSettings::default(),
@@ -361,7 +364,7 @@ impl Gpu {
     }
 
     #[allow(clippy::match_same_arms)]
-    pub(super) fn handle_gp0_write(&mut self, value: u32) {
+    pub(super) fn handle_gp0_write(&mut self, value: u32, pgxp_vertex: PreciseVertex) {
         log::trace!("GP0 command write: {value:08X}");
 
         self.gp0.command_state = match self.gp0.command_state {
@@ -409,6 +412,8 @@ impl Gpu {
             },
             Gp0CommandState::WaitingForParameters { command, index, remaining } => {
                 self.gp0.parameters[index as usize] = value;
+                self.gp0.pgxp_parameters[index as usize] = pgxp_vertex;
+
                 if remaining == 1 {
                     self.execute_draw_command(command)
                 } else {
@@ -425,6 +430,8 @@ impl Gpu {
                     Gp0CommandState::WaitingForCommand
                 } else {
                     self.gp0.parameters[1] = value;
+                    self.gp0.pgxp_parameters[1] = pgxp_vertex;
+
                     if parameters.gouraud_shading {
                         // Need to read one more word for the second vertex coordinate
                         Gp0CommandState::WaitingForParameters {
@@ -624,6 +631,7 @@ impl Gpu {
         let (first_args, second_args) = parse_draw_polygon_parameters(
             command_parameters,
             &self.gp0.parameters,
+            &self.gp0.pgxp_parameters,
             self.gp0.global_texture_page.semi_transparency_mode,
             self.gp0.texture_window,
         );
@@ -760,6 +768,31 @@ impl<'a> Gp0Parameters<'a> {
     }
 }
 
+struct Gp0ParametersPgxp<'a>(&'a [u32], &'a [PreciseVertex]);
+
+impl<'a> Gp0ParametersPgxp<'a> {
+    fn next(&mut self) -> (u32, PreciseVertex) {
+        let value = self.0[0];
+        let vertex = self.1[0];
+
+        self.0 = &self.0[1..];
+        self.1 = &self.1[1..];
+
+        (value, vertex)
+    }
+
+    fn next_word(&mut self) -> u32 {
+        let value = self.0[0];
+        self.0 = &self.0[1..];
+        self.1 = &self.1[1..];
+        value
+    }
+
+    fn peek(&self) -> u32 {
+        self.0[0]
+    }
+}
+
 fn parse_draw_line_parameters(
     command_parameters: LineCommandParameters,
     parameters: &[u32],
@@ -789,12 +822,15 @@ fn parse_draw_line_parameters(
 fn parse_draw_polygon_parameters(
     command_parameters: PolygonCommandParameters,
     parameters: &[u32],
+    pgxp_parameters: &[PreciseVertex],
     global_semi_transparency_mode: SemiTransparencyMode,
     texture_window: TextureWindow,
 ) -> (DrawTriangleArgs, Option<DrawTriangleArgs>) {
-    let mut parameters = Gp0Parameters(parameters);
+    let mut parameters = Gp0ParametersPgxp(parameters, pgxp_parameters);
 
     let mut vertices = [Vertex::default(); 4];
+    let mut pgxp_vertices = [PreciseVertex::default(); 4];
+    let mut pgxp_match = true;
     let mut colors = [Color::default(); 4];
     let mut u = [0; 4];
     let mut v = [0; 4];
@@ -806,10 +842,15 @@ fn parse_draw_polygon_parameters(
 
     for vertex_idx in 0..command_parameters.vertices.into() {
         if vertex_idx != 0 && command_parameters.gouraud_shading {
-            colors[vertex_idx as usize] = parse_command_color(parameters.next());
+            colors[vertex_idx as usize] = parse_command_color(parameters.next_word());
         }
 
-        vertices[vertex_idx as usize] = parse_vertex_coordinates(parameters.next());
+        let (vertex_word, pgxp_vertex) = parameters.next();
+        let vertex = parse_vertex_coordinates(vertex_word);
+        vertices[vertex_idx as usize] = vertex;
+        pgxp_vertices[vertex_idx as usize] = pgxp_vertex;
+
+        pgxp_match &= pgxp_vertex.matches(vertex);
 
         if command_parameters.textured {
             match vertex_idx {
@@ -842,6 +883,7 @@ fn parse_draw_polygon_parameters(
 
     let first_parameters = DrawTriangleArgs {
         vertices: [vertices[0], vertices[1], vertices[2]],
+        pgxp_vertices: pgxp_match.then_some([pgxp_vertices[0], pgxp_vertices[1], pgxp_vertices[2]]),
         shading: if command_parameters.gouraud_shading {
             TriangleShading::Gouraud([colors[0], colors[1], colors[2]])
         } else {
@@ -865,6 +907,11 @@ fn parse_draw_polygon_parameters(
         PolygonVertices::Four => {
             let second_parameters = DrawTriangleArgs {
                 vertices: [vertices[1], vertices[2], vertices[3]],
+                pgxp_vertices: pgxp_match.then_some([
+                    pgxp_vertices[1],
+                    pgxp_vertices[2],
+                    pgxp_vertices[3],
+                ]),
                 shading: if command_parameters.gouraud_shading {
                     TriangleShading::Gouraud([colors[1], colors[2], colors[3]])
                 } else {

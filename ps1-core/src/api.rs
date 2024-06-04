@@ -11,6 +11,7 @@ use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::mdec::MacroblockDecoder;
 use crate::memory::{Memory, MemoryControl};
 use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
+use crate::sio::memcard::MemoryCard;
 use crate::sio::{SerialPort0, SerialPort1};
 use crate::spu::Spu;
 use crate::timers::Timers;
@@ -24,7 +25,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 pub use crate::gpu::DisplayConfig;
-use crate::sio::memcard::MemoryCard;
+pub use crate::pgxp::PgxpConfig;
 
 pub const DEFAULT_AUDIO_BUFFER_SIZE: u32 = 64;
 
@@ -107,6 +108,7 @@ pub enum TickError<RErr, AErr, SErr> {
 #[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct Ps1EmulatorConfig {
     pub display: DisplayConfig,
+    pub pgxp: PgxpConfig,
     pub internal_audio_buffer_size: NonZeroU32,
 }
 
@@ -114,6 +116,7 @@ impl Default for Ps1EmulatorConfig {
     fn default() -> Self {
         Self {
             display: DisplayConfig::default(),
+            pgxp: PgxpConfig::default(),
             internal_audio_buffer_size: NonZeroU32::new(DEFAULT_AUDIO_BUFFER_SIZE).unwrap(),
         }
     }
@@ -279,15 +282,15 @@ impl Ps1Emulator {
         let memory = Memory::new(bios_rom)?;
 
         let mut emulator = Self {
-            cpu: R3000::new(),
-            gpu: Gpu::new(wgpu_device, wgpu_queue, config.display),
+            cpu: R3000::new(config.pgxp),
+            gpu: Gpu::new(wgpu_device, wgpu_queue, config.display, config.pgxp),
             spu: Spu::new(),
             audio_buffer: Vec::with_capacity(1600),
             cd_controller: CdController::new(disc),
             mdec: MacroblockDecoder::new(),
             memory,
             memory_control: MemoryControl::new(),
-            dma_controller: DmaController::new(),
+            dma_controller: DmaController::new(config.pgxp),
             interrupt_registers: InterruptRegisters::new(),
             sio0: SerialPort0::new_sio0(memory_card_1),
             sio1: SerialPort1::new_sio1(),
@@ -530,7 +533,9 @@ impl Ps1Emulator {
     }
 
     pub fn update_config(&mut self, config: Ps1EmulatorConfig) {
-        self.gpu.update_display_config(config.display);
+        self.cpu.update_pgxp_config(config.pgxp);
+        self.dma_controller.update_pgxp_config(config.pgxp);
+        self.gpu.update_config(config.display, config.pgxp);
         self.config = config;
     }
 
@@ -554,7 +559,7 @@ impl Ps1Emulator {
         // Important to make the game re-read the memory card header after loading state
         state.sio0.memory_card_1().clear_written_since_load();
 
-        Self {
+        let mut emulator = Self {
             cpu: state.cpu,
             gpu: Gpu::from_state(
                 state.gpu,
@@ -578,7 +583,11 @@ impl Ps1Emulator {
             config: unserialized.config,
             tty_enabled: state.tty_enabled,
             tty_buffer: state.tty_buffer,
-        }
+        };
+
+        emulator.update_config(unserialized.config);
+
+        emulator
     }
 }
 

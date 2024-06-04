@@ -16,6 +16,7 @@ use crate::mdec::MacroblockDecoder;
 use crate::memory;
 use crate::memory::Memory;
 use crate::num::{U32Ext, U8Ext};
+use crate::pgxp::PgxpConfig;
 use crate::scheduler::{Scheduler, SchedulerEvent};
 use crate::spu::Spu;
 use bincode::{Decode, Encode};
@@ -209,6 +210,7 @@ pub struct DmaController {
     control: DmaControlRegister,
     interrupt: DmaInterruptRegister,
     channel_configs: [ChannelConfig; 7],
+    pgxp_config: PgxpConfig,
     cpu_wait_cycles: u32,
     global_next_active_cycles: u64,
 }
@@ -221,7 +223,7 @@ const SPU: usize = 4;
 const OTC: usize = 6;
 
 impl DmaController {
-    pub fn new() -> Self {
+    pub fn new(pgxp_config: PgxpConfig) -> Self {
         let mut channel_configs = array::from_fn(|_| ChannelConfig::default());
         channel_configs[OTC] = ChannelConfig::otc();
 
@@ -229,9 +231,14 @@ impl DmaController {
             control: DmaControlRegister::new(),
             interrupt: DmaInterruptRegister::default(),
             channel_configs,
+            pgxp_config,
             cpu_wait_cycles: 0,
             global_next_active_cycles: 0,
         }
+    }
+
+    pub fn update_pgxp_config(&mut self, pgxp_config: PgxpConfig) {
+        self.pgxp_config = pgxp_config;
     }
 
     // $1F8010F0: DPCR (DMA control register)
@@ -471,8 +478,13 @@ impl DmaController {
                         config.block_size,
                         config.start_address
                     );
-                    let cpu_wait_cycles =
-                        progress_gpu_dma(config, gpu, memory, scheduler.cpu_cycle_counter());
+                    let cpu_wait_cycles = progress_gpu_dma(
+                        config,
+                        gpu,
+                        memory,
+                        self.pgxp_config.enabled,
+                        scheduler.cpu_cycle_counter(),
+                    );
                     self.cpu_wait_cycles = cpu_wait_cycles;
 
                     if !config.transfer_active {
@@ -675,12 +687,13 @@ fn progress_gpu_dma(
     config: &mut ChannelConfig,
     gpu: &mut Gpu,
     memory: &mut Memory,
+    pgxp_enabled: bool,
     cpu_cycle_counter: u64,
 ) -> u32 {
     match config.transfer_mode {
         TransferMode::Block => progress_gpu_block_dma(config, gpu, memory, cpu_cycle_counter),
         TransferMode::LinkedList => {
-            progress_gpu_linked_list_dma(config, gpu, memory, cpu_cycle_counter)
+            progress_gpu_linked_list_dma(config, gpu, memory, pgxp_enabled, cpu_cycle_counter)
         }
         TransferMode::Burst => panic!("GPU DMA executed in Burst mode: {config:?}"),
     }
@@ -718,6 +731,7 @@ fn progress_gpu_linked_list_dma(
     config: &mut ChannelConfig,
     gpu: &mut Gpu,
     memory: &mut Memory,
+    pgxp_enabled: bool,
     cpu_cycle_counter: u64,
 ) -> u32 {
     if config.start_address.bit(23) {
@@ -735,7 +749,13 @@ fn progress_gpu_linked_list_dma(
             for i in 0..data_word_count {
                 let word_addr = address.wrapping_add(4 * (i + 1));
                 let word = memory.read_main_ram_u32(word_addr);
-                gpu.write_gp0_command(word);
+
+                if pgxp_enabled {
+                    let vertex = memory.read_main_ram_pgxp(word_addr);
+                    gpu.write_gp0_command_pgxp(word, vertex);
+                } else {
+                    gpu.write_gp0_command(word);
+                }
             }
 
             let next_address = node & 0xFFFFFF;

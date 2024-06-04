@@ -11,6 +11,8 @@ Implemented:
 * The GPU, with both software and hardware rasterizers
   * Hardware rasterizer uses wgpu with native extensions; should work on Vulkan, DirectX 12, and Metal (has only been tested on Vulkan)
   * Hardware rasterizer supports 24bpp color rendering and higher resolutions up to 16x native
+  * Supports basic PGXP (Parallel/Precision Geometry Transform Pipeline), which reduces model wobble and texture warping in many 3D games
+    * CPU mode is not yet implemented so the PGXP implementation is not compatible with some games (e.g. Spyro series, Metal Gear Solid, Resident Evil 3, Tony Hawk's Pro Skater series)
 * The SPU
 * Most of the CD-ROM controller
 * The MDEC
@@ -23,7 +25,7 @@ Not yet implemented:
 * Configurable inputs and gamepad support
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
   * Also a memory card manager
-* Additional graphical enhancements for the hardware rasterizer (e.g. sub-pixel vertex precision, texture filtering)
+* Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work but timings are quite inaccurate right now
 * Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio
   * There are possibly no games that use 8-bit CD-XA audio samples?

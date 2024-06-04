@@ -14,6 +14,7 @@ use crate::cpu::cp0::ExceptionCode;
 use crate::cpu::gte::GeometryTransformationEngine;
 use crate::cpu::icache::InstructionCache;
 use crate::num::U32Ext;
+use crate::pgxp::{PgxpConfig, PgxpCpuRegisters};
 use bincode::{Decode, Encode};
 use cp0::SystemControlCoprocessor;
 use std::mem;
@@ -81,13 +82,15 @@ impl Registers {
     }
 
     fn process_delayed_loads(&mut self) {
-        // No need for an if check here; if register is 0 then value will be 0
-        let (register, value) = self.delayed_load;
-        self.gpr[register as usize] = value;
+        if self.delayed_load.0 != 0 {
+            let (register, value) = self.delayed_load;
+            self.gpr[register as usize] = value;
+            self.delayed_load.0 = 0;
+        }
 
-        debug_assert!(!(register == 0 && value != 0));
-
-        self.delayed_load = mem::take(&mut self.delayed_load_next);
+        if self.delayed_load_next.0 != 0 {
+            self.delayed_load = mem::take(&mut self.delayed_load_next);
+        }
     }
 }
 
@@ -136,6 +139,8 @@ impl OpSize {
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct R3000 {
     registers: Registers,
+    pgxp: PgxpCpuRegisters,
+    pgxp_config: PgxpConfig,
     i_cache: Box<InstructionCache>,
     cp0: SystemControlCoprocessor,
     gte: GeometryTransformationEngine,
@@ -175,14 +180,21 @@ macro_rules! impl_bus_write {
 }
 
 impl R3000 {
-    pub fn new() -> Self {
+    pub fn new(pgxp_config: PgxpConfig) -> Self {
         Self {
             registers: Registers::new(),
+            pgxp: PgxpCpuRegisters::new(),
+            pgxp_config,
             i_cache: Box::new(InstructionCache::new()),
             cp0: SystemControlCoprocessor::new(),
-            gte: GeometryTransformationEngine::new(),
+            gte: GeometryTransformationEngine::new(pgxp_config),
             instruction_cycles: 0,
         }
+    }
+
+    pub fn update_pgxp_config(&mut self, pgxp_config: PgxpConfig) {
+        self.pgxp_config = pgxp_config;
+        self.gte.update_pgxp_config(pgxp_config);
     }
 
     pub fn pc(&self) -> u32 {
@@ -215,7 +227,7 @@ impl R3000 {
                 pc,
                 self.registers.delayed_branch.is_some(),
             );
-            self.registers.process_delayed_loads();
+            self.process_delayed_loads();
 
             // TODO pure guess at exception timing
             return 3;
@@ -238,7 +250,7 @@ impl R3000 {
                 pc,
                 self.registers.delayed_branch.is_some(),
             );
-            self.registers.process_delayed_loads();
+            self.process_delayed_loads();
             return self.instruction_cycles;
         }
 
@@ -252,9 +264,17 @@ impl R3000 {
             self.handle_exception(exception, pc, in_delay_slot);
         }
 
-        self.registers.process_delayed_loads();
+        self.process_delayed_loads();
 
         self.instruction_cycles
+    }
+
+    fn process_delayed_loads(&mut self) {
+        self.registers.process_delayed_loads();
+
+        if self.pgxp_config.enabled {
+            self.pgxp.process_delayed_loads();
+        }
     }
 
     fn fetch_opcode(&mut self, bus: &mut Bus<'_>, address: u32) -> u32 {
