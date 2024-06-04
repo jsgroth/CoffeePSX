@@ -188,6 +188,22 @@ impl Default for PathsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FiltersConfig {
+    #[serde(default = "true_fn")]
+    pub exe: bool,
+    #[serde(default = "true_fn")]
+    pub cue: bool,
+    #[serde(default = "true_fn")]
+    pub chd: bool,
+}
+
+impl Default for FiltersConfig {
+    fn default() -> Self {
+        toml::from_str("").unwrap()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub video: VideoConfig,
@@ -195,6 +211,8 @@ pub struct AppConfig {
     pub audio: AudioConfig,
     #[serde(default)]
     pub paths: PathsConfig,
+    #[serde(default)]
+    pub filters: FiltersConfig,
 }
 
 impl Default for AppConfig {

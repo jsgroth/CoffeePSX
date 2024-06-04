@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, FilterMode, Rasterizer, VSyncMode, WgpuBackend};
+use crate::config::{AppConfig, FilterMode, FiltersConfig, Rasterizer, VSyncMode, WgpuBackend};
 use crate::{config, OpenFileType, UserEvent};
 use egui::{
     Align, Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Layout, Modifiers,
@@ -61,7 +61,12 @@ struct AppState {
 
 impl AppState {
     fn new(config: &AppConfig) -> Self {
-        let file_list = do_file_search(&config.paths.search, config.paths.search_recursively, "");
+        let file_list = do_file_search(
+            &config.paths.search,
+            config.paths.search_recursively,
+            "",
+            &config.filters,
+        );
 
         Self {
             video_window_open: false,
@@ -159,6 +164,7 @@ impl App {
             &self.config.paths.search,
             self.config.paths.search_recursively,
             &self.state.filter_by_title_lower,
+            &self.config.filters,
         )
         .into();
     }
@@ -549,6 +555,12 @@ impl App {
                     self.state.filter_by_title.clear();
                     self.state.filter_by_title_lower.clear();
                 }
+
+                ui.add_space(40.0);
+
+                ui.checkbox(&mut self.config.filters.exe, "EXE");
+                ui.checkbox(&mut self.config.filters.cue, "CUE");
+                ui.checkbox(&mut self.config.filters.chd, "CHD");
             });
 
             ui.add_space(15.0);
@@ -556,7 +568,7 @@ impl App {
             TableBuilder::new(ui)
                 .auto_shrink([false; 2])
                 .striped(true)
-                .max_scroll_height(2000.0)
+                .max_scroll_height(3000.0)
                 .cell_layout(Layout::left_to_right(Align::Center))
                 .column(Column::auto().at_most(500.0))
                 .column(Column::auto())
@@ -601,7 +613,7 @@ impl App {
 
                             row.col(|ui| {
                                 ui.centered_and_justified(|ui| {
-                                    ui.label(metadata.extension.to_uppercase());
+                                    ui.label(metadata.extension.as_str());
                                 });
                             });
 
@@ -636,10 +648,27 @@ fn read_config<P: AsRef<Path>>(path: P) -> anyhow::Result<AppConfig> {
     Ok(config)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileExtension {
+    Exe,
+    Cue,
+    Chd,
+}
+
+impl FileExtension {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Exe => "EXE",
+            Self::Cue => "CUE",
+            Self::Chd => "CHD",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct FileMetadata {
     file_name_no_ext: String,
-    extension: String,
+    extension: FileExtension,
     full_path: PathBuf,
 }
 
@@ -647,12 +676,19 @@ fn do_file_search(
     search_dirs: &[PathBuf],
     recursive: bool,
     filter_by_title: &str,
+    file_filters: &FiltersConfig,
 ) -> Vec<FileMetadata> {
     let mut visited_dirs = HashSet::new();
     let mut files = Vec::new();
     for search_dir in search_dirs {
         do_file_search_inner(search_dir, recursive, filter_by_title, &mut visited_dirs, &mut files);
     }
+
+    files.retain(|metadata| {
+        (metadata.extension == FileExtension::Exe && file_filters.exe)
+            || (metadata.extension == FileExtension::Cue && file_filters.cue)
+            || (metadata.extension == FileExtension::Chd && file_filters.chd)
+    });
 
     files.sort_by(|a, b| a.file_name_no_ext.cmp(&b.file_name_no_ext));
 
@@ -691,11 +727,17 @@ fn do_file_search_inner(
             }
 
             let Some(extension) = entry_path.extension().and_then(OsStr::to_str) else { continue };
-            if matches!(extension, "exe" | "cue" | "chd") {
+            let ext_lower = extension.to_lowercase();
+            if matches!(ext_lower.as_str(), "exe" | "cue" | "chd") {
                 // TODO check that EXE is a PS1 executable
                 out.push(FileMetadata {
                     file_name_no_ext: file_name_no_ext.into(),
-                    extension: extension.into(),
+                    extension: match ext_lower.as_str() {
+                        "exe" => FileExtension::Exe,
+                        "cue" => FileExtension::Cue,
+                        "chd" => FileExtension::Chd,
+                        _ => unreachable!("nested match expressions"),
+                    },
                     full_path: entry_path,
                 });
             }
