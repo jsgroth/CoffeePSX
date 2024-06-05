@@ -117,7 +117,7 @@ pub struct GraphicsConfig {
     pub hardware_high_color: bool,
     #[serde(default = "true_fn")]
     pub hardware_15bpp_dithering: bool,
-    #[serde(default)]
+    #[serde(default = "true_fn")]
     pub async_swap_chain_rendering: bool,
     #[serde(default)]
     pub pgxp_enabled: bool,
@@ -175,7 +175,7 @@ fn default_audio_sync_threshold() -> u32 {
 }
 
 fn default_device_queue_size() -> u16 {
-    1024
+    512
 }
 
 fn default_internal_audio_buffer_size() -> NonZeroU32 {

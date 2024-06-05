@@ -384,7 +384,7 @@ impl App {
 
                 ui.checkbox(
                     &mut self.config.graphics.async_swap_chain_rendering,
-                    "Asynchronous rendering",
+                    "Asynchronous GPU rendering",
                 )
                 .on_hover_text("Should improve performance, but can cause skipped frames and input latency")
                 .on_disabled_hover_text(disabled_hover_text);
