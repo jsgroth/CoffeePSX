@@ -10,7 +10,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::EventLoopWindowTarget;
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowBuilder};
+use winit::window::{Fullscreen, Window, WindowBuilder};
 
 #[derive(Debug)]
 struct EmulatorWindow {
@@ -39,10 +39,12 @@ impl EmulatorWindow {
             None => "(BIOS)".into(),
         };
         let window_size = LogicalSize::new(config.video.window_width, config.video.window_height);
-        let window = WindowBuilder::new()
-            .with_title(window_title)
-            .with_inner_size(window_size)
-            .build(elwt)?;
+        let mut window_builder =
+            WindowBuilder::new().with_title(window_title).with_inner_size(window_size);
+        if config.video.launch_in_fullscreen {
+            window_builder = window_builder.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
+        let window = window_builder.build(elwt)?;
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: config.graphics.wgpu_backend.to_wgpu(),
@@ -131,6 +133,14 @@ impl EmulatorWindow {
         self.surface_config.present_mode = present_mode;
         self.surface.configure(&self.device, &self.surface_config);
     }
+
+    fn toggle_fullscreen(&self) {
+        let new_fullscreen = match self.window.fullscreen() {
+            Some(_) => None,
+            None => Some(Fullscreen::Borderless(None)),
+        };
+        self.window.set_fullscreen(new_fullscreen);
+    }
 }
 
 struct RunningState {
@@ -186,9 +196,18 @@ impl EmulatorState {
                         window.surface_config.height = size.height;
                         window.surface.configure(&window.device, &window.surface_config);
 
-                        let logical_size = size.to_logical(window.window.scale_factor());
-                        app_config.video.window_width = logical_size.width;
-                        app_config.video.window_height = logical_size.height;
+                        match window.window.fullscreen() {
+                            Some(_) => {
+                                window.window.set_cursor_visible(false);
+                            }
+                            None => {
+                                let logical_size = size.to_logical(window.window.scale_factor());
+                                app_config.video.window_width = logical_size.width;
+                                app_config.video.window_height = logical_size.height;
+
+                                window.window.set_cursor_visible(true);
+                            }
+                        }
 
                         emu_thread.handle_resize(*size);
                     }
@@ -205,6 +224,9 @@ impl EmulatorState {
                             Some(Hotkey::Quit) => {
                                 emu_thread.send_command(EmulatorThreadCommand::Stop);
                                 self.running = None;
+                            }
+                            Some(Hotkey::ToggleFullscreen) => {
+                                window.toggle_fullscreen();
                             }
                             Some(Hotkey::ToggleVramDisplay) => {
                                 app_config.video.vram_display = !app_config.video.vram_display;
@@ -338,6 +360,7 @@ fn key_input_command(key: PhysicalKey, state: ElementState) -> Option<EmulatorTh
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hotkey {
     Quit,
+    ToggleFullscreen,
     ToggleVramDisplay,
     EnableHardwareRasterizer,
     EnableSoftwareRasterizer,
@@ -357,6 +380,7 @@ fn check_hotkey(key: PhysicalKey, state: ElementState) -> Option<Hotkey> {
     // TODO configurable
     match keycode {
         KeyCode::Escape if pressed => Some(Hotkey::Quit),
+        KeyCode::F9 if pressed => Some(Hotkey::ToggleFullscreen),
         KeyCode::Quote if pressed => Some(Hotkey::ToggleVramDisplay),
         KeyCode::Digit0 if pressed => Some(Hotkey::EnableHardwareRasterizer),
         KeyCode::Minus if pressed => Some(Hotkey::EnableSoftwareRasterizer),

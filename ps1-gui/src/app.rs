@@ -242,6 +242,8 @@ impl App {
             .open(&mut self.state.video_window_open)
             .resizable(false)
             .show(ctx, |ui| {
+                ui.checkbox(&mut self.config.video.launch_in_fullscreen, "Launch in fullscreen");
+
                 ui.group(|ui| {
                     ui.label("VSync mode");
 

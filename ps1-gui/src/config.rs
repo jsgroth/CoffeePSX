@@ -72,6 +72,8 @@ impl WgpuBackend {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VideoConfig {
     #[serde(default)]
+    pub launch_in_fullscreen: bool,
+    #[serde(default)]
     pub vsync_mode: VSyncMode,
     #[serde(default)]
     pub filter_mode: FilterMode,
