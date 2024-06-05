@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
         return run_headless(args.headless_file.as_ref(), app.config_mut(), event_loop);
     }
 
-    let mut emu_state = EmulatorState::new();
+    let mut emu_state = EmulatorState::new()?;
     let mut gui_state = GuiState::new(app, &event_loop)?;
 
     let event_loop_proxy = event_loop.create_proxy();
@@ -46,7 +46,9 @@ fn main() -> anyhow::Result<()> {
             return;
         }
 
-        if let Err(err) = emu_state.handle_event(&event, elwt, gui_state.app_config_mut()) {
+        if let Err(err) =
+            emu_state.handle_event(&event, elwt, &event_loop_proxy, gui_state.app_config_mut())
+        {
             log::error!("Emulator error: {err}");
         }
 
@@ -63,14 +65,16 @@ fn run_headless(
     config: &mut AppConfig,
     event_loop: EventLoop<UserEvent>,
 ) -> anyhow::Result<()> {
-    let mut emu_state = EmulatorState::new();
+    let event_loop_proxy = event_loop.create_proxy();
+
+    let mut emu_state = EmulatorState::new()?;
     let first_event = match path {
         Some(path) => {
             Event::UserEvent(UserEvent::FileOpened(OpenFileType::Open, Some(path.clone())))
         }
         None => Event::UserEvent(UserEvent::RunBios),
     };
-    emu_state.handle_event(&first_event, &event_loop, config)?;
+    emu_state.handle_event(&first_event, &event_loop, &event_loop_proxy, config)?;
 
     event_loop.run(move |event, elwt| {
         if let Event::UserEvent(UserEvent::Close) = &event {
@@ -78,7 +82,7 @@ fn run_headless(
             return;
         }
 
-        if let Err(err) = emu_state.handle_event(&event, elwt, config) {
+        if let Err(err) = emu_state.handle_event(&event, elwt, &event_loop_proxy, config) {
             log::error!("Emulator error: {err}");
         }
 

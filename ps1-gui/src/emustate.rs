@@ -2,13 +2,19 @@ use crate::config::{AppConfig, Rasterizer, VideoConfig};
 use crate::emuthread::{EmulationThreadHandle, EmulatorThreadCommand, Ps1Button};
 use crate::{OpenFileType, UserEvent};
 use anyhow::anyhow;
+use sdl2::controller::Axis as SdlAxis;
+use sdl2::controller::Button as SdlButton;
+use sdl2::controller::GameController;
+use sdl2::event::Event as SdlEvent;
+use sdl2::{EventPump, GameControllerSubsystem, Sdl};
 use std::cmp;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::Arc;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
-use winit::event_loop::EventLoopWindowTarget;
+use winit::event_loop::{EventLoopProxy, EventLoopWindowTarget};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Window, WindowBuilder};
 
@@ -148,15 +154,95 @@ struct RunningState {
     emu_thread: EmulationThreadHandle,
 }
 
+struct Controllers {
+    subsystem: GameControllerSubsystem,
+    controllers: HashMap<u32, GameController>,
+    instance_id_to_device_id: HashMap<u32, u32>,
+}
+
+impl Controllers {
+    fn new(subsystem: GameControllerSubsystem) -> Self {
+        Self { subsystem, controllers: HashMap::new(), instance_id_to_device_id: HashMap::new() }
+    }
+
+    fn handle_device_added(&mut self, which: u32) -> anyhow::Result<()> {
+        let controller = self.subsystem.open(which)?;
+
+        log::info!("Controller added: '{}'", controller.name());
+
+        self.instance_id_to_device_id.insert(controller.instance_id(), which);
+        self.controllers.insert(which, controller);
+
+        Ok(())
+    }
+
+    fn handle_device_removed(&mut self, which: u32) {
+        let Some(device_id) = self.instance_id_to_device_id.remove(&which) else { return };
+        let Some(controller) = self.controllers.remove(&device_id) else { return };
+
+        log::info!("Controller removed: '{}'", controller.name());
+    }
+
+    #[allow(clippy::unused_self)]
+    fn handle_button_press(
+        &self,
+        button: SdlButton,
+        pressed: bool,
+        proxy: &EventLoopProxy<UserEvent>,
+    ) {
+        let ps1_button = match button {
+            SdlButton::DPadUp => Ps1Button::Up,
+            SdlButton::DPadLeft => Ps1Button::Left,
+            SdlButton::DPadRight => Ps1Button::Right,
+            SdlButton::DPadDown => Ps1Button::Down,
+            SdlButton::A => Ps1Button::Cross,
+            SdlButton::B => Ps1Button::Circle,
+            SdlButton::X => Ps1Button::Square,
+            SdlButton::Y => Ps1Button::Triangle,
+            SdlButton::LeftShoulder => Ps1Button::L1,
+            SdlButton::RightShoulder => Ps1Button::R1,
+            SdlButton::Start => Ps1Button::Start,
+            SdlButton::Back => Ps1Button::Select,
+            _ => return,
+        };
+
+        proxy.send_event(UserEvent::ControllerButton { button: ps1_button, pressed }).unwrap();
+    }
+
+    #[allow(clippy::unused_self)]
+    fn handle_axis_motion(&self, axis: SdlAxis, value: i16, proxy: &EventLoopProxy<UserEvent>) {
+        let button = match axis {
+            SdlAxis::TriggerLeft => Ps1Button::L2,
+            SdlAxis::TriggerRight => Ps1Button::R2,
+            _ => return,
+        };
+
+        let pressed = value >= i16::MAX / 2;
+        proxy.send_event(UserEvent::ControllerButton { button, pressed }).unwrap();
+    }
+}
+
 pub struct EmulatorState {
     running: Option<RunningState>,
+    sdl_ctx: Sdl,
+    sdl_event_pump: EventPump,
+    controllers: Controllers,
 }
 
 impl EmulatorState {
-    #[must_use]
     #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        Self { running: None }
+    #[allow(clippy::missing_errors_doc)]
+    pub fn new() -> anyhow::Result<Self> {
+        let sdl_ctx = sdl2::init().map_err(|err| anyhow!("Error initializing SDL2: {err}"))?;
+        let sdl_event_pump = sdl_ctx
+            .event_pump()
+            .map_err(|err| anyhow!("Error initializing SDL2 event pump: {err}"))?;
+        let controller_subsystem = sdl_ctx
+            .game_controller()
+            .map_err(|err| anyhow!("Error initializing SDL2 game controller subsystem: {err}"))?;
+        let controllers = Controllers::new(controller_subsystem);
+
+        Ok(Self { running: None, sdl_ctx, sdl_event_pump, controllers })
     }
 
     #[allow(clippy::missing_errors_doc)]
@@ -164,6 +250,7 @@ impl EmulatorState {
         &mut self,
         event: &Event<UserEvent>,
         elwt: &EventLoopWindowTarget<UserEvent>,
+        proxy: &EventLoopProxy<UserEvent>,
         app_config: &mut AppConfig,
     ) -> anyhow::Result<()> {
         match event {
@@ -172,6 +259,9 @@ impl EmulatorState {
             }
             Event::UserEvent(UserEvent::RunBios) => {
                 return self.start_emulator(None, elwt, app_config);
+            }
+            Event::AboutToWait => {
+                self.process_sdl_events(proxy)?;
             }
             _ => {}
         }
@@ -182,6 +272,9 @@ impl EmulatorState {
             Event::UserEvent(UserEvent::AppConfigChanged) => {
                 window.update_config(&app_config.video);
                 emu_thread.handle_config_change(app_config)?;
+            }
+            &Event::UserEvent(UserEvent::ControllerButton { button, pressed }) => {
+                emu_thread.send_command(EmulatorThreadCommand::DigitalInput { button, pressed });
             }
             Event::WindowEvent { event: win_event, window_id }
                 if *window_id == window.window.id() =>
@@ -301,6 +394,31 @@ impl EmulatorState {
         Ok(())
     }
 
+    fn process_sdl_events(&mut self, proxy: &EventLoopProxy<UserEvent>) -> anyhow::Result<()> {
+        for event in self.sdl_event_pump.poll_iter() {
+            match event {
+                SdlEvent::ControllerDeviceAdded { which, .. } => {
+                    self.controllers.handle_device_added(which)?;
+                }
+                SdlEvent::ControllerDeviceRemoved { which, .. } => {
+                    self.controllers.handle_device_removed(which);
+                }
+                SdlEvent::ControllerButtonDown { button, .. } => {
+                    self.controllers.handle_button_press(button, true, proxy);
+                }
+                SdlEvent::ControllerButtonUp { button, .. } => {
+                    self.controllers.handle_button_press(button, false, proxy);
+                }
+                SdlEvent::ControllerAxisMotion { axis, value, .. } => {
+                    self.controllers.handle_axis_motion(axis, value, proxy);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
     fn start_emulator(
         &mut self,
         file_path: Option<&Path>,
@@ -314,6 +432,7 @@ impl EmulatorState {
         let window = EmulatorWindow::new(file_path, elwt, app_config)?;
 
         let emu_thread = EmulationThreadHandle::spawn(
+            &self.sdl_ctx,
             file_path,
             app_config,
             &window.surface_config,

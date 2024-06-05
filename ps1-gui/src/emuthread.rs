@@ -11,7 +11,7 @@ use ps1_core::api::{
 use ps1_core::input::Ps1Inputs;
 use regex::Regex;
 use sdl2::audio::AudioDevice;
-use sdl2::AudioSubsystem;
+use sdl2::{AudioSubsystem, Sdl};
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::fs::File;
@@ -124,6 +124,7 @@ pub struct EmulationThreadHandle {
 impl EmulationThreadHandle {
     #[allow(clippy::missing_errors_doc)]
     pub fn spawn(
+        sdl_ctx: &Sdl,
         file_path: Option<&Path>,
         config: &AppConfig,
         surface_config: &wgpu::SurfaceConfiguration,
@@ -187,7 +188,6 @@ impl EmulationThreadHandle {
         let swap_chain_renderer =
             SwapChainRenderer::new(Arc::clone(&device), Arc::clone(&queue), swap_chain.clone());
 
-        let sdl_ctx = sdl2::init().map_err(|err| anyhow!("Failed to initialize SDL2: {err}"))?;
         let audio_subsystem = sdl_ctx
             .audio()
             .map_err(|err| anyhow!("Failed to initialize SDL2 audio subsystem: {err}"))?;
