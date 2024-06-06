@@ -1,8 +1,7 @@
 use crate::config::VideoConfig;
-use crate::emuthread::{EmulatorSwapChain, TextureWithAspectRatio};
+use crate::emuthread::{EmulatorSwapChain, QueuedFrame};
 use crate::{emuthread, Never};
 use ps1_core::api::Renderer;
-use std::collections::{HashMap, VecDeque};
 use std::iter;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -24,9 +23,7 @@ pub struct SwapChainRenderer {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
     swap_chain: EmulatorSwapChain,
-    swap_chain_textures: HashMap<FrameSize, VecDeque<wgpu::Texture>>,
     in_progress_renders: Arc<AtomicU32>,
-    texture_buffer: VecDeque<wgpu::Texture>,
 }
 
 impl SwapChainRenderer {
@@ -35,27 +32,7 @@ impl SwapChainRenderer {
         queue: Arc<wgpu::Queue>,
         swap_chain: EmulatorSwapChain,
     ) -> Self {
-        Self {
-            device,
-            queue,
-            swap_chain,
-            swap_chain_textures: HashMap::new(),
-            in_progress_renders: Arc::new(AtomicU32::new(0)),
-            texture_buffer: VecDeque::with_capacity(emuthread::SWAP_CHAIN_LEN),
-        }
-    }
-
-    fn reclaim_returned_textures(&mut self) {
-        self.texture_buffer.extend(self.swap_chain.returned_frames.lock().unwrap().drain(..));
-
-        while let Some(texture) = self.texture_buffer.pop_front() {
-            let frame_size = FrameSize::from(&texture);
-            let entry = self.swap_chain_textures.entry(frame_size).or_default();
-            entry.push_back(texture);
-            while entry.len() > emuthread::SWAP_CHAIN_LEN {
-                entry.pop_front();
-            }
-        }
+        Self { device, queue, swap_chain, in_progress_renders: Arc::new(AtomicU32::new(0)) }
     }
 
     pub fn clear_swap_chain(&self) {
@@ -72,8 +49,6 @@ impl Renderer for SwapChainRenderer {
         frame: &wgpu::Texture,
         pixel_aspect_ratio: f64,
     ) -> Result<(), Self::Err> {
-        self.reclaim_returned_textures();
-
         // Load/compare followed by increment is fine because this value is only incremented from one
         // thread; other thread modifications are decrements
         if self.in_progress_renders.load(Ordering::Relaxed) >= emuthread::SWAP_CHAIN_LEN as u32 {
@@ -87,59 +62,27 @@ impl Renderer for SwapChainRenderer {
 
         self.in_progress_renders.fetch_add(1, Ordering::Relaxed);
 
-        let frame_size = FrameSize::from(frame);
-        let swap_chain_texture =
-            self.swap_chain_textures.entry(frame_size).or_default().pop_front().unwrap_or_else(
-                || {
-                    log::debug!("Creating new swap chain texture of size {frame_size:?}");
+        let submission = self.queue.submit(command_buffers);
 
-                    self.device.create_texture(&wgpu::TextureDescriptor {
-                        label: "swap_chain_texture".into(),
-                        size: frame.size(),
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: frame.dimension(),
-                        format: frame.format(),
-                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[wgpu::TextureFormat::Rgba8UnormSrgb],
-                    })
-                },
-            );
-
-        let mut encoder =
-            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        encoder.copy_texture_to_texture(
-            frame.as_image_copy(),
-            swap_chain_texture.as_image_copy(),
-            frame.size(),
-        );
-        let submission = self.queue.submit(command_buffers.chain(iter::once(encoder.finish())));
-
-        let push_texture = TextureWithAspectRatio(swap_chain_texture, pixel_aspect_ratio);
+        let queued_frame = QueuedFrame {
+            view: frame.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+                ..wgpu::TextureViewDescriptor::default()
+            }),
+            size: frame.size(),
+            pixel_aspect_ratio,
+        };
 
         if self.swap_chain.async_rendering.load(Ordering::Relaxed) {
             let in_progress_renders = Arc::clone(&self.in_progress_renders);
-            let returned_frames = Arc::clone(&self.swap_chain.returned_frames);
-            let popped_texture =
-                self.swap_chain.rendered_frames.lock().unwrap().push_back(push_texture);
+            self.swap_chain.rendered_frames.lock().unwrap().push_back(queued_frame);
             self.queue.on_submitted_work_done(move || {
-                if let Some(popped_texture) = popped_texture {
-                    returned_frames.lock().unwrap().push_back(popped_texture);
-                }
-
                 in_progress_renders.fetch_sub(1, Ordering::Relaxed);
             });
         } else {
-            let popped_texture =
-                self.swap_chain.rendered_frames.lock().unwrap().push_back(push_texture);
+            self.swap_chain.rendered_frames.lock().unwrap().push_back(queued_frame);
 
             self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
-
-            if let Some(popped_texture) = popped_texture {
-                let frame_size = FrameSize::from(&popped_texture);
-                self.swap_chain_textures.entry(frame_size).or_default().push_back(popped_texture);
-            }
-
             self.in_progress_renders.fetch_sub(1, Ordering::Relaxed);
         }
 
@@ -260,29 +203,23 @@ impl SurfaceRenderer {
     }
 
     pub fn render_frame_if_available(&mut self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
-        let Some(TextureWithAspectRatio(frame, pixel_aspect_ratio)) =
-            self.swap_chain.rendered_frames.lock().unwrap().pop_front()
-        else {
+        let Some(frame) = self.swap_chain.rendered_frames.lock().unwrap().pop_front() else {
             return Ok(());
         };
 
         let output = surface.get_current_texture()?;
         let output_view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let frame_view = frame.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-            ..wgpu::TextureViewDescriptor::default()
-        });
         let frame_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: "frame_bind_group".into(),
             layout: &self.frame_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&frame_view),
+                resource: wgpu::BindingResource::TextureView(&frame.view),
             }],
         });
 
-        let viewport = determine_viewport(frame.size(), self.surface_size, pixel_aspect_ratio);
+        let viewport = determine_viewport(frame.size, self.surface_size, frame.pixel_aspect_ratio);
         log::trace!("Rendering to viewport {viewport:?}");
 
         let mut encoder =
@@ -320,8 +257,6 @@ impl SurfaceRenderer {
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
-
-        self.swap_chain.returned_frames.lock().unwrap().push_back(frame);
 
         Ok(())
     }

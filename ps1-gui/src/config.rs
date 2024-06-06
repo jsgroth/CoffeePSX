@@ -120,7 +120,7 @@ pub struct GraphicsConfig {
     pub hardware_high_color: bool,
     #[serde(default = "true_fn")]
     pub hardware_15bpp_dithering: bool,
-    #[serde(default = "true_fn")]
+    #[serde(default)]
     pub async_swap_chain_rendering: bool,
     #[serde(default)]
     pub pgxp_enabled: bool,

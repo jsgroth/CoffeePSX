@@ -68,7 +68,14 @@ pub enum EmulatorThreadCommand {
 }
 
 #[derive(Debug)]
-struct FixedSizeDeque<const N: usize>(VecDeque<TextureWithAspectRatio>);
+struct QueuedFrame {
+    view: wgpu::TextureView,
+    size: wgpu::Extent3d,
+    pixel_aspect_ratio: f64,
+}
+
+#[derive(Debug)]
+struct FixedSizeDeque<const N: usize>(VecDeque<QueuedFrame>);
 
 impl<const N: usize> FixedSizeDeque<N> {
     fn new() -> Self {
@@ -77,15 +84,15 @@ impl<const N: usize> FixedSizeDeque<N> {
         Self(VecDeque::with_capacity(N))
     }
 
-    #[must_use]
-    fn push_back(&mut self, value: TextureWithAspectRatio) -> Option<wgpu::Texture> {
-        let popped = (self.0.len() == N).then(|| self.0.pop_front().unwrap());
+    fn push_back(&mut self, value: QueuedFrame) {
+        if self.0.len() == N {
+            self.0.pop_front();
+        }
         self.0.push_back(value);
-        popped.map(|TextureWithAspectRatio(texture, _)| texture)
     }
 
     #[must_use]
-    fn pop_front(&mut self) -> Option<TextureWithAspectRatio> {
+    fn pop_front(&mut self) -> Option<QueuedFrame> {
         self.0.pop_front()
     }
 
@@ -96,15 +103,11 @@ impl<const N: usize> FixedSizeDeque<N> {
 
 pub const SWAP_CHAIN_LEN: usize = 3;
 
-#[derive(Debug)]
-struct TextureWithAspectRatio(wgpu::Texture, f64);
-
 type SwapChainTextureBuffer = FixedSizeDeque<{ SWAP_CHAIN_LEN }>;
 
 #[derive(Debug, Clone)]
 pub struct EmulatorSwapChain {
     rendered_frames: Arc<Mutex<SwapChainTextureBuffer>>,
-    returned_frames: Arc<Mutex<VecDeque<wgpu::Texture>>>,
     async_rendering: Arc<AtomicBool>,
 }
 
@@ -112,7 +115,6 @@ impl EmulatorSwapChain {
     fn new(video_config: &GraphicsConfig) -> Self {
         Self {
             rendered_frames: Arc::new(Mutex::new(SwapChainTextureBuffer::new())),
-            returned_frames: Arc::new(Mutex::new(VecDeque::with_capacity(SWAP_CHAIN_LEN))),
             async_rendering: Arc::new(AtomicBool::new(video_config.async_swap_chain_rendering)),
         }
     }
