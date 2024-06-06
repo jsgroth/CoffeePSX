@@ -101,7 +101,7 @@ impl GuiState {
             egui::Context::default(),
             ViewportId::default(),
             &window,
-            Some(window.scale_factor() as f32),
+            None,
             None,
         );
 
@@ -264,7 +264,7 @@ impl GuiState {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Discard,
+                        store: wgpu::StoreOp::Store,
                     },
                 })],
                 ..wgpu::RenderPassDescriptor::default()

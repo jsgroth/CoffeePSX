@@ -54,6 +54,10 @@ impl EmulatorWindow {
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: config.graphics.wgpu_backend.to_wgpu(),
+            dx12_shader_compiler: wgpu::Dx12Compiler::Dxc {
+                dxil_path: Some("dxil.dll".into()),
+                dxc_path: Some("dxcompiler.dll".into()),
+            },
             ..wgpu::InstanceDescriptor::default()
         });
 

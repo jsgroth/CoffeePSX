@@ -23,7 +23,10 @@ struct Args {
 }
 
 fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("info,naga=warn")).init();
+    env_logger::Builder::from_env(
+        Env::default().default_filter_or("info,naga=warn,wgpu_core=warn,wgpu_hal=warn"),
+    )
+    .init();
 
     let args = Args::parse();
 

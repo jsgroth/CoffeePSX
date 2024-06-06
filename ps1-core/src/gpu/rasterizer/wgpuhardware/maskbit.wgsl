@@ -7,6 +7,8 @@ var scaled_vram_copy: texture_storage_2d<rgba8unorm, read>;
 
 var<push_constant> draw_settings: DrawSettings;
 
+const DUMMY_RETURN: vec4f = vec4f(0.0, 0.0, 0.0, 0.0);
+
 @fragment
 fn fs_untextured_average(input: UntexturedVertexOutput) -> @location(0) vec4f {
     let position = vec2u(input.position.xy);
@@ -20,7 +22,12 @@ fn fs_untextured_average(input: UntexturedVertexOutput) -> @location(0) vec4f {
     let pixel = vec4f(blended_color, f32(draw_settings.force_mask_bit));
     textureStore(scaled_vram, position, pixel);
 
-    discard;
+    // DX12 won't compile shaders that never return anything
+    if true {
+        discard;
+    }
+
+    return DUMMY_RETURN;
 }
 
 fn blend_average(texel: vec4f, existing: vec4f) -> vec3f {
@@ -45,7 +52,12 @@ fn fs_textured_average(input: TexturedVertexOutput) -> @location(0) vec4f {
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
     textureStore(scaled_vram, position, pixel);
 
-    discard;
+    // DX12 won't compile shaders that never return anything
+    if true {
+        discard;
+    }
+
+    return DUMMY_RETURN;
 }
 
 @fragment
@@ -62,7 +74,12 @@ fn fs_textured_rect_average(input: TexturedRectVertexOutput) -> @location(0) vec
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
     textureStore(scaled_vram, position, pixel);
 
-    discard;
+    // DX12 won't compile shaders that never return anything
+    if true {
+        discard;
+    }
+
+    return DUMMY_RETURN;
 }
 
 fn blend_add(texel: vec4f, existing: vec4f, factor: f32) -> vec3f {
@@ -86,7 +103,12 @@ fn textured_add(input: TexturedVertexOutput, factor: f32) -> vec4f {
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
     textureStore(scaled_vram, position, pixel);
 
-    discard;
+    // DX12 won't compile shaders that never return anything
+    if true {
+        discard;
+    }
+
+    return DUMMY_RETURN;
 }
 
 fn textured_rect_add(input: TexturedRectVertexOutput, factor: f32) -> vec4f {
@@ -102,7 +124,12 @@ fn textured_rect_add(input: TexturedRectVertexOutput, factor: f32) -> vec4f {
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
     textureStore(scaled_vram, position, pixel);
 
-    discard;
+    // DX12 won't compile shaders that never return anything
+    if true {
+        discard;
+    }
+    
+    return DUMMY_RETURN;
 }
 
 @fragment
@@ -137,7 +164,12 @@ fn fs_textured_subtract(input: TexturedVertexOutput) -> @location(0) vec4f {
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
     textureStore(scaled_vram, position, pixel);
 
-    discard;
+    // DX12 won't compile shaders that never return anything
+    if true {
+        discard;
+    }
+    
+    return DUMMY_RETURN;
 }
 
 @fragment
@@ -154,7 +186,12 @@ fn fs_textured_rect_subtract(input: TexturedRectVertexOutput) -> @location(0) ve
     let pixel = vec4f(blended_color, max(texel.a, f32(draw_settings.force_mask_bit)));
     textureStore(scaled_vram, position, pixel);
 
-    discard;
+    // DX12 won't compile shaders that never return anything
+    if true {
+        discard;
+    }
+    
+    return DUMMY_RETURN;
 }
 
 @fragment

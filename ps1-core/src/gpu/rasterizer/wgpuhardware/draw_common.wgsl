@@ -203,16 +203,12 @@ fn sample_texture(
     let uv = apply_texture_window(input_uv, tex_window_mask, tex_window_offset);
 
     var color: u32;
-    switch (flags.color_depth) {
-        case 0u: {
-            color = read_4bpp_texture(uv, texpage, clut);
-        }
-        case 1u: {
-            color = read_8bpp_texture(uv, texpage, clut);
-        }
-        default: {
-            discard;
-        }
+    if flags.color_depth == TEXTURE_4BPP {
+        color = read_4bpp_texture(uv, texpage, clut);
+    } else if flags.color_depth == TEXTURE_8BPP {
+        color = read_8bpp_texture(uv, texpage, clut);
+    } else {
+        discard;
     }
 
     if color == 0 {
