@@ -1277,6 +1277,10 @@ impl RasterizerInterface for WgpuRasterizer {
 
         vram
     }
+
+    fn clear_texture_cache(&mut self) {
+        self.scaled_native_sync_delay = 0;
+    }
 }
 
 fn triangle_bounding_box(

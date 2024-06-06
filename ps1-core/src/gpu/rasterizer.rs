@@ -128,6 +128,8 @@ pub trait RasterizerInterface {
     ) -> &wgpu::Texture;
 
     fn clone_vram(&mut self) -> Vram;
+
+    fn clear_texture_cache(&mut self) {}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]

@@ -379,6 +379,7 @@ impl Gpu {
                         0x01 => {
                             // GP0($01): Clear texture cache
                             // TODO emulate texture cache?
+                            self.rasterizer.clear_texture_cache();
                             log::debug!("Clear texture cache command: {value:08X}");
                             Gp0CommandState::WaitingForCommand
                         }
