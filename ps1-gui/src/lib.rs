@@ -1,4 +1,4 @@
-use crate::emuthread::Ps1Button;
+use crate::emuthread::{Ps1AnalogInput, Ps1Button};
 use std::path::PathBuf;
 
 pub mod app;
@@ -22,6 +22,7 @@ pub enum UserEvent {
     AppConfigChanged,
     Close,
     ControllerButton { button: Ps1Button, pressed: bool },
+    ControllerAnalog { input: Ps1AnalogInput, value: i16 },
 }
 
 // Enum with no variants cannot be instantiated

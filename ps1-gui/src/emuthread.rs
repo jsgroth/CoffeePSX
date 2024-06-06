@@ -8,7 +8,7 @@ use cfg_if::cfg_if;
 use ps1_core::api::{
     Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, SaveWriter, TickEffect, TickError,
 };
-use ps1_core::input::Ps1Inputs;
+use ps1_core::input::{AnalogJoypadState, DigitalJoypadState, Ps1Inputs};
 use regex::Regex;
 use sdl2::audio::AudioDevice;
 use sdl2::{AudioSubsystem, Sdl};
@@ -43,12 +43,22 @@ pub enum Ps1Button {
     R2,
     Start,
     Select,
+    Analog,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ps1AnalogInput {
+    LeftStickX,
+    LeftStickY,
+    RightStickX,
+    RightStickY,
 }
 
 #[derive(Debug)]
 pub enum EmulatorThreadCommand {
     Stop,
     DigitalInput { button: Ps1Button, pressed: bool },
+    AnalogInput { input: Ps1AnalogInput, value: i16 },
     UpdateConfig(AppConfig),
     SaveState,
     LoadState,
@@ -206,15 +216,19 @@ impl EmulationThreadHandle {
 
         let save_state_path = determine_save_state_path(file_path)?;
 
-        spawn_emu_thread(
-            save_state_path,
+        let mut inputs = Ps1Inputs::default();
+        update_input_config(config, &mut inputs);
+
+        spawn_emu_thread(EmulatorRunner {
             emulator,
-            swap_chain_renderer,
+            renderer: swap_chain_renderer,
             audio_output,
-            config.audio.sync_threshold,
+            audio_sync_threshold: config.audio.sync_threshold,
             save_writer,
+            inputs,
+            save_state_path,
             command_receiver,
-        );
+        });
 
         let surface_renderer = SurfaceRenderer::new(
             &config.video,
@@ -280,78 +294,97 @@ impl EmulationThreadHandle {
     }
 }
 
-fn spawn_emu_thread(
+struct EmulatorRunner {
+    emulator: Ps1Emulator,
+    renderer: SwapChainRenderer,
+    audio_output: QueueAudioOutput,
+    audio_sync_threshold: u32,
+    save_writer: FsSaveWriter,
+    inputs: Ps1Inputs,
     save_state_path: PathBuf,
-    mut emulator: Ps1Emulator,
-    mut renderer: SwapChainRenderer,
-    mut audio_output: QueueAudioOutput,
-    mut audio_sync_threshold: u32,
-    mut save_writer: FsSaveWriter,
     command_receiver: Receiver<EmulatorThreadCommand>,
-) {
+}
+
+impl EmulatorRunner {
+    fn process_next_frame(&mut self) -> Result<(), TickError<Never, Never, io::Error>> {
+        while self.emulator.tick(
+            self.inputs,
+            &mut self.renderer,
+            &mut self.audio_output,
+            &mut self.save_writer,
+        )? != TickEffect::FrameRendered
+        {}
+
+        Ok(())
+    }
+}
+
+fn spawn_emu_thread(mut runner: EmulatorRunner) {
     thread::spawn(move || {
-        let mut inputs = Ps1Inputs::default();
         let mut paused = false;
         let mut step_frame = false;
         let mut fast_forward = false;
 
         loop {
-            // TODO configurable threshold
             if (!paused || step_frame)
-                && (fast_forward || (audio_output.samples_len() as u32) < audio_sync_threshold)
+                && (fast_forward
+                    || (runner.audio_output.samples_len() as u32) < runner.audio_sync_threshold)
             {
-                if let Err(err) = process_next_frame(
-                    inputs,
-                    &mut emulator,
-                    &mut renderer,
-                    &mut audio_output,
-                    &mut save_writer,
-                ) {
+                if let Err(err) = runner.process_next_frame() {
                     log::error!("Video/audio/save write error: {err:?}");
                 }
 
                 step_frame = false;
             }
 
-            if fast_forward && (audio_output.samples_len() as u32) >= 2 * audio_sync_threshold {
-                audio_output.truncate_front(audio_sync_threshold as usize);
+            if fast_forward
+                && (runner.audio_output.samples_len() as u32) >= 2 * runner.audio_sync_threshold
+            {
+                runner.audio_output.truncate_front(runner.audio_sync_threshold as usize);
             }
 
-            while let Ok(command) = command_receiver.try_recv() {
+            while let Ok(command) = runner.command_receiver.try_recv() {
                 match command {
                     EmulatorThreadCommand::Stop => {
                         log::info!("Stopping emulator thread");
                         return;
                     }
                     EmulatorThreadCommand::DigitalInput { button, pressed } => {
-                        update_digital_inputs(&mut inputs, button, pressed);
+                        update_digital_inputs(&mut runner.inputs, button, pressed);
+                    }
+                    EmulatorThreadCommand::AnalogInput { input, value } => {
+                        update_analog_inputs(&mut runner.inputs, input, value);
                     }
                     EmulatorThreadCommand::UpdateConfig(config) => {
-                        emulator.update_config(config.to_emulator_config());
-                        audio_sync_threshold = config.audio.sync_threshold;
+                        runner.emulator.update_config(config.to_emulator_config());
+                        runner.audio_sync_threshold = config.audio.sync_threshold;
+                        update_input_config(&config, &mut runner.inputs);
                     }
                     EmulatorThreadCommand::SaveState => {
-                        match save_state(&mut emulator, &save_state_path) {
+                        match save_state(&mut runner.emulator, &runner.save_state_path) {
                             Ok(()) => {
-                                log::info!("Saved state to '{}'", save_state_path.display());
+                                log::info!("Saved state to '{}'", runner.save_state_path.display());
                             }
                             Err(err) => {
                                 log::error!(
                                     "Error saving state to '{}': {err}",
-                                    save_state_path.display()
+                                    runner.save_state_path.display()
                                 );
                             }
                         }
                     }
                     EmulatorThreadCommand::LoadState => {
-                        match load_state(&mut emulator, &save_state_path) {
+                        match load_state(&mut runner.emulator, &runner.save_state_path) {
                             Ok(()) => {
-                                log::info!("Loaded state from '{}'", save_state_path.display());
+                                log::info!(
+                                    "Loaded state from '{}'",
+                                    runner.save_state_path.display()
+                                );
                             }
                             Err(err) => {
                                 log::error!(
                                     "Error loading state from '{}': {err}",
-                                    save_state_path.display()
+                                    runner.save_state_path.display()
                                 );
                             }
                         }
@@ -368,7 +401,7 @@ fn spawn_emu_thread(
                         // Clear swap chain when fast forward ends to prevent a temporary input
                         // latency increase due to buffered frames
                         if !fast_forward {
-                            renderer.clear_swap_chain();
+                            runner.renderer.clear_swap_chain();
                         }
                     }
                 }
@@ -379,25 +412,23 @@ fn spawn_emu_thread(
     });
 }
 
-fn process_next_frame(
-    inputs: Ps1Inputs,
-    emulator: &mut Ps1Emulator,
-    renderer: &mut SwapChainRenderer,
-    audio_output: &mut QueueAudioOutput,
-    save_writer: &mut FsSaveWriter,
-) -> Result<(), TickError<Never, Never, io::Error>> {
-    while emulator.tick(inputs, renderer, audio_output, save_writer)? != TickEffect::FrameRendered {
-    }
+fn update_input_config(config: &AppConfig, inputs: &mut Ps1Inputs) {
+    inputs.p1.controller_type = config.input.p1_device;
+    inputs.p2.controller_type = config.input.p2_device;
 
-    Ok(())
+    inputs.p1.digital = DigitalJoypadState::default();
+    inputs.p2.digital = DigitalJoypadState::default();
+    inputs.p1.analog = AnalogJoypadState::default();
+    inputs.p2.analog = AnalogJoypadState::default();
 }
 
 macro_rules! impl_update_digital_inputs {
     ($inputs:expr, $input_button:expr, $pressed:expr, [$($button:ident => $setter:ident),* $(,)?]) => {
         match $input_button {
             $(
-                Ps1Button::$button => $inputs.$setter($pressed),
+                Ps1Button::$button => $inputs.digital.$setter($pressed),
             )*
+            Ps1Button::Analog => $inputs.analog.analog_button = $pressed,
         }
     }
 }
@@ -419,6 +450,17 @@ fn update_digital_inputs(inputs: &mut Ps1Inputs, button: Ps1Button, pressed: boo
         Start => set_start,
         Select => set_select,
     ]);
+}
+
+fn update_analog_inputs(inputs: &mut Ps1Inputs, input: Ps1AnalogInput, value: i16) {
+    // Map from [-32768, 32767] to [0, 255]
+    let converted_value = ((i32::from(value) + 0x8000) >> 8) as u8;
+    match input {
+        Ps1AnalogInput::LeftStickX => inputs.p1.analog.left_x = converted_value,
+        Ps1AnalogInput::LeftStickY => inputs.p1.analog.left_y = converted_value,
+        Ps1AnalogInput::RightStickX => inputs.p1.analog.right_x = converted_value,
+        Ps1AnalogInput::RightStickY => inputs.p1.analog.right_y = converted_value,
+    }
 }
 
 macro_rules! bincode_config {

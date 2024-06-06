@@ -5,6 +5,7 @@ use egui::{
     Slider, TextEdit, TopBottomPanel, Ui, Vec2, Window,
 };
 use egui_extras::{Column, TableBuilder};
+use ps1_core::input::ControllerType;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
@@ -48,6 +49,7 @@ struct AppState {
     video_window_open: bool,
     graphics_window_open: bool,
     audio_window_open: bool,
+    input_window_open: bool,
     paths_window_open: bool,
     audio_sync_threshold: NumericText,
     audio_device_queue_size: NumericText,
@@ -72,6 +74,7 @@ impl AppState {
             video_window_open: false,
             graphics_window_open: false,
             audio_window_open: false,
+            input_window_open: false,
             paths_window_open: false,
             audio_sync_threshold: NumericText::new(config.audio.sync_threshold),
             audio_device_queue_size: NumericText::new(config.audio.device_queue_size),
@@ -135,6 +138,10 @@ impl App {
 
         if self.state.audio_window_open {
             self.render_audio_window(ctx);
+        }
+
+        if self.state.input_window_open {
+            self.render_input_window(ctx);
         }
 
         if self.state.paths_window_open {
@@ -225,6 +232,11 @@ impl App {
 
                     if ui.button("Audio").clicked() {
                         self.state.audio_window_open = true;
+                        ui.close_menu();
+                    }
+
+                    if ui.button("Input").clicked() {
+                        self.state.input_window_open = true;
                         ui.close_menu();
                     }
 
@@ -477,6 +489,35 @@ impl App {
                         "Internal audio buffer size must be a non-negative integer",
                     );
                 }
+            });
+    }
+
+    fn render_input_window(&mut self, ctx: &Context) {
+        Window::new("Input Settings")
+            .open(&mut self.state.input_window_open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.group(|ui| {
+                    ui.label("P1 device");
+
+                    ui.horizontal(|ui| {
+                        ui.radio_value(
+                            &mut self.config.input.p1_device,
+                            ControllerType::None,
+                            "None",
+                        );
+                        ui.radio_value(
+                            &mut self.config.input.p1_device,
+                            ControllerType::Digital,
+                            "Digital controller",
+                        );
+                        ui.radio_value(
+                            &mut self.config.input.p1_device,
+                            ControllerType::DualShock,
+                            "DualShock",
+                        );
+                    });
+                });
             });
     }
 

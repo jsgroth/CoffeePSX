@@ -22,7 +22,7 @@ Implemented:
 
 Not yet implemented:
 * Analog controllers and P2 inputs
-* Configurable inputs and gamepad support
+* Configurable inputs
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
   * Also a memory card manager
 * Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering)

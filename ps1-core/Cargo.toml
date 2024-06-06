@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+serde = ["dep:serde"]
+
 [dependencies]
 cdrom = { path = "../cdrom" }
 proc-macros = { path = "../proc-macros" }
@@ -15,6 +19,7 @@ cfg-if = { workspace = true }
 log = { workspace = true }
 proc-bitfield = { workspace = true }
 rand = { workspace = true }
+serde = { workspace = true, optional = true, features = ["derive"] }
 thiserror = { workspace = true }
 wgpu = { workspace = true }
 

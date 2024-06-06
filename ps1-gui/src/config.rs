@@ -1,5 +1,6 @@
 use cfg_if::cfg_if;
 use ps1_core::api::{DisplayConfig, PgxpConfig, Ps1EmulatorConfig};
+use ps1_core::input::ControllerType;
 use ps1_core::RasterizerType;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -191,6 +192,28 @@ impl Default for AudioConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputConfig {
+    #[serde(default = "default_p1_input_device")]
+    pub p1_device: ControllerType,
+    #[serde(default = "default_p2_input_device")]
+    pub p2_device: ControllerType,
+}
+
+fn default_p1_input_device() -> ControllerType {
+    ControllerType::Digital
+}
+
+fn default_p2_input_device() -> ControllerType {
+    ControllerType::None
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        toml::from_str("").unwrap()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathsConfig {
     pub bios: Option<PathBuf>,
     #[serde(default)]
@@ -229,6 +252,8 @@ pub struct AppConfig {
     pub graphics: GraphicsConfig,
     #[serde(default)]
     pub audio: AudioConfig,
+    #[serde(default)]
+    pub input: InputConfig,
     #[serde(default)]
     pub paths: PathsConfig,
     #[serde(default)]

@@ -1,8 +1,9 @@
+use bincode::{Decode, Encode};
 use proc_bitfield::bitfield;
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Default, bincode::Encode, bincode::Decode)]
-    pub struct Ps1JoypadState(u16): Debug, IntoRaw {
+    pub struct DigitalJoypadState(u16): Debug, IntoRaw {
         pub select: bool @ 0,
         pub start: bool @ 3,
         pub up: bool @ 4,
@@ -20,7 +21,86 @@ bitfield! {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
+pub enum AnalogMode {
+    #[default]
+    Digital,
+    Analog,
+}
+
+impl AnalogMode {
+    #[must_use]
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Digital => Self::Analog,
+            Self::Analog => Self::Digital,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct AnalogJoypadState {
+    pub analog_button: bool,
+    pub left_x: u8,
+    pub left_y: u8,
+    pub right_x: u8,
+    pub right_y: u8,
+}
+
+impl Default for AnalogJoypadState {
+    fn default() -> Self {
+        Self {
+            analog_button: false,
+            // 0x80 represents the center position for both axes
+            left_x: 0x80,
+            left_y: 0x80,
+            right_x: 0x80,
+            right_y: 0x80,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ControllerType {
+    None,
+    Digital,
+    DualShock,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct ControllerState {
+    pub controller_type: ControllerType,
+    pub digital: DigitalJoypadState,
+    pub analog: AnalogJoypadState,
+}
+
+impl ControllerState {
+    pub(crate) fn default_p1() -> Self {
+        ControllerState {
+            controller_type: ControllerType::Digital,
+            digital: DigitalJoypadState::default(),
+            analog: AnalogJoypadState::default(),
+        }
+    }
+
+    pub(crate) fn default_p2() -> Self {
+        ControllerState {
+            controller_type: ControllerType::None,
+            digital: DigitalJoypadState::default(),
+            analog: AnalogJoypadState::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ps1Inputs {
-    pub p1: Ps1JoypadState,
+    pub p1: ControllerState,
+    pub p2: ControllerState,
+}
+
+impl Default for Ps1Inputs {
+    fn default() -> Self {
+        Self { p1: ControllerState::default_p1(), p2: ControllerState::default_p2() }
+    }
 }

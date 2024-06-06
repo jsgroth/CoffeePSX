@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 cdrom = { path = "../cdrom" }
-ps1-core = { path = "../ps1-core" }
+ps1-core = { path = "../ps1-core", features = ["serde"] }
 
 anyhow = { workspace = true }
 bincode = { workspace = true }

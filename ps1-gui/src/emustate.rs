@@ -1,5 +1,5 @@
 use crate::config::{AppConfig, Rasterizer, VideoConfig};
-use crate::emuthread::{EmulationThreadHandle, EmulatorThreadCommand, Ps1Button};
+use crate::emuthread::{EmulationThreadHandle, EmulatorThreadCommand, Ps1AnalogInput, Ps1Button};
 use crate::{OpenFileType, UserEvent};
 use anyhow::anyhow;
 use sdl2::controller::Axis as SdlAxis;
@@ -203,6 +203,7 @@ impl Controllers {
             SdlButton::RightShoulder => Ps1Button::R1,
             SdlButton::Start => Ps1Button::Start,
             SdlButton::Back => Ps1Button::Select,
+            SdlButton::Guide => Ps1Button::Analog,
             _ => return,
         };
 
@@ -211,6 +212,18 @@ impl Controllers {
 
     #[allow(clippy::unused_self)]
     fn handle_axis_motion(&self, axis: SdlAxis, value: i16, proxy: &EventLoopProxy<UserEvent>) {
+        let ps1_axis = match axis {
+            SdlAxis::LeftX => Some(Ps1AnalogInput::LeftStickX),
+            SdlAxis::LeftY => Some(Ps1AnalogInput::LeftStickY),
+            SdlAxis::RightX => Some(Ps1AnalogInput::RightStickX),
+            SdlAxis::RightY => Some(Ps1AnalogInput::RightStickY),
+            _ => None,
+        };
+        if let Some(ps1_axis) = ps1_axis {
+            proxy.send_event(UserEvent::ControllerAnalog { input: ps1_axis, value }).unwrap();
+            return;
+        }
+
         let button = match axis {
             SdlAxis::TriggerLeft => Ps1Button::L2,
             SdlAxis::TriggerRight => Ps1Button::R2,
@@ -275,6 +288,9 @@ impl EmulatorState {
             }
             &Event::UserEvent(UserEvent::ControllerButton { button, pressed }) => {
                 emu_thread.send_command(EmulatorThreadCommand::DigitalInput { button, pressed });
+            }
+            &Event::UserEvent(UserEvent::ControllerAnalog { input, value }) => {
+                emu_thread.send_command(EmulatorThreadCommand::AnalogInput { input, value });
             }
             Event::WindowEvent { event: win_event, window_id }
                 if *window_id == window.window.id() =>
@@ -470,6 +486,7 @@ fn key_input_command(key: PhysicalKey, state: ElementState) -> Option<EmulatorTh
         KeyCode::KeyR => Ps1Button::R2,
         KeyCode::Enter => Ps1Button::Start,
         KeyCode::ShiftRight => Ps1Button::Select,
+        KeyCode::KeyY => Ps1Button::Analog,
         _ => return None,
     };
 
