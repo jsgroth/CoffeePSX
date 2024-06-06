@@ -26,6 +26,13 @@ impl VSyncMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum AspectRatio {
+    #[default]
+    Native,
+    Stretched,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FilterMode {
     #[default]
     Linear,
@@ -76,6 +83,8 @@ pub struct VideoConfig {
     pub launch_in_fullscreen: bool,
     #[serde(default)]
     pub vsync_mode: VSyncMode,
+    #[serde(default)]
+    pub aspect_ratio: AspectRatio,
     #[serde(default)]
     pub filter_mode: FilterMode,
     #[serde(default = "true_fn")]

@@ -1,4 +1,4 @@
-use crate::config::VideoConfig;
+use crate::config::{AspectRatio, VideoConfig};
 use crate::emuthread::{EmulatorSwapChain, QueuedFrame};
 use crate::{emuthread, Never};
 use ps1_core::api::Renderer;
@@ -99,6 +99,7 @@ pub struct SurfaceRenderer {
     sampler_bind_group: wgpu::BindGroup,
     frame_bind_group_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
+    aspect_ratio: AspectRatio,
 }
 
 impl SurfaceRenderer {
@@ -186,6 +187,7 @@ impl SurfaceRenderer {
             sampler_bind_group,
             frame_bind_group_layout,
             pipeline,
+            aspect_ratio: config.aspect_ratio,
         }
     }
 
@@ -195,6 +197,7 @@ impl SurfaceRenderer {
             &self.sampler_bind_group_layout,
             config.filter_mode.to_wgpu(),
         );
+        self.aspect_ratio = config.aspect_ratio;
     }
 
     pub fn handle_resize(&mut self, size: PhysicalSize<u32>) {
@@ -239,14 +242,16 @@ impl SurfaceRenderer {
                 ..wgpu::RenderPassDescriptor::default()
             });
 
-            render_pass.set_viewport(
-                viewport.x,
-                viewport.y,
-                viewport.width,
-                viewport.height,
-                0.0,
-                1.0,
-            );
+            if self.aspect_ratio == AspectRatio::Native {
+                render_pass.set_viewport(
+                    viewport.x,
+                    viewport.y,
+                    viewport.width,
+                    viewport.height,
+                    0.0,
+                    1.0,
+                );
+            }
 
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_bind_group(0, &self.sampler_bind_group, &[]);

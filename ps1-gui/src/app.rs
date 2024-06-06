@@ -1,4 +1,6 @@
-use crate::config::{AppConfig, FilterMode, FiltersConfig, Rasterizer, VSyncMode, WgpuBackend};
+use crate::config::{
+    AppConfig, AspectRatio, FilterMode, FiltersConfig, Rasterizer, VSyncMode, WgpuBackend,
+};
 use crate::{config, OpenFileType, UserEvent};
 use egui::{
     Align, Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Layout, Modifiers,
@@ -274,6 +276,25 @@ impl App {
                         .on_hover_text("wgpu Immediate present mode");
                         ui.radio_value(&mut self.config.video.vsync_mode, VSyncMode::Fast, "Fast")
                             .on_hover_text("wgpu Mailbox present mode");
+                    });
+                });
+
+                ui.group(|ui| {
+                    ui.label("Aspect ratio");
+
+                    ui.horizontal(|ui| {
+                        ui.radio_value(
+                            &mut self.config.video.aspect_ratio,
+                            AspectRatio::Native,
+                            "Native",
+                        )
+                        .on_hover_text("NTSC or PAL based on video mode");
+                        ui.radio_value(
+                            &mut self.config.video.aspect_ratio,
+                            AspectRatio::Stretched,
+                            "Stretched",
+                        )
+                        .on_hover_text("Stretched to fill the window");
                     });
                 });
 
