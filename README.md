@@ -17,12 +17,12 @@ Implemented:
 * Most of the CD-ROM controller
 * The MDEC
 * The hardware timers
-* Digital controllers, P1 only
+* Digital and DualShock controllers, P1 only (gamepad required for analog controls)
 * Memory card, port 1 only
 
 Not yet implemented:
-* Analog controllers and P2 inputs
-* Configurable inputs
+* Configurable inputs and P2 inputs
+* DualShock rumble support
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
   * Also a memory card manager
 * Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering)
