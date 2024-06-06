@@ -110,6 +110,7 @@ pub struct Ps1EmulatorConfig {
     pub display: DisplayConfig,
     pub pgxp: PgxpConfig,
     pub internal_audio_buffer_size: NonZeroU32,
+    pub tty_enabled: bool,
 }
 
 impl Default for Ps1EmulatorConfig {
@@ -118,6 +119,7 @@ impl Default for Ps1EmulatorConfig {
             display: DisplayConfig::default(),
             pgxp: PgxpConfig::default(),
             internal_audio_buffer_size: NonZeroU32::new(DEFAULT_AUDIO_BUFFER_SIZE).unwrap(),
+            tty_enabled: false,
         }
     }
 }
@@ -149,8 +151,8 @@ pub struct Ps1Emulator {
     timers: Timers,
     scheduler: Scheduler,
     last_render_cycles: u64,
+    #[save_state(skip)]
     config: Ps1EmulatorConfig,
-    tty_enabled: bool,
     tty_buffer: String,
 }
 
@@ -162,7 +164,6 @@ pub struct Ps1EmulatorBuilder {
     config: Ps1EmulatorConfig,
     disc: Option<CdRom>,
     memory_card_1: Option<Vec<u8>>,
-    tty_enabled: bool,
 }
 
 impl Ps1EmulatorBuilder {
@@ -179,7 +180,6 @@ impl Ps1EmulatorBuilder {
             config: Ps1EmulatorConfig::default(),
             disc: None,
             memory_card_1: None,
-            tty_enabled: false,
         }
     }
 
@@ -192,12 +192,6 @@ impl Ps1EmulatorBuilder {
     #[must_use]
     pub fn with_memory_card_1(mut self, memory_card_1: Vec<u8>) -> Self {
         self.memory_card_1 = Some(memory_card_1);
-        self
-    }
-
-    #[must_use]
-    pub fn tty_enabled(mut self, tty_enabled: bool) -> Self {
-        self.tty_enabled = tty_enabled;
         self
     }
 
@@ -218,7 +212,6 @@ impl Ps1EmulatorBuilder {
             self.config,
             self.disc,
             self.memory_card_1,
-            self.tty_enabled,
         )
     }
 }
@@ -277,7 +270,6 @@ impl Ps1Emulator {
         config: Ps1EmulatorConfig,
         disc: Option<CdRom>,
         memory_card_1: Option<Vec<u8>>,
-        tty_enabled: bool,
     ) -> Ps1Result<Self> {
         let memory = Memory::new(bios_rom)?;
 
@@ -298,7 +290,6 @@ impl Ps1Emulator {
             scheduler: Scheduler::new(),
             last_render_cycles: 0,
             config,
-            tty_enabled,
             tty_buffer: String::new(),
         };
         emulator.schedule_initial_events();
@@ -388,7 +379,7 @@ impl Ps1Emulator {
             self.cpu.execute_instruction(&mut new_bus!(self))
         };
 
-        if self.tty_enabled {
+        if self.config.tty_enabled {
             self.check_for_putchar_call();
         }
 
@@ -581,7 +572,6 @@ impl Ps1Emulator {
             scheduler: state.scheduler,
             last_render_cycles: state.last_render_cycles,
             config: unserialized.config,
-            tty_enabled: state.tty_enabled,
             tty_buffer: state.tty_buffer,
         };
 

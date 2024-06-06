@@ -53,6 +53,7 @@ struct AppState {
     audio_window_open: bool,
     input_window_open: bool,
     paths_window_open: bool,
+    debug_window_open: bool,
     audio_sync_threshold: NumericText,
     audio_device_queue_size: NumericText,
     internal_audio_buffer_size: NumericText,
@@ -78,6 +79,7 @@ impl AppState {
             audio_window_open: false,
             input_window_open: false,
             paths_window_open: false,
+            debug_window_open: false,
             audio_sync_threshold: NumericText::new(config.audio.sync_threshold),
             audio_device_queue_size: NumericText::new(config.audio.device_queue_size),
             internal_audio_buffer_size: NumericText::new(config.audio.internal_buffer_size),
@@ -148,6 +150,10 @@ impl App {
 
         if self.state.paths_window_open {
             self.render_paths_window(ctx, proxy);
+        }
+
+        if self.state.debug_window_open {
+            self.render_debug_window(ctx);
         }
 
         if self.config != self.state.last_serialized_config {
@@ -246,6 +252,11 @@ impl App {
                         self.state.paths_window_open = true;
                         ui.close_menu();
                     }
+
+                    if ui.button("Debug").clicked() {
+                        self.state.debug_window_open = true;
+                        ui.close_menu();
+                    }
                 });
             });
         });
@@ -320,10 +331,6 @@ impl App {
                     "Crop vertical overscan",
                 )
                 .on_hover_text("Crop vertical display to 224px NTSC / 268px PAL");
-
-                ui.checkbox(&mut self.config.video.vram_display, "VRAM display").on_hover_text(
-                    "Display the entire contents of VRAM instead of only the current frame buffer",
-                );
             });
     }
 
@@ -605,6 +612,20 @@ impl App {
                 });
 
                 ui.checkbox(&mut self.config.paths.search_recursively, "Search recursively");
+            });
+    }
+
+    fn render_debug_window(&mut self, ctx: &Context) {
+        Window::new("Debug Settings")
+            .open(&mut self.state.debug_window_open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.checkbox(&mut self.config.debug.tty_enabled, "TTY output enabled")
+                    .on_hover_text("Print TTY output to stdout");
+
+                ui.checkbox(&mut self.config.debug.vram_display, "VRAM display").on_hover_text(
+                    "Display the entire contents of VRAM instead of only the current frame buffer",
+                );
             });
     }
 

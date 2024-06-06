@@ -342,7 +342,7 @@ impl EmulatorState {
                                 window.toggle_fullscreen();
                             }
                             Some(Hotkey::ToggleVramDisplay) => {
-                                app_config.video.vram_display = !app_config.video.vram_display;
+                                app_config.debug.vram_display = !app_config.debug.vram_display;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
                                     app_config.clone(),
                                 ));

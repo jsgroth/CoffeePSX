@@ -89,8 +89,6 @@ pub struct VideoConfig {
     pub filter_mode: FilterMode,
     #[serde(default = "true_fn")]
     pub crop_vertical_overscan: bool,
-    #[serde(default)]
-    pub vram_display: bool,
     #[serde(default = "default_window_width")]
     pub window_width: u32,
     #[serde(default = "default_window_height")]
@@ -256,6 +254,20 @@ impl Default for FiltersConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DebugConfig {
+    #[serde(default)]
+    pub tty_enabled: bool,
+    #[serde(default)]
+    pub vram_display: bool,
+}
+
+impl Default for DebugConfig {
+    fn default() -> Self {
+        toml::from_str("").unwrap()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub video: VideoConfig,
@@ -269,6 +281,8 @@ pub struct AppConfig {
     pub paths: PathsConfig,
     #[serde(default)]
     pub filters: FiltersConfig,
+    #[serde(default)]
+    pub debug: DebugConfig,
 }
 
 impl Default for AppConfig {
@@ -285,7 +299,7 @@ impl AppConfig {
         Ps1EmulatorConfig {
             display: DisplayConfig {
                 crop_vertical_overscan: self.video.crop_vertical_overscan,
-                dump_vram: self.video.vram_display,
+                dump_vram: self.debug.vram_display,
                 rasterizer_type,
                 hardware_resolution_scale: self.graphics.hardware_resolution_scale,
                 high_color: self.graphics.hardware_high_color,
@@ -304,6 +318,7 @@ impl AppConfig {
                 }
             },
             internal_audio_buffer_size: self.audio.internal_buffer_size,
+            tty_enabled: self.debug.tty_enabled,
         }
     }
 }
