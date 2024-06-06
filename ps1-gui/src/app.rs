@@ -390,9 +390,15 @@ impl App {
                     });
 
                     ui.add_enabled_ui(!self.config.graphics.hardware_high_color, |ui| {
+                        let disabled_hover_text = "Hardware rasterizer 15bpp mode only";
+
                         ui.checkbox(&mut self.config.graphics.hardware_15bpp_dithering, "Dithering enabled")
                             .on_hover_text("Whether to respect the PS1 GPU's dithering flag")
-                            .on_disabled_hover_text("Hardware rasterizer 15bpp mode only");
+                            .on_disabled_hover_text(disabled_hover_text);
+
+                        ui.checkbox(&mut self.config.graphics.high_res_dithering, "High-resolution dithering")
+                            .on_hover_text("Apply dithering at scaled resolution instead of native")
+                            .on_disabled_hover_text(disabled_hover_text);
                     });
                 });
 

@@ -28,6 +28,7 @@ struct ShaderDrawSettings {
     resolution_scale: u32,
     high_color: u32,
     dithering: u32,
+    high_res_dithering: u32,
     perspective_texture_mapping: u32,
 }
 
@@ -41,6 +42,7 @@ impl ShaderDrawSettings {
             resolution_scale: config.resolution_scale,
             high_color: config.high_color.into(),
             dithering: dithering.into(),
+            high_res_dithering: config.high_res_dithering.into(),
             perspective_texture_mapping: config.pgxp_perspective_texture_mapping.into(),
         }
     }

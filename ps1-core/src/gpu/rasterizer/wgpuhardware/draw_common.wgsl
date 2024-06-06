@@ -10,6 +10,7 @@ struct DrawSettings {
     resolution_scale: u32,
     high_color: u32,
     dithering: u32,
+    high_res_dithering: u32,
     perspective_texture_mapping: u32,
 }
 
@@ -349,7 +350,13 @@ fn finalize_color_tri(pixel: vec4f, position: vec2f, ditherable: bool) -> vec4f 
     var color = pixel.rgb;
 
     if draw_settings.dithering != 0 && ditherable {
-        color = apply_dither(color, vec2u(position));
+        let scaled_position = vec2u(position);
+        let dither_position = select(
+            scaled_position / draw_settings.resolution_scale,
+            scaled_position,
+            draw_settings.high_res_dithering != 0,
+        );
+        color = apply_dither(color, dither_position);
     }
 
     if draw_settings.high_color == 0 {

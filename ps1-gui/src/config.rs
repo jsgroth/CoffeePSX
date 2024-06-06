@@ -120,6 +120,8 @@ pub struct GraphicsConfig {
     pub hardware_high_color: bool,
     #[serde(default = "true_fn")]
     pub hardware_15bpp_dithering: bool,
+    #[serde(default = "true_fn")]
+    pub high_res_dithering: bool,
     #[serde(default)]
     pub async_swap_chain_rendering: bool,
     #[serde(default)]
@@ -279,6 +281,7 @@ impl AppConfig {
                 hardware_resolution_scale: self.graphics.hardware_resolution_scale,
                 high_color: self.graphics.hardware_high_color,
                 dithering_allowed: self.graphics.hardware_15bpp_dithering,
+                high_res_dithering: self.graphics.high_res_dithering,
             },
             pgxp: match rasterizer_type {
                 RasterizerType::WgpuHardware => PgxpConfig {

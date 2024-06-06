@@ -151,6 +151,8 @@ pub struct WgpuRasterizerConfig {
     pub high_color: bool,
     // Whether the dithering flag is respected; only functional in 15bpp color mode
     pub dithering_allowed: bool,
+    // Whether to apply dithering at native resolution or scaled resolution
+    pub high_res_dithering: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -158,6 +160,7 @@ struct InternalConfig {
     resolution_scale: u32,
     high_color: bool,
     dithering_allowed: bool,
+    high_res_dithering: bool,
     pgxp_perspective_texture_mapping: bool,
 }
 
@@ -167,6 +170,7 @@ impl InternalConfig {
             resolution_scale: rasterizer_config.resolution_scale,
             high_color: rasterizer_config.high_color,
             dithering_allowed: rasterizer_config.dithering_allowed,
+            high_res_dithering: rasterizer_config.high_res_dithering,
             pgxp_perspective_texture_mapping: pgxp_config.perspective_texture_mapping(),
         }
     }

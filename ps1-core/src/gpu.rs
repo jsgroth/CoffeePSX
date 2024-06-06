@@ -44,6 +44,7 @@ pub struct DisplayConfig {
     pub hardware_resolution_scale: u32,
     pub high_color: bool,
     pub dithering_allowed: bool,
+    pub high_res_dithering: bool,
 }
 
 impl Default for DisplayConfig {
@@ -55,6 +56,7 @@ impl Default for DisplayConfig {
             hardware_resolution_scale: 4,
             high_color: true,
             dithering_allowed: true,
+            high_res_dithering: true,
         }
     }
 }
@@ -65,6 +67,7 @@ impl DisplayConfig {
             resolution_scale: self.hardware_resolution_scale,
             high_color: self.high_color,
             dithering_allowed: self.dithering_allowed,
+            high_res_dithering: self.high_res_dithering,
         }
     }
 }
