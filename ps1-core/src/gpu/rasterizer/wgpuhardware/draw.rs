@@ -380,8 +380,8 @@ impl DrawPipelines {
 
     const ADD_QUARTER_BLEND: BlendState = BlendState {
         color: BlendComponent {
-            src_factor: BlendFactor::Src1Alpha,
-            dst_factor: BlendFactor::One,
+            src_factor: BlendFactor::One,
+            dst_factor: BlendFactor::Src1Alpha,
             operation: BlendOperation::Add,
         },
         alpha: BlendComponent::REPLACE,
