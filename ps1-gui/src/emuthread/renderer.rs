@@ -119,10 +119,10 @@ impl Renderer for SwapChainRenderer {
 
         if self.swap_chain.async_rendering.load(Ordering::Relaxed) {
             let in_progress_renders = Arc::clone(&self.in_progress_renders);
-            let rendered_frames = Arc::clone(&self.swap_chain.rendered_frames);
             let returned_frames = Arc::clone(&self.swap_chain.returned_frames);
+            let popped_texture =
+                self.swap_chain.rendered_frames.lock().unwrap().push_back(push_texture);
             self.queue.on_submitted_work_done(move || {
-                let popped_texture = rendered_frames.lock().unwrap().push_back(push_texture);
                 if let Some(popped_texture) = popped_texture {
                     returned_frames.lock().unwrap().push_back(popped_texture);
                 }
@@ -130,10 +130,11 @@ impl Renderer for SwapChainRenderer {
                 in_progress_renders.fetch_sub(1, Ordering::Relaxed);
             });
         } else {
-            self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
-
             let popped_texture =
                 self.swap_chain.rendered_frames.lock().unwrap().push_back(push_texture);
+
+            self.device.poll(wgpu::Maintain::WaitForSubmissionIndex(submission));
+
             if let Some(popped_texture) = popped_texture {
                 let frame_size = FrameSize::from(&popped_texture);
                 self.swap_chain_textures.entry(frame_size).or_default().push_back(popped_texture);
