@@ -371,19 +371,22 @@ impl Ps1Emulator {
     ) -> Result<TickEffect, TickError<R::Err, A::Err, S::Err>> {
         self.sio0.set_inputs(inputs);
 
-        let cpu_cycles = if self.dma_controller.cpu_wait_cycles() != 0 {
+        if self.dma_controller.cpu_wait_cycles() != 0 {
             // TODO the CPU can run in parallel to a DMA as long as it doesn't access main RAM
             // or an I/O register
-            self.dma_controller.take_cpu_wait_cycles()
-        } else {
-            self.cpu.execute_instruction(&mut new_bus!(self))
-        };
-
-        if self.config.tty_enabled {
-            self.check_for_putchar_call();
+            let cycles = self.dma_controller.take_cpu_wait_cycles();
+            self.scheduler.increment_cpu_cycles(cycles.into());
         }
 
-        self.scheduler.increment_cpu_cycles(cpu_cycles.into());
+        let mut bus = new_bus!(self);
+        while !bus.scheduler.is_event_ready() {
+            let cycles = self.cpu.execute_instruction(&mut bus);
+            bus.scheduler.increment_cpu_cycles(cycles.into());
+
+            if self.config.tty_enabled {
+                check_for_putchar_call(&self.cpu, &mut self.tty_buffer);
+            }
+        }
 
         let tick_effect = if self.scheduler.is_event_ready() {
             self.process_scheduler_events(renderer, audio_output, save_writer)?
@@ -503,26 +506,6 @@ impl Ps1Emulator {
         Ok(tick_effect)
     }
 
-    fn check_for_putchar_call(&mut self) {
-        // BIOS function calls work by jumping to $A0 (A functions), $B0 (B functions), or
-        // $C0 (C functions) with the function number specified in R9.
-        //
-        // A($3C) and B($3D) are both the putchar() function, which prints the ASCII character
-        // in R4 to the TTY.
-        let pc = self.cpu.pc() & 0x1FFFFFFF;
-        let r9 = self.cpu.get_gpr(9);
-        if (pc == 0xA0 && r9 == 0x3C) || (pc == 0xB0 && r9 == 0x3D) {
-            let r4 = self.cpu.get_gpr(4);
-            let c = r4 as u8 as char;
-            if c == '\n' {
-                println!("TTY: {}", self.tty_buffer);
-                self.tty_buffer.clear();
-            } else {
-                self.tty_buffer.push(c);
-            }
-        }
-    }
-
     pub fn update_config(&mut self, config: Ps1EmulatorConfig) {
         self.cpu.update_pgxp_config(config.pgxp);
         self.dma_controller.update_pgxp_config(config.pgxp);
@@ -578,6 +561,26 @@ impl Ps1Emulator {
         emulator.update_config(unserialized.config);
 
         emulator
+    }
+}
+
+fn check_for_putchar_call(cpu: &R3000, tty_buffer: &mut String) {
+    // BIOS function calls work by jumping to $A0 (A functions), $B0 (B functions), or
+    // $C0 (C functions) with the function number specified in R9.
+    //
+    // A($3C) and B($3D) are both the putchar() function, which prints the ASCII character
+    // in R4 to the TTY.
+    let pc = cpu.pc() & 0x1FFFFFFF;
+    let r9 = cpu.get_gpr(9);
+    if (pc == 0xA0 && r9 == 0x3C) || (pc == 0xB0 && r9 == 0x3D) {
+        let r4 = cpu.get_gpr(4);
+        let c = r4 as u8 as char;
+        if c == '\n' {
+            println!("TTY: {tty_buffer}");
+            tty_buffer.clear();
+        } else {
+            tty_buffer.push(c);
+        }
     }
 }
 
