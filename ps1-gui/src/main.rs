@@ -6,6 +6,8 @@ use ps1_gui::emustate::EmulatorState;
 use ps1_gui::guistate::GuiState;
 use ps1_gui::{OpenFileType, UserEvent};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::event::Event;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget};
@@ -42,8 +44,15 @@ fn main() -> anyhow::Result<()> {
     let mut emu_state = EmulatorState::new()?;
     let mut gui_state = GuiState::new(app, &event_loop)?;
 
+    let sigint = install_ctrl_c_handler()?;
+
     let event_loop_proxy = event_loop.create_proxy();
     event_loop.run(move |event, elwt| {
+        if sigint.load(Ordering::Relaxed) {
+            elwt.exit();
+            return;
+        }
+
         if let Event::UserEvent(UserEvent::Close) = &event {
             elwt.exit();
             return;
@@ -79,7 +88,14 @@ fn run_headless(
     };
     emu_state.handle_event(&first_event, &event_loop, &event_loop_proxy, config)?;
 
+    let sigint = install_ctrl_c_handler()?;
+
     event_loop.run(move |event, elwt| {
+        if sigint.load(Ordering::Relaxed) {
+            elwt.exit();
+            return;
+        }
+
         if let Event::UserEvent(UserEvent::Close) = &event {
             elwt.exit();
             return;
@@ -106,4 +122,14 @@ fn throttle_if_necessary(event: &Event<UserEvent>, elwt: &EventLoopWindowTarget<
     if matches!(event, Event::AboutToWait) {
         elwt.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(1)));
     }
+}
+
+fn install_ctrl_c_handler() -> anyhow::Result<Arc<AtomicBool>> {
+    let sigint = Arc::new(AtomicBool::new(false));
+    {
+        let sigint = Arc::clone(&sigint);
+        ctrlc::set_handler(move || sigint.store(true, Ordering::Relaxed))?;
+    }
+
+    Ok(sigint)
 }
