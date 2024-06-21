@@ -409,7 +409,9 @@ fn spawn_emu_thread(mut runner: EmulatorRunner) {
                 }
             }
 
-            sleep(Duration::from_millis(1));
+            if !fast_forward {
+                sleep(Duration::from_millis(1));
+            }
         }
     });
 }
