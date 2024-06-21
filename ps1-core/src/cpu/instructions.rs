@@ -14,7 +14,8 @@ macro_rules! impl_branch {
             if $cond {
                 let offset = parse_offset(opcode);
                 let target = self.registers.pc.wrapping_add(offset);
-                self.registers.delayed_branch = Some(target);
+                self.registers.next_pc = target;
+                self.registers.in_delay_slot = true;
             }
 
             $(
@@ -263,23 +264,27 @@ impl R3000 {
 
     // J: Jump
     fn j(&mut self, opcode: u32) {
-        self.registers.delayed_branch = Some(compute_jump_address(self.registers.pc, opcode));
+        self.registers.next_pc = compute_jump_address(self.registers.pc, opcode);
+        self.registers.in_delay_slot = true;
     }
 
     // JR: Jump register
     fn jr(&mut self, opcode: u32) {
-        self.registers.delayed_branch = Some(self.registers.gpr[parse_rs(opcode) as usize]);
+        self.registers.next_pc = self.registers.gpr[parse_rs(opcode) as usize];
+        self.registers.in_delay_slot = true;
     }
 
     // JAL: Jump and link
     fn jal(&mut self, opcode: u32) {
-        self.registers.delayed_branch = Some(compute_jump_address(self.registers.pc, opcode));
+        self.registers.next_pc = compute_jump_address(self.registers.pc, opcode);
+        self.registers.in_delay_slot = true;
         self.registers.write_gpr(31, self.registers.pc.wrapping_add(4));
     }
 
     // JALR: Jump and link register
     fn jalr(&mut self, opcode: u32) {
-        self.registers.delayed_branch = Some(self.registers.gpr[parse_rs(opcode) as usize]);
+        self.registers.next_pc = self.registers.gpr[parse_rs(opcode) as usize];
+        self.registers.in_delay_slot = true;
         self.registers.write_gpr(parse_rd(opcode), self.registers.pc.wrapping_add(4));
     }
 

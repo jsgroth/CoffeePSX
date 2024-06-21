@@ -27,9 +27,10 @@ const BOOT_EXCEPTION_VECTOR: u32 = 0xBFC0_0180;
 struct Registers {
     gpr: [u32; 32],
     pc: u32,
+    next_pc: u32,
+    in_delay_slot: bool,
     hi: u32,
     lo: u32,
-    delayed_branch: Option<u32>,
     delayed_load: (u32, u32),
     delayed_load_next: (u32, u32),
 }
@@ -39,9 +40,10 @@ impl Registers {
         Self {
             gpr: [0; 32],
             pc: RESET_VECTOR,
+            next_pc: RESET_VECTOR + 4,
+            in_delay_slot: false,
             hi: 0,
             lo: 0,
-            delayed_branch: None,
             delayed_load: (0, 0),
             delayed_load_next: (0, 0),
         }
@@ -203,7 +205,8 @@ impl R3000 {
 
     pub fn set_pc(&mut self, pc: u32) {
         self.registers.pc = pc;
-        self.registers.delayed_branch = None;
+        self.registers.next_pc = pc.wrapping_add(4);
+        self.registers.in_delay_slot = false;
     }
 
     pub fn get_gpr(&self, register: u32) -> u32 {
@@ -219,14 +222,11 @@ impl R3000 {
         self.instruction_cycles = 1;
 
         let pc = self.registers.pc;
+        let in_delay_slot = self.registers.in_delay_slot;
 
         if pc & 3 != 0 {
             // Address error on opcode fetch
-            self.handle_exception(
-                Exception::AddressErrorLoad(pc),
-                pc,
-                self.registers.delayed_branch.is_some(),
-            );
+            self.handle_exception(Exception::AddressErrorLoad(pc), pc, in_delay_slot);
             self.process_delayed_loads();
 
             // TODO pure guess at exception timing
@@ -245,20 +245,14 @@ impl R3000 {
                 let _ = self.execute_opcode(opcode, pc, bus);
             }
 
-            self.handle_exception(
-                Exception::Interrupt,
-                pc,
-                self.registers.delayed_branch.is_some(),
-            );
+            self.handle_exception(Exception::Interrupt, pc, in_delay_slot);
             self.process_delayed_loads();
             return self.instruction_cycles;
         }
 
-        let (in_delay_slot, next_pc) = match self.registers.delayed_branch.take() {
-            Some(address) => (true, address),
-            None => (false, pc.wrapping_add(4)),
-        };
-        self.registers.pc = next_pc;
+        self.registers.pc = self.registers.next_pc;
+        self.registers.next_pc = self.registers.pc.wrapping_add(4);
+        self.registers.in_delay_slot = false;
 
         if let Err(exception) = self.execute_opcode(opcode, pc, bus) {
             self.handle_exception(exception, pc, in_delay_slot);
@@ -344,7 +338,8 @@ impl R3000 {
         } else {
             EXCEPTION_VECTOR
         };
-        self.registers.delayed_branch = None;
+        self.registers.next_pc = self.registers.pc.wrapping_add(4);
+        self.registers.in_delay_slot = false;
     }
 }
 
