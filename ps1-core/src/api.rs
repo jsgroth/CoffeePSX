@@ -312,9 +312,9 @@ impl Ps1Emulator {
     ///
     /// Will return an error if the EXE does not appear to be a PS1 executable based on the header.
     pub fn run_until_exe_sideloaded(&mut self, exe: &[u8]) -> Ps1Result<()> {
+        let mut bus = new_bus!(self);
         while self.cpu.pc() != 0x80030000 {
-            let _ =
-                self.tick(Ps1Inputs::default(), &mut NullOutput, &mut NullOutput, &mut NullOutput);
+            let _ = self.cpu.execute_instruction(&mut bus);
         }
 
         self.sideload_exe(exe)
