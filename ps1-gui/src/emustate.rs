@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, Rasterizer, VideoConfig};
+use crate::config::{AppConfig, Rasterizer, VSyncMode, VideoConfig};
 use crate::emuthread::{EmulationThreadHandle, EmulatorThreadCommand, Ps1AnalogInput, Ps1Button};
 use crate::{OpenFileType, UserEvent};
 use anyhow::anyhow;
@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::Arc;
+use wgpu::PresentMode;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{EventLoopProxy, EventLoopWindowTarget};
@@ -22,6 +23,8 @@ use winit::window::{Fullscreen, Window, WindowBuilder};
 struct EmulatorWindow {
     surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
+    vsync_mode: VSyncMode,
+    fast_forwarding: bool,
     supported_present_modes: Vec<wgpu::PresentMode>,
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -84,7 +87,8 @@ impl EmulatorWindow {
 
         let surface_capabilities = surface.get_capabilities(&adapter);
 
-        let present_mode = config.video.vsync_mode.to_present_mode();
+        let vsync_mode = config.video.vsync_mode;
+        let present_mode = vsync_mode.to_present_mode();
         if !surface_capabilities.present_modes.contains(&present_mode) {
             return Err(anyhow!(
                 "wgpu surface does not support requested VSync mode {:?}",
@@ -114,7 +118,7 @@ impl EmulatorWindow {
             format: surface_format,
             width: window.inner_size().width,
             height: window.inner_size().height,
-            present_mode: config.video.vsync_mode.to_present_mode(),
+            present_mode: vsync_mode.to_present_mode(),
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::default(),
             view_formats: vec![],
@@ -124,6 +128,8 @@ impl EmulatorWindow {
         Ok(Self {
             surface,
             surface_config,
+            vsync_mode,
+            fast_forwarding: false,
             supported_present_modes: surface_capabilities.present_modes,
             device: Arc::new(device),
             queue: Arc::new(queue),
@@ -132,7 +138,8 @@ impl EmulatorWindow {
     }
 
     pub fn update_config(&mut self, video_config: &VideoConfig) {
-        let present_mode = video_config.vsync_mode.to_present_mode();
+        let vsync_mode = video_config.vsync_mode;
+        let present_mode = vsync_mode.to_present_mode();
         if !self.supported_present_modes.contains(&present_mode) {
             log::error!(
                 "wgpu present mode {present_mode:?} is not supported; not changing VSync mode"
@@ -140,7 +147,24 @@ impl EmulatorWindow {
             return;
         }
 
-        self.surface_config.present_mode = present_mode;
+        self.vsync_mode = vsync_mode;
+        self.reconfigure_surface();
+    }
+
+    pub fn set_fast_forwarding(&mut self, fast_forwarding: bool) {
+        self.fast_forwarding = fast_forwarding;
+        self.reconfigure_surface();
+    }
+
+    fn reconfigure_surface(&mut self) {
+        const VSYNC_DISABLED: PresentMode = PresentMode::Immediate;
+
+        self.surface_config.present_mode =
+            if self.fast_forwarding && self.supported_present_modes.contains(&VSYNC_DISABLED) {
+                VSYNC_DISABLED
+            } else {
+                self.vsync_mode.to_present_mode()
+            };
         self.surface.configure(&self.device, &self.surface_config);
     }
 
@@ -395,9 +419,10 @@ impl EmulatorState {
                                 emu_thread.send_command(EmulatorThreadCommand::StepFrame);
                             }
                             Some(Hotkey::FastForward) => {
-                                emu_thread.send_command(EmulatorThreadCommand::FastForward {
-                                    enabled: state == ElementState::Pressed,
-                                });
+                                let enabled = state == ElementState::Pressed;
+                                emu_thread
+                                    .send_command(EmulatorThreadCommand::FastForward { enabled });
+                                window.set_fast_forwarding(enabled);
                             }
                             None => {}
                         }
