@@ -3,7 +3,7 @@ use proc_bitfield::bitfield;
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Default, bincode::Encode, bincode::Decode)]
-    pub struct DigitalJoypadState(u16): Debug, IntoRaw {
+    pub struct DigitalJoypadState(u16): Debug, IntoStorage {
         pub select: bool @ 0,
         pub start: bool @ 3,
         pub up: bool @ 4,

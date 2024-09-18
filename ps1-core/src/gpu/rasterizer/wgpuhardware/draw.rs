@@ -14,11 +14,11 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, BlendComponent, BlendFactor,
     BlendOperation, BlendState, Buffer, BufferUsages, ColorTargetState, ColorWrites, Device,
-    FragmentState, FrontFace, IndexFormat, MultisampleState, PipelineLayoutDescriptor, PolygonMode,
-    PrimitiveState, PrimitiveTopology, PushConstantRange, RenderPass, RenderPipeline,
-    RenderPipelineDescriptor, ShaderModule, ShaderStages, StorageTextureAccess, Texture,
-    TextureFormat, TextureViewDescriptor, TextureViewDimension, VertexAttribute,
-    VertexBufferLayout, VertexState, VertexStepMode,
+    FragmentState, FrontFace, IndexFormat, MultisampleState, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PolygonMode, PrimitiveState, PrimitiveTopology, PushConstantRange,
+    RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModule, ShaderStages,
+    StorageTextureAccess, Texture, TextureFormat, TextureViewDescriptor, TextureViewDimension,
+    VertexAttribute, VertexBufferLayout, VertexState, VertexStepMode,
 };
 
 #[repr(C)]
@@ -409,7 +409,7 @@ impl DrawPipelines {
                 vertex: VertexState {
                     module: draw_shader,
                     entry_point: "vs_untextured",
-
+                    compilation_options: PipelineCompilationOptions::default(),
                     buffers: &[UntexturedVertex::LAYOUT],
                 },
                 primitive: PrimitiveState {
@@ -426,7 +426,7 @@ impl DrawPipelines {
                 fragment: Some(FragmentState {
                     module: draw_shader,
                     entry_point: fs_entry_point,
-
+                    compilation_options: PipelineCompilationOptions::default(),
                     targets: &[Some(ColorTargetState {
                         format: TextureFormat::Rgba8Unorm,
                         blend,
@@ -540,7 +540,7 @@ impl DrawPipelines {
                     vertex: VertexState {
                         module: draw_shader,
                         entry_point: vs_entry_point,
-
+                        compilation_options: PipelineCompilationOptions::default(),
                         buffers: &[vertex_buffer_layout],
                     },
                     primitive: PrimitiveState {
@@ -557,7 +557,7 @@ impl DrawPipelines {
                     fragment: Some(FragmentState {
                         module: draw_shader,
                         entry_point: fs_entry_point,
-
+                        compilation_options: PipelineCompilationOptions::default(),
                         targets: &[Some(ColorTargetState {
                             format: TextureFormat::Rgba8Unorm,
                             blend,
@@ -1202,7 +1202,7 @@ impl MaskBitPipelines {
                 vertex: VertexState {
                     module: draw_shader,
                     entry_point: "vs_untextured",
-
+                    compilation_options: PipelineCompilationOptions::default(),
                     buffers: &[UntexturedVertex::LAYOUT],
                 },
                 primitive: PrimitiveState {
@@ -1219,7 +1219,7 @@ impl MaskBitPipelines {
                 fragment: Some(FragmentState {
                     module: &mask_shader,
                     entry_point: "fs_untextured_average",
-
+                    compilation_options: PipelineCompilationOptions::default(),
                     targets: &[Some(ColorTargetState {
                         format: TextureFormat::Rgba8Unorm,
                         blend: None,
@@ -1303,7 +1303,7 @@ impl MaskBitPipelines {
                 vertex: VertexState {
                     module: draw_shader,
                     entry_point: vs_entry_point,
-
+                    compilation_options: PipelineCompilationOptions::default(),
                     buffers: &[vertex_buffer_layout],
                 },
                 primitive: PrimitiveState {
@@ -1320,7 +1320,7 @@ impl MaskBitPipelines {
                 fragment: Some(FragmentState {
                     module: &mask_shader,
                     entry_point: fs_entry_point,
-
+                    compilation_options: PipelineCompilationOptions::default(),
                     targets: &[Some(ColorTargetState {
                         format: TextureFormat::Rgba8Unorm,
                         blend: None,

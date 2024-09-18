@@ -9,8 +9,8 @@ use wgpu::{
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType,
     BufferDescriptor, BufferUsages, CommandBuffer, CommandEncoderDescriptor, ComputePass,
     ComputePipeline, ComputePipelineDescriptor, Device, ImageCopyBuffer, ImageDataLayout, Maintain,
-    MapMode, PipelineLayoutDescriptor, PushConstantRange, Queue, ShaderStages,
-    StorageTextureAccess, Texture, TextureViewDescriptor, TextureViewDimension,
+    MapMode, PipelineCompilationOptions, PipelineLayoutDescriptor, PushConstantRange, Queue,
+    ShaderStages, StorageTextureAccess, Texture, TextureViewDescriptor, TextureViewDimension,
 };
 
 // Must match CpuVramBlitArgs in cpuvramblit.wgsl
@@ -89,6 +89,7 @@ impl CpuVramBlitPipeline {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "cpu_vram_blit",
+            compilation_options: PipelineCompilationOptions::default(),
         });
 
         Self {
@@ -303,6 +304,7 @@ impl VramCopyPipeline {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "vram_copy",
+            compilation_options: PipelineCompilationOptions::default(),
         });
 
         Self { bind_group, pipeline }
@@ -385,6 +387,7 @@ impl VramFillPipeline {
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "vram_fill",
+            compilation_options: PipelineCompilationOptions::default(),
         });
 
         Self { bind_group, pipeline }

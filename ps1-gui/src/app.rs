@@ -710,7 +710,7 @@ impl App {
                                     .add(
                                         Button::new(&metadata.file_name_no_ext)
                                             .min_size(Vec2::new(500.0, 25.0))
-                                            .wrap(true),
+                                            .wrap(),
                                     )
                                     .clicked()
                                 {

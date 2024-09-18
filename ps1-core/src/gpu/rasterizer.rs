@@ -1,12 +1,6 @@
 //! Rasterizer interface and dispatch code
 
 use crate::api::{DisplayConfig, PgxpConfig};
-use bincode::{Decode, Encode};
-use std::cmp;
-use std::fmt::{Display, Formatter};
-use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
-
 use crate::gpu::gp0::{DrawSettings, SemiTransparencyMode, TexturePage, TextureWindow};
 use crate::gpu::rasterizer::naive::NaiveSoftwareRasterizer;
 use crate::gpu::rasterizer::simd::SimdSoftwareRasterizer;
@@ -14,6 +8,12 @@ use crate::gpu::rasterizer::wgpuhardware::WgpuRasterizer;
 use crate::gpu::registers::{Registers, VerticalResolution};
 use crate::gpu::{Color, Vertex, VideoMode, Vram, WgpuResources};
 use crate::pgxp::PreciseVertex;
+use bincode::{Decode, Encode};
+use std::cmp;
+use std::fmt::{Display, Formatter};
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+use wgpu::PipelineCompilationOptions;
 
 pub mod naive;
 #[cfg(target_arch = "x86_64")]
@@ -416,6 +416,7 @@ impl ClearPipeline {
             vertex: wgpu::VertexState {
                 module: &clear_module,
                 entry_point: "vs_main",
+                compilation_options: PipelineCompilationOptions::default(),
                 buffers: &[],
             },
             primitive: wgpu::PrimitiveState {
@@ -432,6 +433,7 @@ impl ClearPipeline {
             fragment: Some(wgpu::FragmentState {
                 module: &clear_module,
                 entry_point: "fs_main",
+                compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: frame_format,
                     blend: None,

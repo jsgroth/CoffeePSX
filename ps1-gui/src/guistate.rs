@@ -215,7 +215,7 @@ impl GuiState {
         if let Some(viewport_info) =
             self.egui_state.egui_input_mut().viewports.get_mut(&viewport_id)
         {
-            egui_winit::update_viewport_info(viewport_info, &egui_ctx, &self.window);
+            egui_winit::update_viewport_info(viewport_info, &egui_ctx, &self.window, false);
         }
 
         let egui_input = self.egui_state.take_egui_input(&self.window);

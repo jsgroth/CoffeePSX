@@ -5,6 +5,7 @@ use ps1_core::api::Renderer;
 use std::iter;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use wgpu::PipelineCompilationOptions;
 use winit::dpi::PhysicalSize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,7 +151,12 @@ impl SurfaceRenderer {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: "render_pipeline".into(),
             layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState { module: &shader, entry_point: "vs_main", buffers: &[] },
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                compilation_options: PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleStrip,
                 strip_index_format: None,
@@ -165,6 +171,7 @@ impl SurfaceRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: "fs_main",
+                compilation_options: PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_config.format,
                     blend: None,
