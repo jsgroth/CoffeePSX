@@ -20,9 +20,9 @@ use crate::cd::xaadpcm::XaAdpcmState;
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};
+use cdrom::CdRomResult;
 use cdrom::cdtime::CdTime;
 use cdrom::reader::CdRom;
-use cdrom::CdRomResult;
 #[allow(clippy::wildcard_imports)]
 use macros::*;
 use proc_macros::SaveState;

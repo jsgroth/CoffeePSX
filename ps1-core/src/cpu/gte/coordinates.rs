@@ -5,7 +5,7 @@ use std::cmp;
 
 use crate::cpu::gte::fixedpoint::{DivisionResult, FixedPointDecimal, ScreenCoordinate};
 use crate::cpu::gte::registers::{Flag, Register};
-use crate::cpu::gte::{fixedpoint, GeometryTransformationEngine, MatrixMultiplyBehavior};
+use crate::cpu::gte::{GeometryTransformationEngine, MatrixMultiplyBehavior, fixedpoint};
 use crate::num::U32Ext;
 
 const U16_MIN: i32 = u16::MIN as i32;

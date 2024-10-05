@@ -16,12 +16,12 @@ use crate::gpu::rasterizer::wgpuhardware::sync::{
 };
 use crate::gpu::rasterizer::wgpuhardware::twentyfour::TwentyFourBppPipeline;
 use crate::gpu::rasterizer::{
-    vertices_valid, ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs,
-    DrawTriangleArgs, FrameCoords, FrameSize, RasterizerInterface, TriangleShading,
-    TriangleTextureMapping, VramVramBlitArgs,
+    ClearPipeline, CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, FrameCoords,
+    FrameSize, RasterizerInterface, TriangleShading, TriangleTextureMapping, VramVramBlitArgs,
+    vertices_valid,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{rasterizer, Color, Vertex, Vram, WgpuResources};
+use crate::gpu::{Color, Vertex, Vram, WgpuResources, rasterizer};
 use std::collections::HashMap;
 use std::ops::{BitOr, BitOrAssign, Range};
 use std::sync::Arc;
@@ -1117,11 +1117,9 @@ impl RasterizerInterface for WgpuRasterizer {
 
     fn cpu_to_vram_blit(&mut self, args: CpuVramBlitArgs, data: &[u16]) {
         let buffer_bind_group = self.cpu_vram_blit_pipeline.prepare(&self.device, &args, data);
-        let sync_vertex_buffer = self.native_scaled_sync_pipeline.prepare(
-            &self.device,
-            [args.x, args.y],
-            [args.width, args.height],
-        );
+        let sync_vertex_buffer =
+            self.native_scaled_sync_pipeline
+                .prepare(&self.device, [args.x, args.y], [args.width, args.height]);
 
         self.draw_commands.push(DrawCommand::CpuVramBlit {
             args,

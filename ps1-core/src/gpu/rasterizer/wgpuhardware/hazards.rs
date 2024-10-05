@@ -1,5 +1,5 @@
-use crate::gpu::rasterizer::wgpuhardware::VRAM_HEIGHT;
 use crate::gpu::Vertex;
+use crate::gpu::rasterizer::wgpuhardware::VRAM_HEIGHT;
 use std::cmp;
 
 #[derive(Debug)]

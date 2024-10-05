@@ -1,6 +1,6 @@
+use crate::gpu::Color;
 use crate::gpu::rasterizer::wgpuhardware::{VRAM_HEIGHT, VRAM_WIDTH};
 use crate::gpu::rasterizer::{CpuVramBlitArgs, VramVramBlitArgs};
-use crate::gpu::Color;
 use bytemuck::{Pod, Zeroable};
 use std::{iter, mem};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};

@@ -3,7 +3,7 @@
 use crate::cpu::gte;
 use crate::cpu::gte::fixedpoint::{FixedPointDecimal, MatrixComponent, Vector16Component};
 use crate::cpu::gte::registers::{Flag, Register};
-use crate::cpu::gte::{fixedpoint, GeometryTransformationEngine, Mac, MatrixMultiplyBehavior};
+use crate::cpu::gte::{GeometryTransformationEngine, Mac, MatrixMultiplyBehavior, fixedpoint};
 use crate::num::U32Ext;
 
 impl GeometryTransformationEngine {

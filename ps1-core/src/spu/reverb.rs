@@ -6,7 +6,7 @@ use crate::num::U32Ext;
 use crate::spu;
 use crate::spu::reverb::fir::FirSampleDeque;
 use crate::spu::voice::Voice;
-use crate::spu::{multiply_volume, multiply_volume_i32, I32Ext, SoundRam};
+use crate::spu::{I32Ext, SoundRam, multiply_volume, multiply_volume_i32};
 use bincode::{Decode, Encode};
 use std::cmp;
 

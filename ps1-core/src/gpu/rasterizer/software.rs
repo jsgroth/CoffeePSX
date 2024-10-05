@@ -3,7 +3,7 @@ use crate::gpu::rasterizer::{
     ClearPipeline, CpuVramBlitArgs, FrameCoords, FrameSize, ScreenSize, VramVramBlitArgs,
 };
 use crate::gpu::registers::Registers;
-use crate::gpu::{rasterizer, Color, VramArray, WgpuResources};
+use crate::gpu::{Color, VramArray, WgpuResources, rasterizer};
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
 use wgpu::CommandBuffer;

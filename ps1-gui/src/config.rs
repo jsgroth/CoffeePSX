@@ -1,7 +1,7 @@
 use cfg_if::cfg_if;
+use ps1_core::RasterizerType;
 use ps1_core::api::{DisplayConfig, PgxpConfig, Ps1EmulatorConfig};
 use ps1_core::input::ControllerType;
-use ps1_core::RasterizerType;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
 use std::path::PathBuf;

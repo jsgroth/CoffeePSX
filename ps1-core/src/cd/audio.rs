@@ -3,10 +3,10 @@
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{seek, CdController, CommandState, DriveState, SeekNextState};
+use crate::cd::{CdController, CommandState, DriveState, SeekNextState, seek};
 use bincode::{Decode, Encode};
-use cdrom::cdtime::CdTime;
 use cdrom::CdRomResult;
+use cdrom::cdtime::CdTime;
 
 pub const CD_DA_SAMPLES_PER_SECTOR: u16 = 588;
 const SECTORS_BETWEEN_REPORTS: u8 = 16;
@@ -165,10 +165,16 @@ impl CdController {
                 }
 
                 // TODO check if an interrupt is pending?
-                int1!(
-                    self,
-                    [stat!(self), track_number, index, minutes, seconds, frames, 0x00, 0x00]
-                );
+                int1!(self, [
+                    stat!(self),
+                    track_number,
+                    index,
+                    minutes,
+                    seconds,
+                    frames,
+                    0x00,
+                    0x00
+                ]);
             }
 
             sectors_till_report = SECTORS_BETWEEN_REPORTS;

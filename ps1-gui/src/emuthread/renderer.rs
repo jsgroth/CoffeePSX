@@ -1,10 +1,10 @@
 use crate::config::{AspectRatio, VideoConfig};
 use crate::emuthread::{EmulatorSwapChain, QueuedFrame};
-use crate::{emuthread, Never};
+use crate::{Never, emuthread};
 use ps1_core::api::Renderer;
 use std::iter;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use wgpu::PipelineCompilationOptions;
 use winit::dpi::PhysicalSize;
 

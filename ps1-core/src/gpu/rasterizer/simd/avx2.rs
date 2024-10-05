@@ -8,7 +8,7 @@ use crate::gpu::rasterizer::{
     LineShading, RectangleTextureMapping, Shading, TextureMappingMode, TriangleShading,
     TriangleTextureMapping,
 };
-use crate::gpu::{rasterizer, Color, Vertex};
+use crate::gpu::{Color, Vertex, rasterizer};
 #[allow(clippy::wildcard_imports)]
 use std::arch::x86_64::*;
 use std::{cmp, mem};

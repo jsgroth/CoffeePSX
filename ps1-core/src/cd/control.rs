@@ -4,7 +4,7 @@ use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::{
-    status, CdController, Command, CommandState, DriveState, SpinUpNextState, SPIN_UP_CYCLES,
+    CdController, Command, CommandState, DriveState, SPIN_UP_CYCLES, SpinUpNextState, status,
 };
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};

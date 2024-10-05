@@ -202,19 +202,16 @@ impl CdController {
                 (track_number, index, relative_time)
             });
 
-        int3!(
-            self,
-            [
-                track_number,
-                index,
-                cd::binary_to_bcd(relative_time.minutes),
-                cd::binary_to_bcd(relative_time.seconds),
-                cd::binary_to_bcd(relative_time.frames),
-                cd::binary_to_bcd(absolute_time.minutes),
-                cd::binary_to_bcd(absolute_time.seconds),
-                cd::binary_to_bcd(absolute_time.frames),
-            ]
-        );
+        int3!(self, [
+            track_number,
+            index,
+            cd::binary_to_bcd(relative_time.minutes),
+            cd::binary_to_bcd(relative_time.seconds),
+            cd::binary_to_bcd(relative_time.frames),
+            cd::binary_to_bcd(absolute_time.minutes),
+            cd::binary_to_bcd(absolute_time.seconds),
+            cd::binary_to_bcd(absolute_time.frames),
+        ]);
 
         CommandState::Idle
     }

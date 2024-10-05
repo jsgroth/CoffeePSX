@@ -5,7 +5,7 @@ use crate::cd::audio::PlayState;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
 use crate::cd::read::ReadState;
-use crate::cd::{status, CdController, CommandState, DriveState, SeekNextState, SpinUpNextState};
+use crate::cd::{CdController, CommandState, DriveState, SeekNextState, SpinUpNextState, status};
 use cdrom::cdtime::CdTime;
 use std::cmp;
 

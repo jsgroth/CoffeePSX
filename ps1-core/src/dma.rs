@@ -15,7 +15,7 @@ use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::mdec::MacroblockDecoder;
 use crate::memory;
 use crate::memory::Memory;
-use crate::num::{U32Ext, U8Ext};
+use crate::num::{U8Ext, U32Ext};
 use crate::pgxp::PgxpConfig;
 use crate::scheduler::{Scheduler, SchedulerEvent};
 use crate::spu::Spu;

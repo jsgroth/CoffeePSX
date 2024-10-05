@@ -1,8 +1,8 @@
+use crate::Never;
 use crate::config::{AppConfig, GraphicsConfig};
 use crate::emuthread::audio::{AudioQueue, QueueAudioCallback, QueueAudioOutput};
 use crate::emuthread::renderer::{SurfaceRenderer, SwapChainRenderer};
-use crate::Never;
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use cdrom::reader::{CdRom, CdRomFileFormat};
 use cfg_if::cfg_if;
 use ps1_core::api::{
@@ -19,7 +19,7 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 use std::{fs, io, thread};
 use winit::dpi::PhysicalSize;

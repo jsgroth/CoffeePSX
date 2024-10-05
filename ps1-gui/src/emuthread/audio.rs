@@ -1,5 +1,5 @@
-use crate::config::AudioConfig;
 use crate::Never;
+use crate::config::AudioConfig;
 use ps1_core::api::AudioOutput;
 use sdl2::audio::{AudioCallback, AudioSpecDesired};
 use std::collections::VecDeque;

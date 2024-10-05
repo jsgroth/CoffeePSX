@@ -1,7 +1,7 @@
 use crate::config::{
     AppConfig, AspectRatio, FilterMode, FiltersConfig, Rasterizer, VSyncMode, WgpuBackend,
 };
-use crate::{config, OpenFileType, UserEvent};
+use crate::{OpenFileType, UserEvent, config};
 use egui::{
     Align, Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Layout, Modifiers,
     Slider, TextEdit, TopBottomPanel, Ui, Vec2, Window,

@@ -1,7 +1,7 @@
 use crate::gpu::gp0::{
     DrawSettings, SemiTransparencyMode, TextureColorDepthBits, TexturePage, TextureWindow,
 };
-use crate::gpu::rasterizer::wgpuhardware::{include_wgsl_concat, InternalConfig};
+use crate::gpu::rasterizer::wgpuhardware::{InternalConfig, include_wgsl_concat};
 use crate::gpu::rasterizer::{
     DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading, RectangleTextureMapping,
     TextureMapping, TextureMappingMode, TriangleShading, TriangleTextureMapping,

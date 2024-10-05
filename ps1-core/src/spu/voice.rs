@@ -3,7 +3,7 @@ mod gaussian;
 use crate::spu;
 use crate::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
 use crate::spu::envelope::{AdsrEnvelope, AdsrPhase, SweepEnvelope};
-use crate::spu::{adpcm, multiply_volume, SoundRam};
+use crate::spu::{SoundRam, adpcm, multiply_volume};
 use bincode::{Decode, Encode};
 use std::cmp;
 

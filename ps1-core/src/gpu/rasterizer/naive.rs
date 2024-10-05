@@ -7,9 +7,10 @@ use crate::gpu::gp0::{
 };
 use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
-    cross_product_z, software, swap_vertices, vertices_valid, CpuVramBlitArgs, DrawLineArgs,
-    DrawRectangleArgs, DrawTriangleArgs, LineShading, RasterizerInterface, RectangleTextureMapping,
-    TextureMappingMode, TriangleShading, TriangleTextureMapping, VramVramBlitArgs,
+    CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, LineShading,
+    RasterizerInterface, RectangleTextureMapping, TextureMappingMode, TriangleShading,
+    TriangleTextureMapping, VramVramBlitArgs, cross_product_z, software, swap_vertices,
+    vertices_valid,
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{Color, Vertex, Vram, VramArray, WgpuResources};

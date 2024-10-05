@@ -7,8 +7,8 @@ mod avx2;
 use crate::gpu::gp0::DrawSettings;
 use crate::gpu::rasterizer::software::SoftwareRenderer;
 use crate::gpu::rasterizer::{
-    cross_product_z, software, swap_vertices, vertices_valid, CpuVramBlitArgs, DrawLineArgs,
-    DrawRectangleArgs, DrawTriangleArgs, RasterizerInterface, VramVramBlitArgs,
+    CpuVramBlitArgs, DrawLineArgs, DrawRectangleArgs, DrawTriangleArgs, RasterizerInterface,
+    VramVramBlitArgs, cross_product_z, software, swap_vertices, vertices_valid,
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{Color, Vertex, Vram, VramArray, WgpuResources};

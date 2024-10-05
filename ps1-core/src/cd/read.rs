@@ -2,11 +2,11 @@
 
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{seek, CdController, CommandState, DriveState, SeekNextState};
+use crate::cd::{CdController, CommandState, DriveState, SeekNextState, seek};
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};
-use cdrom::cdtime::CdTime;
 use cdrom::CdRomResult;
+use cdrom::cdtime::CdTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 pub struct ReadState {
