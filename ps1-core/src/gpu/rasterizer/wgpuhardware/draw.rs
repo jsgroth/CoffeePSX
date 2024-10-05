@@ -434,6 +434,7 @@ impl DrawPipelines {
                     })],
                 }),
                 multiview: None,
+                cache: None,
             })
         };
 
@@ -565,6 +566,7 @@ impl DrawPipelines {
                         })],
                     }),
                     multiview: None,
+                    cache: None,
                 })
             };
 
@@ -1227,6 +1229,7 @@ impl MaskBitPipelines {
                     })],
                 }),
                 multiview: None,
+                cache: None,
             });
 
         let textured_bind_group_layout =
@@ -1328,6 +1331,7 @@ impl MaskBitPipelines {
                     })],
                 }),
                 multiview: None,
+                cache: None,
             })
         };
 

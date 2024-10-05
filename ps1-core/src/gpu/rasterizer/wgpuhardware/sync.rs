@@ -126,6 +126,7 @@ impl NativeScaledSyncPipeline {
                 })],
             }),
             multiview: None,
+            cache: None,
         });
 
         Self { bind_group, pipeline }
@@ -293,6 +294,7 @@ impl ScaledNativeSyncPipeline {
                 })],
             }),
             multiview: None,
+            cache: None,
         });
 
         Self { bind_group_0, bind_group_layout_1, pipeline }

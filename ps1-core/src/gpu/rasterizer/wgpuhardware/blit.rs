@@ -90,6 +90,7 @@ impl CpuVramBlitPipeline {
             module: &shader,
             entry_point: "cpu_vram_blit",
             compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         Self {
@@ -305,6 +306,7 @@ impl VramCopyPipeline {
             module: &shader,
             entry_point: "vram_copy",
             compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         Self { bind_group, pipeline }
@@ -388,6 +390,7 @@ impl VramFillPipeline {
             module: &shader,
             entry_point: "vram_fill",
             compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
         });
 
         Self { bind_group, pipeline }

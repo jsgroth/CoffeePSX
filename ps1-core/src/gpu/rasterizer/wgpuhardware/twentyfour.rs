@@ -106,6 +106,7 @@ impl TwentyFourBppPipeline {
                 })],
             }),
             multiview: None,
+            cache: None,
         });
 
         Self { bind_group, pipeline }

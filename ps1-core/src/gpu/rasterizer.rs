@@ -441,6 +441,7 @@ impl ClearPipeline {
                 })],
             }),
             multiview: None,
+            cache: None,
         });
 
         Self { pipeline }

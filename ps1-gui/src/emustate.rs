@@ -15,9 +15,9 @@ use std::sync::Arc;
 use wgpu::PresentMode;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
-use winit::event_loop::{EventLoopProxy, EventLoopWindowTarget};
+use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Fullscreen, Window, WindowBuilder};
+use winit::window::{Fullscreen, Window, WindowAttributes};
 
 #[derive(Debug)]
 struct EmulatorWindow {
@@ -35,7 +35,7 @@ struct EmulatorWindow {
 impl EmulatorWindow {
     fn new(
         file_path: Option<&Path>,
-        elwt: &EventLoopWindowTarget<UserEvent>,
+        event_loop: &ActiveEventLoop,
         config: &AppConfig,
     ) -> anyhow::Result<Self> {
         let window_title = match file_path {
@@ -48,12 +48,15 @@ impl EmulatorWindow {
             None => "(BIOS)".into(),
         };
         let window_size = LogicalSize::new(config.video.window_width, config.video.window_height);
-        let mut window_builder =
-            WindowBuilder::new().with_title(window_title).with_inner_size(window_size);
+
+        let mut window_attrs =
+            WindowAttributes::default().with_title(window_title).with_inner_size(window_size);
         if config.video.launch_in_fullscreen {
-            window_builder = window_builder.with_fullscreen(Some(Fullscreen::Borderless(None)));
+            window_attrs = window_attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
         }
-        let window = window_builder.build(elwt)?;
+
+        #[allow(deprecated)]
+        let window = event_loop.create_window(window_attrs)?;
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: config.graphics.wgpu_backend.to_wgpu(),
@@ -81,6 +84,7 @@ impl EmulatorWindow {
                 label: "emulator_device".into(),
                 required_features: ps1_core::required_wgpu_features(),
                 required_limits: ps1_core::required_wgpu_limits(),
+                memory_hints: wgpu::MemoryHints::default(),
             },
             None,
         ))?;
@@ -290,7 +294,7 @@ impl EmulatorState {
     pub fn handle_event(
         &mut self,
         event: &Event<UserEvent>,
-        elwt: &EventLoopWindowTarget<UserEvent>,
+        elwt: &ActiveEventLoop,
         proxy: &EventLoopProxy<UserEvent>,
         app_config: &mut AppConfig,
     ) -> anyhow::Result<()> {
@@ -467,7 +471,7 @@ impl EmulatorState {
     fn start_emulator(
         &mut self,
         file_path: Option<&Path>,
-        elwt: &EventLoopWindowTarget<UserEvent>,
+        elwt: &ActiveEventLoop,
         app_config: &AppConfig,
     ) -> anyhow::Result<()> {
         if let Some(RunningState { emu_thread, .. }) = &self.running {

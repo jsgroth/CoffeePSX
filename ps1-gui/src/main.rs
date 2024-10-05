@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use winit::event::Event;
-use winit::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
-    let event_loop = EventLoopBuilder::with_user_event().build()?;
+    let event_loop = EventLoop::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new("ps1-config.toml".into());
@@ -47,6 +47,7 @@ fn main() -> anyhow::Result<()> {
     let sigint = install_ctrl_c_handler()?;
 
     let event_loop_proxy = event_loop.create_proxy();
+    #[allow(deprecated)]
     event_loop.run(move |event, elwt| {
         if sigint.load(Ordering::Relaxed) {
             elwt.exit();
@@ -80,17 +81,26 @@ fn run_headless(
     let event_loop_proxy = event_loop.create_proxy();
 
     let mut emu_state = EmulatorState::new()?;
-    let first_event = match path {
+    let mut first_event = Some(match path {
         Some(path) => {
             Event::UserEvent(UserEvent::FileOpened(OpenFileType::Open, Some(path.clone())))
         }
         None => Event::UserEvent(UserEvent::RunBios),
-    };
-    emu_state.handle_event(&first_event, &event_loop, &event_loop_proxy, config)?;
+    });
 
     let sigint = install_ctrl_c_handler()?;
 
+    #[allow(deprecated)]
     event_loop.run(move |event, elwt| {
+        if let Some(first_event) = first_event.take() {
+            if let Err(err) = emu_state.handle_event(&first_event, elwt, &event_loop_proxy, config)
+            {
+                log::error!("Error initializing emulator: {err}");
+                elwt.exit();
+                return;
+            }
+        }
+
         if sigint.load(Ordering::Relaxed) {
             elwt.exit();
             return;
@@ -116,7 +126,7 @@ fn run_headless(
     Ok(())
 }
 
-fn throttle_if_necessary(event: &Event<UserEvent>, elwt: &EventLoopWindowTarget<UserEvent>) {
+fn throttle_if_necessary(event: &Event<UserEvent>, elwt: &ActiveEventLoop) {
     // Wait for 1ms every time the event queue is exhausted to prevent pegging a CPU core at
     // 100% while the app is running
     if matches!(event, Event::AboutToWait) {

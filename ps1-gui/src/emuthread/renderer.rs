@@ -179,6 +179,7 @@ impl SurfaceRenderer {
                 })],
             }),
             multiview: None,
+            cache: None,
         });
 
         Self {

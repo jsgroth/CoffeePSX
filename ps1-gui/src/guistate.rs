@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use std::{iter, thread};
 use winit::dpi::LogicalSize;
 use winit::event::{Event, WindowEvent};
-use winit::event_loop::{EventLoopProxy, EventLoopWindowTarget};
-use winit::window::{Window, WindowBuilder};
+use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::window::{Window, WindowAttributes};
 
 pub struct GuiState {
     app: App,
@@ -33,11 +33,13 @@ pub struct GuiState {
 
 impl GuiState {
     #[allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
-    pub fn new(app: App, elwt: &EventLoopWindowTarget<UserEvent>) -> anyhow::Result<Self> {
-        let window = WindowBuilder::new()
-            .with_title("GUI")
-            .with_inner_size(LogicalSize::new(800, 600))
-            .build(elwt)?;
+    pub fn new(app: App, event_loop: &EventLoop<UserEvent>) -> anyhow::Result<Self> {
+        #[allow(deprecated)]
+        let window = event_loop.create_window(
+            WindowAttributes::default()
+                .with_title("GUI")
+                .with_inner_size(LogicalSize::new(800, 600)),
+        )?;
 
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
 
@@ -95,7 +97,8 @@ impl GuiState {
         };
         surface.configure(&device, &surface_config);
 
-        let egui_renderer = egui_wgpu::Renderer::new(&device, surface_config.format, None, 1);
+        let egui_renderer =
+            egui_wgpu::Renderer::new(&device, surface_config.format, None, 1, false);
 
         let egui_state = egui_winit::State::new(
             egui::Context::default(),
@@ -103,6 +106,7 @@ impl GuiState {
             &window,
             None,
             None,
+            Some(device.limits().max_texture_dimension_2d as usize),
         );
 
         let egui_callback_repaint_count = Arc::new(AtomicU32::new(0));
@@ -140,7 +144,7 @@ impl GuiState {
     pub fn handle_event(
         &mut self,
         event: &Event<UserEvent>,
-        elwt: &EventLoopWindowTarget<UserEvent>,
+        elwt: &ActiveEventLoop,
         proxy: &EventLoopProxy<UserEvent>,
     ) {
         if let Event::UserEvent(user_event) = event {
@@ -257,7 +261,7 @@ impl GuiState {
         );
 
         {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: "egui_rpass".into(),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &output_view,
@@ -269,6 +273,9 @@ impl GuiState {
                 })],
                 ..wgpu::RenderPassDescriptor::default()
             });
+
+            // egui-wgpu requires a RenderPass with static lifetime
+            let mut render_pass = render_pass.forget_lifetime();
 
             self.egui_renderer.render(&mut render_pass, &paint_jobs, &screen_descriptor);
         }
