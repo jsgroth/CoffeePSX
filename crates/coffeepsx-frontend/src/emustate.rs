@@ -259,6 +259,9 @@ impl EmulatorState {
             Event::UserEvent(UserEvent::RunBios) => {
                 return self.start_emulator(None, elwt, app_config);
             }
+            Event::UserEvent(UserEvent::AppConfigChanged) => {
+                self.input_mapper = InputMapper::new(&app_config.input);
+            }
             Event::AboutToWait => {
                 self.process_sdl_events(proxy)?;
             }
@@ -269,8 +272,6 @@ impl EmulatorState {
 
         match event {
             Event::UserEvent(UserEvent::AppConfigChanged) => {
-                self.input_mapper = InputMapper::new(&app_config.input);
-
                 window.update_config(&app_config.video);
                 emu_thread.handle_config_change(app_config)?;
             }
