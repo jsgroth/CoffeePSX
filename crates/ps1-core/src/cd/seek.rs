@@ -17,7 +17,7 @@ impl CdController {
     // Sets seek location to the specified absolute time
     pub(super) fn execute_set_loc(&mut self) -> CommandState {
         if self.parameter_fifo.len() < 3 {
-            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
+            self.int5(&[stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
@@ -28,12 +28,12 @@ impl CdController {
         match CdTime::new_checked(minutes, seconds, frames) {
             Some(cd_time) => {
                 self.seek_location = Some(cd_time);
-                int3!(self, [stat!(self)]);
+                self.int3(&[stat!(self)]);
 
                 log::debug!("Set seek location to {cd_time}");
             }
             None => {
-                int5!(self, [stat!(self, ERROR), status::INVALID_COMMAND]);
+                self.int5(&[stat!(self, ERROR), status::INVALID_COMMAND]);
 
                 log::warn!("Invalid seek location: {minutes:02}:{seconds:02}:{frames:02}");
             }
@@ -49,7 +49,7 @@ impl CdController {
     // SeekP seeks in audio mode (uses Subchannel Q for positioning)
     // TODO do SeekL and SeekP need to behave differently?
     pub(super) fn execute_seek(&mut self) -> CommandState {
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         let seek_location = self.seek_location.take().unwrap_or(self.drive_state.current_time());
         self.drive_state =

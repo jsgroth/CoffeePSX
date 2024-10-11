@@ -90,7 +90,7 @@ impl CdController {
                 DriveState::Paused { time: self.drive_state.current_time(), int2_queued: false };
         }
 
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         match self.drive_state {
             DriveState::Stopped => {
@@ -113,7 +113,7 @@ impl CdController {
     }
 
     pub(super) fn init_second_response(&mut self) -> CommandState {
-        int2!(self, [stat!(self)]);
+        self.int2(&[stat!(self)]);
         CommandState::Idle
     }
 
@@ -121,7 +121,7 @@ impl CdController {
     // Configures drive mode
     pub(super) fn execute_set_mode(&mut self) -> CommandState {
         if self.parameter_fifo.len() < 1 {
-            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
+            self.int5(&[stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
@@ -132,7 +132,7 @@ impl CdController {
 
         log::debug!("Parsed mode: {:?}", self.drive_mode);
 
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
         CommandState::Idle
     }
 
@@ -141,7 +141,7 @@ impl CdController {
     // staying in roughly the same position
     pub(super) fn execute_pause(&mut self) -> CommandState {
         // Generate INT3 before pausing the drive
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         // TODO check if motor is stopped
 
@@ -158,7 +158,7 @@ impl CdController {
     }
 
     pub(super) fn pause_second_response(&mut self) -> CommandState {
-        int2!(self, [stat!(self)]);
+        self.int2(&[stat!(self)]);
         CommandState::Idle
     }
 
@@ -171,7 +171,7 @@ impl CdController {
                 DriveState::Paused { time: self.drive_state.current_time(), int2_queued: false };
         }
 
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         CommandState::GeneratingSecondResponse {
             command: Command::Stop,
@@ -181,7 +181,7 @@ impl CdController {
 
     pub(super) fn stop_second_response(&mut self) -> CommandState {
         self.drive_state = DriveState::Stopped;
-        int2!(self, [stat!(self)]);
+        self.int2(&[stat!(self)]);
         CommandState::Idle
     }
 
@@ -190,11 +190,11 @@ impl CdController {
     // Returns an INT5 error response if the motor is already running
     pub(super) fn execute_motor_on(&mut self) -> CommandState {
         if self.drive_state != DriveState::Stopped {
-            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
+            self.int5(&[stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         self.drive_state = DriveState::SpinningUp {
             cycles_remaining: SPIN_UP_CYCLES,
@@ -208,7 +208,7 @@ impl CdController {
     // Sets the file and channel for CD-XA ADPCM filtering
     pub(super) fn execute_set_filter(&mut self) -> CommandState {
         if self.parameter_fifo.len() < 2 {
-            int5!(self, [stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
+            self.int5(&[stat!(self, ERROR), status::WRONG_NUM_PARAMETERS]);
             return CommandState::Idle;
         }
 
@@ -221,7 +221,7 @@ impl CdController {
             self.xa_adpcm.channel
         );
 
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         CommandState::Idle
     }

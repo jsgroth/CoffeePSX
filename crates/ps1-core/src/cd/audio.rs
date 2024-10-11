@@ -51,7 +51,7 @@ impl CdController {
     pub(super) fn execute_mute(&mut self) -> CommandState {
         self.audio_muted = true;
 
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         CommandState::Idle
     }
@@ -61,7 +61,7 @@ impl CdController {
     pub(super) fn execute_demute(&mut self) -> CommandState {
         self.audio_muted = false;
 
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         CommandState::Idle
     }
@@ -72,7 +72,7 @@ impl CdController {
     // If track parameter is zero or not present, begins playback from the last SetLoc location, or
     // the current time if there is no unprocessed SetLoc location.
     pub(super) fn execute_play(&mut self) -> CommandState {
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         let Some(disc) = &self.disc else {
             // TODO generate error response
@@ -127,7 +127,7 @@ impl CdController {
                 self.drive_state = DriveState::Stopped;
             };
 
-            int4!(self, [stat!(self)]);
+            self.int4(&[stat!(self)]);
             return Ok(self.drive_state);
         };
 
@@ -140,7 +140,7 @@ impl CdController {
         {
             self.drive_state =
                 DriveState::Paused { time: time - CdTime::new(0, 0, 1), int2_queued: false };
-            int4!(self, [stat!(self)]);
+            self.int4(&[stat!(self)]);
             return Ok(self.drive_state);
         }
 
@@ -165,7 +165,7 @@ impl CdController {
                 }
 
                 // TODO check if an interrupt is pending?
-                int1!(self, [
+                self.int1(&[
                     stat!(self),
                     track_number,
                     index,
@@ -173,7 +173,7 @@ impl CdController {
                     seconds,
                     frames,
                     0x00,
-                    0x00
+                    0x00,
                 ]);
             }
 

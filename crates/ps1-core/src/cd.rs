@@ -8,6 +8,7 @@ mod control;
 mod fifo;
 mod macros;
 mod read;
+mod response;
 mod seek;
 mod status;
 mod xaadpcm;
@@ -357,7 +358,7 @@ impl CdController {
             DriveState::Playing(state) => self.progress_play_state(state)?,
             DriveState::Paused { time, mut int2_queued } => {
                 if int2_queued && !self.interrupts.int_queued() {
-                    int2!(self, [stat!(self)]);
+                    self.int2(&[stat!(self)]);
                     int2_queued = false;
                 }
 
@@ -452,7 +453,7 @@ impl CdController {
     // Only sub-function $20 (get CD controller ROM version) is implemented
     fn execute_test(&mut self) -> CommandState {
         if self.parameter_fifo.len() != 1 {
-            int5!(self, [stat!(self, ERROR), status::INVALID_COMMAND]);
+            self.int5(&[stat!(self, ERROR), status::INVALID_COMMAND]);
             return CommandState::Idle;
         }
 
@@ -462,7 +463,7 @@ impl CdController {
             // while the drive is running, then execute $05 after a few seconds and validate that
             // the drive did not successfully read an 'SCEx' string.
             0x04 => {
-                int3!(self, [stat!(self)]);
+                self.int3(&[stat!(self)]);
 
                 // The SCEx string is contained in the lead-in area, and I don't think the drive
                 // will ever re-read the lead-in after booting? Unless a Reset command is executed
@@ -473,15 +474,15 @@ impl CdController {
                 // First value is number of 'Sxxx' strings read and second value is number of 'SCEx' strings
                 // Pretend they are always equal
                 if self.scex_read {
-                    int3!(self, [0x01, 0x01]);
+                    self.int3(&[0x01, 0x01]);
                 } else {
-                    int3!(self, [0x00, 0x00]);
+                    self.int3(&[0x00, 0x00]);
                 }
             }
             // $20: Get controller BIOS version
             0x20 => {
                 // TODO use a different BIOS version?
-                int3!(self, [0x95, 0x07, 0x24, 0xC1]);
+                self.int3(&[0x95, 0x07, 0x24, 0xC1]);
             }
             other => todo!("Test sub-function {other:02X}"),
         }

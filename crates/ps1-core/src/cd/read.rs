@@ -24,7 +24,7 @@ impl CdController {
     // commands it to pause or stop.
     // ReadN reads with retry while ReadS reads without retry. These are emulated the same way.
     pub(super) fn execute_read(&mut self) -> CommandState {
-        int3!(self, [stat!(self)]);
+        self.int3(&[stat!(self)]);
 
         let seek_location = self.seek_location.take().unwrap_or(self.drive_state.current_time());
         if matches!(self.drive_state, DriveState::Reading(ReadState { time, .. }) if time == seek_location)
@@ -61,7 +61,7 @@ impl CdController {
             && !matches!(self.command_state, CommandState::ReceivingCommand { .. })
         {
             int1_generated = true;
-            int1!(self, [stat!(self)]);
+            self.int1(&[stat!(self)]);
 
             // TODO should the copy wait until software requests the data sector?
             if self.drive_mode.raw_sectors {
