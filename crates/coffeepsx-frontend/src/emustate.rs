@@ -275,11 +275,21 @@ impl EmulatorState {
                 window.update_config(&app_config.video);
                 emu_thread.handle_config_change(app_config)?;
             }
-            &Event::UserEvent(UserEvent::ControllerButton { button, pressed }) => {
-                emu_thread.send_command(EmulatorThreadCommand::DigitalInput { button, pressed });
+            &Event::UserEvent(UserEvent::ControllerButton { player, button, pressed }) => {
+                log::debug!("Player {player:?} digital input: {button:?} pressed={pressed}");
+                emu_thread.send_command(EmulatorThreadCommand::DigitalInput {
+                    player,
+                    button,
+                    pressed,
+                });
             }
-            &Event::UserEvent(UserEvent::ControllerAnalog { input, value }) => {
-                emu_thread.send_command(EmulatorThreadCommand::AnalogInput { input, value });
+            &Event::UserEvent(UserEvent::ControllerAnalog { player, input, value }) => {
+                log::debug!("Player {player:?} analog input: {input:?} value={value}");
+                emu_thread.send_command(EmulatorThreadCommand::AnalogInput {
+                    player,
+                    input,
+                    value,
+                });
             }
             Event::WindowEvent { event: win_event, window_id }
                 if *window_id == window.window.id() =>

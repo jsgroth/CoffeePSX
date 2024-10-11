@@ -5,7 +5,7 @@ pub mod emuthread;
 pub mod guistate;
 pub mod input;
 
-use crate::emuthread::{Ps1AnalogInput, Ps1Button};
+use crate::emuthread::{Player, Ps1AnalogInput, Ps1Button};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,8 +22,8 @@ pub enum UserEvent {
     RunBios,
     AppConfigChanged,
     Close,
-    ControllerButton { button: Ps1Button, pressed: bool },
-    ControllerAnalog { input: Ps1AnalogInput, value: i16 },
+    ControllerButton { player: Player, button: Ps1Button, pressed: bool },
+    ControllerAnalog { player: Player, input: Ps1AnalogInput, value: i16 },
     SdlButtonPress { which: u32, button: sdl2::controller::Button },
     SdlAxisMotion { which: u32, axis: sdl2::controller::Axis, value: i16 },
 }

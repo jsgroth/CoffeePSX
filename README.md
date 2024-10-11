@@ -22,12 +22,11 @@ Some games are fully playable, but some do not boot or have major issues, and th
 * MDEC (hardware image decompressor)
 * Hardware timers
 * NTSC/60Hz and PAL/50Hz support
-* Digital and DualShock controllers, P1 only (gamepad required for analog controls)
+* Digital and analog controller emulation
 * Memory card, port 1 only
 
 ### Not Yet Implemented
 
-* Configurable inputs and P2 inputs
 * DualShock rumble support
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
   * Also a memory card manager

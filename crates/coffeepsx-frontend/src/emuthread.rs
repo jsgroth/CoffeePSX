@@ -28,6 +28,12 @@ use std::{fs, io, thread};
 use winit::dpi::PhysicalSize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Player {
+    One,
+    Two,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ps1Button {
     Up,
     Down,
@@ -59,8 +65,8 @@ pub enum Ps1AnalogInput {
 #[derive(Debug)]
 pub enum EmulatorThreadCommand {
     Stop,
-    DigitalInput { button: Ps1Button, pressed: bool },
-    AnalogInput { input: Ps1AnalogInput, value: i16 },
+    DigitalInput { player: Player, button: Ps1Button, pressed: bool },
+    AnalogInput { player: Player, input: Ps1AnalogInput, value: i16 },
     UpdateConfig(Box<AppConfig>),
     SaveState,
     LoadState,
@@ -353,11 +359,11 @@ fn spawn_emu_thread(mut runner: EmulatorRunner) {
                         log::info!("Stopping emulator thread");
                         return;
                     }
-                    EmulatorThreadCommand::DigitalInput { button, pressed } => {
-                        update_digital_inputs(&mut runner.inputs, button, pressed);
+                    EmulatorThreadCommand::DigitalInput { player, button, pressed } => {
+                        update_digital_inputs(&mut runner.inputs, player, button, pressed);
                     }
-                    EmulatorThreadCommand::AnalogInput { input, value } => {
-                        update_analog_inputs(&mut runner.inputs, input, value);
+                    EmulatorThreadCommand::AnalogInput { player, input, value } => {
+                        update_analog_inputs(&mut runner.inputs, player, input, value);
                     }
                     EmulatorThreadCommand::UpdateConfig(config) => {
                         runner.emulator.update_config(config.to_emulator_config());
@@ -441,8 +447,13 @@ macro_rules! impl_update_digital_inputs {
     }
 }
 
-fn update_digital_inputs(inputs: &mut Ps1Inputs, button: Ps1Button, pressed: bool) {
-    impl_update_digital_inputs!(inputs.p1, button, pressed, [
+fn update_digital_inputs(inputs: &mut Ps1Inputs, player: Player, button: Ps1Button, pressed: bool) {
+    let player_inputs = match player {
+        Player::One => &mut inputs.p1,
+        Player::Two => &mut inputs.p2,
+    };
+
+    impl_update_digital_inputs!(player_inputs, button, pressed, [
         Up => set_up,
         Down => set_down,
         Left => set_left,
@@ -460,14 +471,19 @@ fn update_digital_inputs(inputs: &mut Ps1Inputs, button: Ps1Button, pressed: boo
     ]);
 }
 
-fn update_analog_inputs(inputs: &mut Ps1Inputs, input: Ps1AnalogInput, value: i16) {
+fn update_analog_inputs(inputs: &mut Ps1Inputs, player: Player, input: Ps1AnalogInput, value: i16) {
+    let player_inputs = match player {
+        Player::One => &mut inputs.p1,
+        Player::Two => &mut inputs.p2,
+    };
+
     // Map from [-32768, 32767] to [0, 255]
     let converted_value = ((i32::from(value) + 0x8000) >> 8) as u8;
     match input {
-        Ps1AnalogInput::LeftStickX => inputs.p1.analog.left_x = converted_value,
-        Ps1AnalogInput::LeftStickY => inputs.p1.analog.left_y = converted_value,
-        Ps1AnalogInput::RightStickX => inputs.p1.analog.right_x = converted_value,
-        Ps1AnalogInput::RightStickY => inputs.p1.analog.right_y = converted_value,
+        Ps1AnalogInput::LeftStickX => player_inputs.analog.left_x = converted_value,
+        Ps1AnalogInput::LeftStickY => player_inputs.analog.left_y = converted_value,
+        Ps1AnalogInput::RightStickX => player_inputs.analog.right_x = converted_value,
+        Ps1AnalogInput::RightStickY => player_inputs.analog.right_y = converted_value,
     }
 }
 

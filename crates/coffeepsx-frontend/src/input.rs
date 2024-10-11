@@ -1,7 +1,7 @@
 use crate::UserEvent;
 use crate::config::InputConfig;
 use crate::config::input::{AxisDirection, SdlGamepadInput, SingleInput};
-use crate::emuthread::{Ps1AnalogInput, Ps1Button};
+use crate::emuthread::{Player, Ps1AnalogInput, Ps1Button};
 use sdl2::controller::Axis as SdlAxis;
 use sdl2::controller::Button as SdlButton;
 use std::collections::HashMap;
@@ -9,12 +9,14 @@ use winit::event_loop::EventLoopProxy;
 use winit::keyboard::KeyCode;
 
 struct DigitalValue {
+    player: Player,
     button: Ps1Button,
     axis_deadzone: i16,
     trigger_threshold: i16,
 }
 
 struct AnalogValue {
+    player: Player,
     input: Ps1AnalogInput,
     direction: AxisDirection,
     axis_deadzone: i16,
@@ -31,8 +33,12 @@ impl InputMapper {
         let mut digital_inputs: HashMap<SingleInput, Vec<DigitalValue>> = HashMap::new();
         let mut analog_inputs: HashMap<SingleInput, Vec<AnalogValue>> = HashMap::new();
 
-        // TODO P2 inputs
-        for set in [&input_config.p1_set_1, &input_config.p1_set_2] {
+        for (set, player) in [
+            (&input_config.p1_set_1, Player::One),
+            (&input_config.p1_set_2, Player::One),
+            (&input_config.p2_set_1, Player::Two),
+            (&input_config.p2_set_2, Player::Two),
+        ] {
             for (button, field) in [
                 (Ps1Button::Up, set.d_pad_up),
                 (Ps1Button::Down, set.d_pad_down),
@@ -54,6 +60,7 @@ impl InputMapper {
             ] {
                 let Some(field) = field else { continue };
                 digital_inputs.entry(field).or_default().push(DigitalValue {
+                    player,
                     button,
                     axis_deadzone: set.gamepad_axis_deadzone,
                     trigger_threshold: set.gamepad_trigger_threshold,
@@ -72,6 +79,7 @@ impl InputMapper {
             ] {
                 let Some(field) = field else { continue };
                 analog_inputs.entry(field).or_default().push(AnalogValue {
+                    player,
                     input: analog_input,
                     direction,
                     axis_deadzone: set.gamepad_axis_deadzone,
@@ -138,6 +146,7 @@ impl InputMapper {
                 };
                 proxy
                     .send_event(UserEvent::ControllerButton {
+                        player: digital_input.player,
                         button: digital_input.button,
                         pressed,
                     })
@@ -151,6 +160,7 @@ impl InputMapper {
                     if value.saturating_abs() > analog_input.axis_deadzone { value } else { 0 };
                 proxy
                     .send_event(UserEvent::ControllerAnalog {
+                        player: analog_input.player,
                         input: analog_input.input,
                         value: clamped_value,
                     })
@@ -165,8 +175,8 @@ fn send_digital_events(
     pressed: bool,
     proxy: &EventLoopProxy<UserEvent>,
 ) {
-    for &DigitalValue { button, .. } in digital_inputs {
-        proxy.send_event(UserEvent::ControllerButton { button, pressed }).unwrap();
+    for &DigitalValue { player, button, .. } in digital_inputs {
+        proxy.send_event(UserEvent::ControllerButton { player, button, pressed }).unwrap();
     }
 }
 
@@ -175,8 +185,8 @@ fn send_analog_events(
     pressed: bool,
     proxy: &EventLoopProxy<UserEvent>,
 ) {
-    for &AnalogValue { input, direction, .. } in analog_inputs {
+    for &AnalogValue { player, input, direction, .. } in analog_inputs {
         let value = if pressed { direction.max_value() } else { 0 };
-        proxy.send_event(UserEvent::ControllerAnalog { input, value }).unwrap();
+        proxy.send_event(UserEvent::ControllerAnalog { player, input, value }).unwrap();
     }
 }
