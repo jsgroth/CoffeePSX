@@ -1,9 +1,8 @@
-use crate::config::{AppConfig, Rasterizer, VSyncMode, VideoConfig};
-use crate::emuthread::{EmulationThreadHandle, EmulatorThreadCommand, Ps1AnalogInput, Ps1Button};
+use crate::config::{AppConfig, InputConfig, Rasterizer, VSyncMode, VideoConfig};
+use crate::emuthread::{EmulationThreadHandle, EmulatorThreadCommand};
+use crate::input::InputMapper;
 use crate::{OpenFileType, UserEvent};
 use anyhow::anyhow;
-use sdl2::controller::Axis as SdlAxis;
-use sdl2::controller::Button as SdlButton;
 use sdl2::controller::GameController;
 use sdl2::event::Event as SdlEvent;
 use sdl2::{EventPump, GameControllerSubsystem, Sdl};
@@ -200,7 +199,7 @@ impl Controllers {
     fn handle_device_added(&mut self, which: u32) -> anyhow::Result<()> {
         let controller = self.subsystem.open(which)?;
 
-        log::info!("Controller added: '{}'", controller.name());
+        log::info!("Controller added (idx {which}): '{}'", controller.name());
 
         self.instance_id_to_device_id.insert(controller.instance_id(), which);
         self.controllers.insert(which, controller);
@@ -215,55 +214,8 @@ impl Controllers {
         log::info!("Controller removed: '{}'", controller.name());
     }
 
-    #[allow(clippy::unused_self)]
-    fn handle_button_press(
-        &self,
-        button: SdlButton,
-        pressed: bool,
-        proxy: &EventLoopProxy<UserEvent>,
-    ) {
-        let ps1_button = match button {
-            SdlButton::DPadUp => Ps1Button::Up,
-            SdlButton::DPadLeft => Ps1Button::Left,
-            SdlButton::DPadRight => Ps1Button::Right,
-            SdlButton::DPadDown => Ps1Button::Down,
-            SdlButton::A => Ps1Button::Cross,
-            SdlButton::B => Ps1Button::Circle,
-            SdlButton::X => Ps1Button::Square,
-            SdlButton::Y => Ps1Button::Triangle,
-            SdlButton::LeftShoulder => Ps1Button::L1,
-            SdlButton::RightShoulder => Ps1Button::R1,
-            SdlButton::Start => Ps1Button::Start,
-            SdlButton::Back => Ps1Button::Select,
-            SdlButton::Guide => Ps1Button::Analog,
-            _ => return,
-        };
-
-        proxy.send_event(UserEvent::ControllerButton { button: ps1_button, pressed }).unwrap();
-    }
-
-    #[allow(clippy::unused_self)]
-    fn handle_axis_motion(&self, axis: SdlAxis, value: i16, proxy: &EventLoopProxy<UserEvent>) {
-        let ps1_axis = match axis {
-            SdlAxis::LeftX => Some(Ps1AnalogInput::LeftStickX),
-            SdlAxis::LeftY => Some(Ps1AnalogInput::LeftStickY),
-            SdlAxis::RightX => Some(Ps1AnalogInput::RightStickX),
-            SdlAxis::RightY => Some(Ps1AnalogInput::RightStickY),
-            _ => None,
-        };
-        if let Some(ps1_axis) = ps1_axis {
-            proxy.send_event(UserEvent::ControllerAnalog { input: ps1_axis, value }).unwrap();
-            return;
-        }
-
-        let button = match axis {
-            SdlAxis::TriggerLeft => Ps1Button::L2,
-            SdlAxis::TriggerRight => Ps1Button::R2,
-            _ => return,
-        };
-
-        let pressed = value >= i16::MAX / 2;
-        proxy.send_event(UserEvent::ControllerButton { button, pressed }).unwrap();
+    fn get_device_id(&self, instance_id: u32) -> Option<u32> {
+        self.instance_id_to_device_id.get(&instance_id).copied()
     }
 }
 
@@ -272,12 +224,13 @@ pub struct EmulatorState {
     sdl_ctx: Sdl,
     sdl_event_pump: EventPump,
     controllers: Controllers,
+    input_mapper: InputMapper,
 }
 
 impl EmulatorState {
     #[allow(clippy::new_without_default)]
     #[allow(clippy::missing_errors_doc)]
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new(input_config: &InputConfig) -> anyhow::Result<Self> {
         let sdl_ctx = sdl2::init().map_err(|err| anyhow!("Error initializing SDL2: {err}"))?;
         let sdl_event_pump = sdl_ctx
             .event_pump()
@@ -286,8 +239,9 @@ impl EmulatorState {
             .game_controller()
             .map_err(|err| anyhow!("Error initializing SDL2 game controller subsystem: {err}"))?;
         let controllers = Controllers::new(controller_subsystem);
+        let input_mapper = InputMapper::new(input_config);
 
-        Ok(Self { running: None, sdl_ctx, sdl_event_pump, controllers })
+        Ok(Self { running: None, sdl_ctx, sdl_event_pump, controllers, input_mapper })
     }
 
     #[allow(clippy::missing_errors_doc)]
@@ -315,6 +269,8 @@ impl EmulatorState {
 
         match event {
             Event::UserEvent(UserEvent::AppConfigChanged) => {
+                self.input_mapper = InputMapper::new(&app_config.input);
+
                 window.update_config(&app_config.video);
                 emu_thread.handle_config_change(app_config)?;
             }
@@ -356,8 +312,9 @@ impl EmulatorState {
                         event: KeyEvent { physical_key, state, .. },
                         ..
                     } => {
-                        if let Some(command) = key_input_command(physical_key, state) {
-                            emu_thread.send_command(command);
+                        if let PhysicalKey::Code(keycode) = physical_key {
+                            let pressed = state == ElementState::Pressed;
+                            self.input_mapper.map_keyboard(keycode, pressed, proxy);
                         }
 
                         let hotkey = check_hotkey(physical_key, state);
@@ -372,13 +329,13 @@ impl EmulatorState {
                             Some(Hotkey::ToggleVramDisplay) => {
                                 app_config.debug.vram_display = !app_config.debug.vram_display;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
-                                    app_config.clone(),
+                                    app_config.clone().into(),
                                 ));
                             }
                             Some(Hotkey::EnableHardwareRasterizer) => {
                                 app_config.graphics.rasterizer = Rasterizer::Hardware;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
-                                    app_config.clone(),
+                                    app_config.clone().into(),
                                 ));
                                 log::info!(
                                     "Using hardware rasterizer with resolution scale {}",
@@ -388,7 +345,7 @@ impl EmulatorState {
                             Some(Hotkey::EnableSoftwareRasterizer) => {
                                 app_config.graphics.rasterizer = Rasterizer::Software;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
-                                    app_config.clone(),
+                                    app_config.clone().into(),
                                 ));
                                 log::info!("Using software rasterizer");
                             }
@@ -397,7 +354,7 @@ impl EmulatorState {
                                     cmp::max(1, app_config.graphics.hardware_resolution_scale - 1);
                                 app_config.graphics.hardware_resolution_scale = scale;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
-                                    app_config.clone(),
+                                    app_config.clone().into(),
                                 ));
                                 log::info!("Set resolution scale to {scale}");
                             }
@@ -406,7 +363,7 @@ impl EmulatorState {
                                     cmp::min(16, app_config.graphics.hardware_resolution_scale + 1);
                                 app_config.graphics.hardware_resolution_scale = scale;
                                 emu_thread.send_command(EmulatorThreadCommand::UpdateConfig(
-                                    app_config.clone(),
+                                    app_config.clone().into(),
                                 ));
                                 log::info!("Set resolution scale to {scale}");
                             }
@@ -452,14 +409,25 @@ impl EmulatorState {
                 SdlEvent::ControllerDeviceRemoved { which, .. } => {
                     self.controllers.handle_device_removed(which);
                 }
-                SdlEvent::ControllerButtonDown { button, .. } => {
-                    self.controllers.handle_button_press(button, true, proxy);
+                SdlEvent::ControllerButtonDown { which, button, .. } => {
+                    let Some(device_id) = self.controllers.get_device_id(which) else { continue };
+                    self.input_mapper.map_sdl_button(device_id, button, true, proxy);
+
+                    proxy
+                        .send_event(UserEvent::SdlButtonPress { which: device_id, button })
+                        .unwrap();
                 }
-                SdlEvent::ControllerButtonUp { button, .. } => {
-                    self.controllers.handle_button_press(button, false, proxy);
+                SdlEvent::ControllerButtonUp { which, button, .. } => {
+                    let Some(device_id) = self.controllers.get_device_id(which) else { continue };
+                    self.input_mapper.map_sdl_button(device_id, button, false, proxy);
                 }
-                SdlEvent::ControllerAxisMotion { axis, value, .. } => {
-                    self.controllers.handle_axis_motion(axis, value, proxy);
+                SdlEvent::ControllerAxisMotion { which, axis, value, .. } => {
+                    let Some(device_id) = self.controllers.get_device_id(which) else { continue };
+                    self.input_mapper.map_sdl_axis(device_id, axis, value, proxy);
+
+                    proxy
+                        .send_event(UserEvent::SdlAxisMotion { which: device_id, axis, value })
+                        .unwrap();
                 }
                 _ => {}
             }
@@ -497,33 +465,6 @@ impl EmulatorState {
     pub fn is_emulator_running(&self) -> bool {
         self.running.is_some()
     }
-}
-
-fn key_input_command(key: PhysicalKey, state: ElementState) -> Option<EmulatorThreadCommand> {
-    let PhysicalKey::Code(keycode) = key else { return None };
-    let pressed = state == ElementState::Pressed;
-
-    // TODO configurable
-    let button = match keycode {
-        KeyCode::ArrowUp => Ps1Button::Up,
-        KeyCode::ArrowDown => Ps1Button::Down,
-        KeyCode::ArrowLeft => Ps1Button::Left,
-        KeyCode::ArrowRight => Ps1Button::Right,
-        KeyCode::KeyX => Ps1Button::Cross,
-        KeyCode::KeyS => Ps1Button::Circle,
-        KeyCode::KeyZ => Ps1Button::Square,
-        KeyCode::KeyA => Ps1Button::Triangle,
-        KeyCode::KeyW => Ps1Button::L1,
-        KeyCode::KeyQ => Ps1Button::L2,
-        KeyCode::KeyE => Ps1Button::R1,
-        KeyCode::KeyR => Ps1Button::R2,
-        KeyCode::Enter => Ps1Button::Start,
-        KeyCode::ShiftRight => Ps1Button::Select,
-        KeyCode::KeyY => Ps1Button::Analog,
-        _ => return None,
-    };
-
-    Some(EmulatorThreadCommand::DigitalInput { button, pressed })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

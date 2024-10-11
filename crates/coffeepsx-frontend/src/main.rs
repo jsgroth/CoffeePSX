@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
         return run_headless(args.headless_file.as_ref(), app.config_mut(), event_loop);
     }
 
-    let mut emu_state = EmulatorState::new()?;
+    let mut emu_state = EmulatorState::new(&app.config().input)?;
     let mut gui_state = GuiState::new(app, &event_loop)?;
 
     let sigint = install_ctrl_c_handler()?;
@@ -80,7 +80,7 @@ fn run_headless(
 ) -> anyhow::Result<()> {
     let event_loop_proxy = event_loop.create_proxy();
 
-    let mut emu_state = EmulatorState::new()?;
+    let mut emu_state = EmulatorState::new(&config.input)?;
     let mut first_event = Some(match path {
         Some(path) => {
             Event::UserEvent(UserEvent::FileOpened(OpenFileType::Open, Some(path.clone())))

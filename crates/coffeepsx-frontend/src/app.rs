@@ -1,9 +1,13 @@
+mod input;
+
+use crate::app::input::{ConfigurableInput, ControllerNumber, InputSet};
+use crate::config::input::SingleInput;
 use crate::config::{
     AppConfig, AspectRatio, FilterMode, FiltersConfig, Rasterizer, VSyncMode, WgpuBackend,
 };
 use crate::{OpenFileType, UserEvent, config};
 use egui::{
-    Align, Button, CentralPanel, Color32, ComboBox, Context, Key, KeyboardShortcut, Layout,
+    Align, Button, CentralPanel, Color32, ComboBox, Context, Grid, Key, KeyboardShortcut, Layout,
     Modifiers, TextEdit, TopBottomPanel, Ui, Vec2, Window,
 };
 use egui_extras::{Column, TableBuilder};
@@ -15,6 +19,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
 use winit::event_loop::EventLoopProxy;
+use winit::keyboard::KeyCode;
 
 struct NumericText {
     value: String,
@@ -57,6 +62,9 @@ struct AppState {
     audio_sync_threshold: NumericText,
     audio_device_queue_size: NumericText,
     internal_audio_buffer_size: NumericText,
+    selected_controller: ControllerNumber,
+    selected_input_set: InputSet,
+    waiting_for_input: Option<(ControllerNumber, InputSet, ConfigurableInput)>,
     file_list: Rc<[FileMetadata]>,
     last_serialized_config: AppConfig,
     filter_by_title: String,
@@ -83,6 +91,9 @@ impl AppState {
             audio_sync_threshold: NumericText::new(config.audio.sync_threshold),
             audio_device_queue_size: NumericText::new(config.audio.device_queue_size),
             internal_audio_buffer_size: NumericText::new(config.audio.internal_buffer_size),
+            selected_controller: ControllerNumber::One,
+            selected_input_set: InputSet::One,
+            waiting_for_input: None,
             file_list: file_list.into(),
             last_serialized_config: config.clone(),
             filter_by_title: String::new(),
@@ -90,6 +101,11 @@ impl AppState {
             last_filter_by_title: String::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AppEventResponse {
+    pub repaint: bool,
 }
 
 pub struct App {
@@ -114,8 +130,8 @@ impl App {
         Self { config_path, config, state }
     }
 
-    #[allow(clippy::single_match)]
-    pub fn handle_event(&mut self, event: &UserEvent) {
+    #[must_use]
+    pub fn handle_event(&mut self, event: &UserEvent) -> AppEventResponse {
         match event {
             UserEvent::FileOpened(OpenFileType::BiosPath, Some(path)) => {
                 self.config.paths.bios = Some(path.clone());
@@ -123,8 +139,31 @@ impl App {
             UserEvent::FileOpened(OpenFileType::SearchDir, Some(path)) => {
                 self.config.paths.search.push(path.clone());
             }
+            &UserEvent::SdlButtonPress { which, button } => {
+                return self.handle_sdl_button_press(which, button);
+            }
+            &UserEvent::SdlAxisMotion { which, axis, value } => {
+                return self.handle_sdl_axis_motion(which, axis, value);
+            }
             _ => {}
         }
+
+        AppEventResponse { repaint: false }
+    }
+
+    pub fn handle_key_press(&mut self, keycode: KeyCode) {
+        let Some((controller_number, input_set, configurable_input)) =
+            self.state.waiting_for_input.take()
+        else {
+            return;
+        };
+
+        self.update_input(
+            controller_number,
+            input_set,
+            configurable_input,
+            Some(SingleInput::Keyboard { keycode }),
+        );
     }
 
     #[allow(clippy::missing_panics_doc)]
@@ -532,32 +571,60 @@ impl App {
     }
 
     fn render_input_window(&mut self, ctx: &Context) {
-        Window::new("Input Settings")
-            .open(&mut self.state.input_window_open)
-            .resizable(false)
-            .show(ctx, |ui| {
+        let mut open = self.state.input_window_open;
+        Window::new("Input Settings").open(&mut open).show(ctx, |ui| {
+            ui.add_enabled_ui(self.state.waiting_for_input.is_none(), |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(
+                        &mut self.state.selected_controller,
+                        ControllerNumber::One,
+                        "Controller 1",
+                    );
+                    ui.selectable_value(
+                        &mut self.state.selected_controller,
+                        ControllerNumber::Two,
+                        "Controller 2",
+                    );
+                });
+
+                ui.add_space(10.0);
+
                 ui.group(|ui| {
-                    ui.label("P1 device");
+                    ui.label("Device");
+
+                    let device_field = match self.state.selected_controller {
+                        ControllerNumber::One => &mut self.config.input.p1_device,
+                        ControllerNumber::Two => &mut self.config.input.p2_device,
+                    };
 
                     ui.horizontal(|ui| {
-                        ui.radio_value(
-                            &mut self.config.input.p1_device,
-                            ControllerType::None,
-                            "None",
-                        );
-                        ui.radio_value(
-                            &mut self.config.input.p1_device,
-                            ControllerType::Digital,
-                            "Digital controller",
-                        );
-                        ui.radio_value(
-                            &mut self.config.input.p1_device,
-                            ControllerType::DualShock,
-                            "DualShock",
-                        );
+                        ui.radio_value(device_field, ControllerType::None, "None");
+                        ui.radio_value(device_field, ControllerType::Digital, "Digital controller");
+                        ui.radio_value(device_field, ControllerType::DualShock, "DualShock");
                     });
                 });
+
+                ui.add_space(10.0);
+
+                ui.horizontal(|ui| {
+                    ui.selectable_value(
+                        &mut self.state.selected_input_set,
+                        InputSet::One,
+                        "Input Set 1",
+                    );
+                    ui.selectable_value(
+                        &mut self.state.selected_input_set,
+                        InputSet::Two,
+                        "Input Set 2",
+                    );
+                });
+
+                ui.add_space(10.0);
+
+                self.render_input_set_settings(ui);
             });
+        });
+        self.state.input_window_open = open;
     }
 
     fn render_paths_window(&mut self, ctx: &Context, proxy: &EventLoopProxy<UserEvent>) {
@@ -596,15 +663,17 @@ impl App {
                 ui.group(|ui| {
                     ui.heading("Search paths");
 
-                    for path in self.config.paths.search.clone() {
-                        ui.horizontal(|ui| {
+                    Grid::new("search_paths_grid").show(ui, |ui| {
+                        for path in self.config.paths.search.clone() {
                             ui.label(path.display().to_string());
 
                             if ui.button("Remove").clicked() {
                                 self.config.paths.search.retain(|p| p != &path);
                             }
-                        });
-                    }
+
+                            ui.end_row();
+                        }
+                    });
 
                     if ui.button("Add").clicked() {
                         proxy
@@ -751,6 +820,12 @@ impl App {
         Ok(())
     }
 
+    #[must_use]
+    pub fn config(&self) -> &AppConfig {
+        &self.config
+    }
+
+    #[must_use]
     pub fn config_mut(&mut self) -> &mut AppConfig {
         &mut self.config
     }

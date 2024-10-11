@@ -59,7 +59,7 @@ pub enum EmulatorThreadCommand {
     Stop,
     DigitalInput { button: Ps1Button, pressed: bool },
     AnalogInput { input: Ps1AnalogInput, value: i16 },
-    UpdateConfig(AppConfig),
+    UpdateConfig(Box<AppConfig>),
     SaveState,
     LoadState,
     TogglePause,
@@ -271,7 +271,7 @@ impl EmulationThreadHandle {
             self.audio_device.resume();
         }
 
-        self.send_command(EmulatorThreadCommand::UpdateConfig(config.clone()));
+        self.send_command(EmulatorThreadCommand::UpdateConfig(Box::new(config.clone())));
 
         Ok(())
     }

@@ -1,3 +1,6 @@
+pub mod input;
+
+use crate::config::input::ControllerConfig;
 use cfg_if::cfg_if;
 use ps1_core::RasterizerType;
 use ps1_core::api::{DisplayConfig, PgxpConfig, Ps1EmulatorConfig};
@@ -201,28 +204,6 @@ impl Default for AudioConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InputConfig {
-    #[serde(default = "default_p1_input_device")]
-    pub p1_device: ControllerType,
-    #[serde(default = "default_p2_input_device")]
-    pub p2_device: ControllerType,
-}
-
-fn default_p1_input_device() -> ControllerType {
-    ControllerType::Digital
-}
-
-fn default_p2_input_device() -> ControllerType {
-    ControllerType::None
-}
-
-impl Default for InputConfig {
-    fn default() -> Self {
-        toml::from_str("").unwrap()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PathsConfig {
     pub bios: Option<PathBuf>,
     #[serde(default)]
@@ -268,6 +249,48 @@ impl Default for DebugConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputConfig {
+    #[serde(default = "default_p1_input_device")]
+    pub p1_device: ControllerType,
+    #[serde(default = "default_p2_input_device")]
+    pub p2_device: ControllerType,
+    #[serde(default = "default_p1_set_1")]
+    pub p1_set_1: ControllerConfig,
+    #[serde(default = "default_p1_set_2")]
+    pub p1_set_2: ControllerConfig,
+    #[serde(default = "default_p2_set")]
+    pub p2_set_1: ControllerConfig,
+    #[serde(default = "default_p2_set")]
+    pub p2_set_2: ControllerConfig,
+}
+
+fn default_p1_input_device() -> ControllerType {
+    ControllerType::Digital
+}
+
+fn default_p2_input_device() -> ControllerType {
+    ControllerType::None
+}
+
+fn default_p1_set_1() -> ControllerConfig {
+    ControllerConfig::default_p1_keyboard()
+}
+
+fn default_p1_set_2() -> ControllerConfig {
+    ControllerConfig::default_p1_gamepad()
+}
+
+fn default_p2_set() -> ControllerConfig {
+    ControllerConfig::none()
+}
+
+impl Default for InputConfig {
+    fn default() -> Self {
+        toml::from_str("").unwrap()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub video: VideoConfig,
@@ -276,13 +299,13 @@ pub struct AppConfig {
     #[serde(default)]
     pub audio: AudioConfig,
     #[serde(default)]
-    pub input: InputConfig,
-    #[serde(default)]
     pub paths: PathsConfig,
     #[serde(default)]
     pub filters: FiltersConfig,
     #[serde(default)]
     pub debug: DebugConfig,
+    #[serde(default)]
+    pub input: InputConfig,
 }
 
 impl Default for AppConfig {

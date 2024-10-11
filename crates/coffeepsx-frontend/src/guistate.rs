@@ -11,8 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{iter, thread};
 use winit::dpi::LogicalSize;
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::keyboard::PhysicalKey;
 use winit::window::{Window, WindowAttributes};
 
 pub struct GuiState {
@@ -148,7 +149,10 @@ impl GuiState {
         proxy: &EventLoopProxy<UserEvent>,
     ) {
         if let Event::UserEvent(user_event) = event {
-            self.app.handle_event(user_event);
+            let response = self.app.handle_event(user_event);
+            if response.repaint {
+                self.repaint(proxy);
+            }
         }
 
         match event {
@@ -170,6 +174,17 @@ impl GuiState {
                         self.surface_config.width = size.width;
                         self.surface_config.height = size.height;
                         self.surface.configure(&self.device, &self.surface_config);
+                    }
+                    &WindowEvent::KeyboardInput {
+                        event:
+                            KeyEvent {
+                                physical_key: PhysicalKey::Code(keycode),
+                                state: ElementState::Pressed,
+                                ..
+                            },
+                        ..
+                    } => {
+                        self.app.handle_key_press(keycode);
                     }
                     _ => {}
                 }
