@@ -216,7 +216,7 @@ impl GuiState {
                     self.egui_callback_repaint_count.fetch_sub(1, Ordering::Relaxed);
                 }
             }
-            Event::UserEvent(UserEvent::OpenFile { file_type, initial_dir }) => {
+            Event::UserEvent(UserEvent::OpenFileDialog { file_type, initial_dir }) => {
                 self.file_dialog_open = true;
 
                 async_open_file_dialog(*file_type, initial_dir.as_ref(), proxy);

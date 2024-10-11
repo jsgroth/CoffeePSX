@@ -1,12 +1,12 @@
-use crate::emuthread::{Ps1AnalogInput, Ps1Button};
-use std::path::PathBuf;
-
 pub mod app;
 pub mod config;
 pub mod emustate;
 pub mod emuthread;
 pub mod guistate;
 pub mod input;
+
+use crate::emuthread::{Ps1AnalogInput, Ps1Button};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenFileType {
@@ -17,7 +17,7 @@ pub enum OpenFileType {
 
 #[derive(Debug)]
 pub enum UserEvent {
-    OpenFile { file_type: OpenFileType, initial_dir: Option<PathBuf> },
+    OpenFileDialog { file_type: OpenFileType, initial_dir: Option<PathBuf> },
     FileOpened(OpenFileType, Option<PathBuf>),
     RunBios,
     AppConfigChanged,

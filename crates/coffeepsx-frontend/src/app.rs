@@ -227,7 +227,7 @@ impl App {
         let open_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::O);
         if ctx.input_mut(|input| input.consume_shortcut(&open_shortcut)) {
             proxy
-                .send_event(UserEvent::OpenFile {
+                .send_event(UserEvent::OpenFileDialog {
                     file_type: OpenFileType::Open,
                     initial_dir: None,
                 })
@@ -246,7 +246,7 @@ impl App {
                         Button::new("Open").shortcut_text(ctx.format_shortcut(&open_shortcut));
                     if ui.add(open_button).clicked() {
                         proxy
-                            .send_event(UserEvent::OpenFile {
+                            .send_event(UserEvent::OpenFileDialog {
                                 file_type: OpenFileType::Open,
                                 initial_dir: None,
                             })
@@ -650,7 +650,7 @@ impl App {
                             .map(PathBuf::from);
 
                         proxy
-                            .send_event(UserEvent::OpenFile {
+                            .send_event(UserEvent::OpenFileDialog {
                                 file_type: OpenFileType::BiosPath,
                                 initial_dir,
                             })
@@ -677,7 +677,7 @@ impl App {
 
                     if ui.button("Add").clicked() {
                         proxy
-                            .send_event(UserEvent::OpenFile {
+                            .send_event(UserEvent::OpenFileDialog {
                                 file_type: OpenFileType::SearchDir,
                                 initial_dir: None,
                             })
