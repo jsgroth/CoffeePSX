@@ -924,6 +924,8 @@ impl WgpuRasterizer {
         clut_x: u16,
         clut_y: u16,
     ) -> HazardCheck {
+        let clut_x = 16 * clut_x;
+
         let hazard = match depth {
             TextureColorDepthBits::Four => self.hazard_tracker.any_marked_rendered(
                 Vertex::new(clut_x.into(), clut_y.into()),
