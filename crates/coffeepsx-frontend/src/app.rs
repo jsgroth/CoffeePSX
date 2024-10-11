@@ -3,8 +3,8 @@ use crate::config::{
 };
 use crate::{OpenFileType, UserEvent, config};
 use egui::{
-    Align, Button, CentralPanel, Color32, Context, Key, KeyboardShortcut, Layout, Modifiers,
-    Slider, TextEdit, TopBottomPanel, Ui, Vec2, Window,
+    Align, Button, CentralPanel, Color32, ComboBox, Context, Key, KeyboardShortcut, Layout,
+    Modifiers, TextEdit, TopBottomPanel, Ui, Vec2, Window,
 };
 use egui_extras::{Column, TableBuilder};
 use ps1_core::input::ControllerType;
@@ -408,13 +408,18 @@ impl App {
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label("Resolution scale:").on_disabled_hover_text(disabled_hover_text);
+                        let format_scale = |scale| match scale {
+                            1 => "1x (Native)".into(),
+                            _ => format!("{scale}x")
+                        };
 
-                        ui.add(Slider::new(
-                            &mut self.config.graphics.hardware_resolution_scale,
-                            1..=16,
-                        ))
-                        .on_disabled_hover_text(disabled_hover_text);
+                        ComboBox::from_label("Resolution scale")
+                            .selected_text(format_scale(self.config.graphics.hardware_resolution_scale))
+                            .show_ui(ui, |ui| {
+                                for scale in 1..=16 {
+                                    ui.selectable_value(&mut self.config.graphics.hardware_resolution_scale, scale, format_scale(scale));
+                                }
+                            });
                     });
 
                     ui.add_enabled_ui(!self.config.graphics.hardware_high_color, |ui| {
