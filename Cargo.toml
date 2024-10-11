@@ -1,9 +1,6 @@
 [workspace]
 members = [
-    "cdrom",
-    "proc-macros",
-    "ps1-core",
-    "coffeepsx-frontend",
+    "crates/*",
 ]
 resolver = "2"
 
