@@ -664,6 +664,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "coffeepsx-frontend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "cdrom",
+ "cfg-if",
+ "clap",
+ "ctrlc",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "egui_extras",
+ "env_logger",
+ "log",
+ "pollster",
+ "ps1-core",
+ "regex",
+ "rfd",
+ "sdl2",
+ "serde",
+ "toml",
+ "wgpu",
+ "windows 0.58.0",
+ "winit",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2331,34 +2359,6 @@ dependencies = [
  "serde",
  "thiserror",
  "wgpu",
-]
-
-[[package]]
-name = "ps1-gui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bincode",
- "cdrom",
- "cfg-if",
- "clap",
- "ctrlc",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "egui_extras",
- "env_logger",
- "log",
- "pollster",
- "ps1-core",
- "regex",
- "rfd",
- "sdl2",
- "serde",
- "toml",
- "wgpu",
- "windows 0.58.0",
- "winit",
 ]
 
 [[package]]

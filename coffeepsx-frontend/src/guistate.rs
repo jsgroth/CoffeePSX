@@ -37,7 +37,7 @@ impl GuiState {
         #[allow(deprecated)]
         let window = event_loop.create_window(
             WindowAttributes::default()
-                .with_title("GUI")
+                .with_title("CoffeePSX")
                 .with_inner_size(LogicalSize::new(800, 600)),
         )?;
 

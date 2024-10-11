@@ -1,22 +1,26 @@
-# ps1-emu
+# CoffeePSX
 
-Work-in-progress attempt at a PlayStation emulator. Some games are fully playable, but some do not boot or have major issues, and the emulator is missing essential features like memory card management and proper handling of multi-disc games.
+Work-in-progress attempt at a PlayStation emulator.
+
+Some games are fully playable, but some do not boot or have major issues, and the emulator is missing some essential features like input configuration, proper handling of multi-disc games, and memory card management.
 
 ## Status
 
 Implemented:
-* The R3000-compatible CPU
+* CPU
   * Currently implemented using a pure interpreter; performance could be a lot better
-* The GTE
-* The GPU, with both software and hardware rasterizers
-  * Hardware rasterizer uses wgpu with native extensions; should work on Vulkan, DirectX 12, and Metal (has not been tested on MacOS/Metal)
-  * Hardware rasterizer supports 24bpp color rendering and higher resolutions up to 16x native
+* GTE
+* GPU, with both software and hardware rasterizers
+  * Hardware rasterizer uses [wgpu](https://wgpu.rs/) with native extensions; should work on Vulkan, DirectX 12, and Metal (has not been tested on MacOS/Metal)
+  * Hardware rasterizer supports higher resolutions up to 16x native as well as 24bpp high color rendering
   * Supports basic PGXP (Parallel/Precision Geometry Transform Pipeline), which reduces model wobble and texture warping in many 3D games
-    * CPU mode is not yet implemented so the PGXP implementation is not compatible with some games (e.g. Spyro series, Metal Gear Solid, Resident Evil 3, Tony Hawk's Pro Skater series)
-* The SPU
+    * "CPU mode" is not yet implemented so the PGXP implementation is not compatible with some games (e.g. Spyro series, Metal Gear Solid, Resident Evil 3, Tony Hawk's Pro Skater series)
+* SPU
 * Most of the CD-ROM controller
-* The MDEC
-* The hardware timers
+* Support for loading CUE/BIN disc images, CHD disc images, and PS1 EXE files
+* MDEC
+* Hardware timers
+* NTSC/60Hz and PAL/50Hz support
 * Digital and DualShock controllers, P1 only (gamepad required for analog controls)
 * Memory card, port 1 only
 
@@ -26,10 +30,12 @@ Not yet implemented:
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
   * Also a memory card manager
 * Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering)
-* More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work but timings are quite inaccurate right now
+* More efficient CPU emulation (cached interpreter, recompiler)
+* More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work, but timings are quite inaccurate right now
 * Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio
   * There are possibly no games that use 8-bit CD-XA audio samples?
-* Accurate timing for memory writes (i.e. implementing the CPU write queue)
+* Various emulator enhancements like increased disc drive speed, CPU overclocking, rewind, save state slots
+* Accurate timing for memory writes (i.e. emulating the CPU write queue)
   * It seems like maybe nothing depends on this?
 
 ## Software Rasterizer AVX2 Dependency
@@ -40,7 +46,13 @@ The hardware rasterizer has no such dependency.
 
 ## Build Dependencies
 
-This project uses [SDL2](https://www.libsdl.org/) for audio.
+### Rust
+
+This project requires the latest stable version of the [Rust toolchain](https://doc.rust-lang.org/book/ch01-01-installation.html) to build.
+
+### SDL2
+
+This project uses [SDL2](https://www.libsdl.org/) for audio and gamepad inputs.
 
 Linux (Debian-based):
 ```shell
@@ -67,7 +79,11 @@ To run in headless mode (no GUI window, will exit when the emulator window is cl
 cargo run --release -- --headless -f /path/to/file.cue
 ```
 
-PS1 EXE files, CUE/BIN disc images, and CHD disc images are supported.
+To build with fat LTOs (link time optimizations), which slightly improves performance and decreases binary size but increases compile time:
+```shell
+cargo build --profile release-lto
+# Binaries located in target/release-lto/
+```
 
 ## Key Bindings
 
@@ -87,10 +103,11 @@ Controller buttons:
 Hotkeys:
 * Save state: F5 key
 * Load state: F6 key
+* Fast forward: Tab key
 * Pause: P key
-* Step to Next Frame: N key
-* Use hardware rasterizer: 0 key
-* Use software rasterizer: - key (Minus)
+* Step to next frame: N key
+* Select to hardware rasterizer: 0 key
+* Select software rasterizer: - key (Minus)
 * Decrease resolution scale: [ key (Left square bracket)
 * Increase resolution scale: ] key (Right square bracket)
 * Toggle VRAM view: ' key (Quote)

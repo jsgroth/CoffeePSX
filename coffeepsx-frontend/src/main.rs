@@ -1,10 +1,10 @@
 use clap::Parser;
+use coffeepsx_frontend::app::App;
+use coffeepsx_frontend::config::AppConfig;
+use coffeepsx_frontend::emustate::EmulatorState;
+use coffeepsx_frontend::guistate::GuiState;
+use coffeepsx_frontend::{OpenFileType, UserEvent};
 use env_logger::Env;
-use ps1_gui::app::App;
-use ps1_gui::config::AppConfig;
-use ps1_gui::emustate::EmulatorState;
-use ps1_gui::guistate::GuiState;
-use ps1_gui::{OpenFileType, UserEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     let event_loop = EventLoop::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = App::new("ps1-config.toml".into());
+    let mut app = App::new("coffeepsx-config.toml".into());
 
     if args.headless {
         return run_headless(args.headless_file.as_ref(), app.config_mut(), event_loop);
