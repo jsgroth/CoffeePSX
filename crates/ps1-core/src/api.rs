@@ -297,6 +297,22 @@ impl Ps1Emulator {
         Ok(emulator)
     }
 
+    #[allow(clippy::missing_panics_doc)]
+    pub fn reset(&mut self) {
+        let bios_rom = self.memory.clone_bios_rom();
+        let unserialized = self.take_unserialized_fields();
+
+        *self = Ps1Emulator::new(
+            bios_rom,
+            unserialized.wgpu_device,
+            unserialized.wgpu_queue,
+            self.config,
+            unserialized.disc,
+            Some(unserialized.memory_card_1.data().to_vec()),
+        )
+        .expect("Emulator creation during reset should never fail");
+    }
+
     fn schedule_initial_events(&mut self) {
         self.timers.schedule_next_vblank(&mut self.scheduler, &mut self.interrupt_registers);
         self.scheduler.update_or_push_event(SchedulerEvent::spu_and_cd_clock(SPU_CLOCK_DIVIDER));

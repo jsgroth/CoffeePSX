@@ -98,6 +98,10 @@ impl Memory {
         })
     }
 
+    pub fn clone_bios_rom(&self) -> Vec<u8> {
+        self.bios_rom.to_vec()
+    }
+
     pub fn read_bios_u8(&self, address: u32) -> u8 {
         impl_read_u8!(self.bios_rom, BIOS_ROM_MASK, address)
     }

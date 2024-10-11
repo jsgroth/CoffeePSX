@@ -353,6 +353,18 @@ impl App {
 
                 ui.menu_button("Emulation", |ui| {
                     ui.add_enabled_ui(emu_state.is_emulator_running(), |ui| {
+                        if ui.button("Reset").clicked() {
+                            proxy.send_event(UserEvent::Reset).unwrap();
+                            ui.close_menu();
+                        }
+
+                        if ui.button("Power Off").clicked() {
+                            proxy.send_event(UserEvent::PowerOff).unwrap();
+                            ui.close_menu();
+                        }
+
+                        ui.add_space(10.0);
+
                         ui.menu_button("Change Disc", |ui| {
                             self.render_change_disc_submenu(proxy, ui);
                         });

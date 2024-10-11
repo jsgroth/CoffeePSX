@@ -64,6 +64,7 @@ pub enum Ps1AnalogInput {
 
 #[derive(Debug)]
 pub enum EmulatorThreadCommand {
+    Reset,
     Stop,
     DigitalInput { player: Player, button: Ps1Button, pressed: bool },
     AnalogInput { player: Player, input: Ps1AnalogInput, value: i16 },
@@ -357,6 +358,9 @@ fn spawn_emu_thread(mut runner: EmulatorRunner) {
 
             while let Ok(command) = runner.command_receiver.try_recv() {
                 match command {
+                    EmulatorThreadCommand::Reset => {
+                        runner.emulator.reset();
+                    }
                     EmulatorThreadCommand::Stop => {
                         log::info!("Stopping emulator thread");
                         return;

@@ -300,6 +300,13 @@ impl EmulatorState {
                 log::info!("Removing disc");
                 emu_thread.send_command(EmulatorThreadCommand::RemoveDisc);
             }
+            Event::UserEvent(UserEvent::Reset) => {
+                emu_thread.send_command(EmulatorThreadCommand::Reset);
+            }
+            Event::UserEvent(UserEvent::PowerOff) => {
+                emu_thread.send_command(EmulatorThreadCommand::Stop);
+                self.running = None;
+            }
             Event::WindowEvent { event: win_event, window_id }
                 if *window_id == window.window.id() =>
             {
