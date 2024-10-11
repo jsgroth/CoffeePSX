@@ -3,6 +3,7 @@ mod disassemble;
 use crate::bus::Bus;
 use crate::cpu::{CpuResult, Exception, R3000};
 use crate::num::U32Ext;
+use crate::pgxp::PreciseVertex;
 
 macro_rules! impl_branch {
     ($name:ident, |$rs:ident $(, $rt:ident)?| $cond:expr $(, link: $link:literal)?) => {
@@ -156,18 +157,6 @@ impl R3000 {
         let operand_l = self.registers.gpr[rs];
         let operand_r = self.registers.gpr[rt];
         self.registers.write_gpr(rd, operand_l.wrapping_add(operand_r));
-
-        // Hack until PGXP CPU mode is properly implemented - removes wobble in models outside of
-        // battle in Final Fantasy 8
-        if self.pgxp_config.enabled {
-            if operand_l == 0 {
-                self.pgxp.write_gpr(rd, self.pgxp.gpr[rt]);
-                log::trace!("PGXP: R{rd} = {:?}", self.pgxp.gpr[rt]);
-            } else if operand_r == 0 {
-                self.pgxp.write_gpr(rd, self.pgxp.gpr[rs]);
-                log::trace!("PGXP: R{rd} = {:?}", self.pgxp.gpr[rs]);
-            }
-        }
     }
 
     // ADDI: Add immediate word
@@ -293,7 +282,13 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.bus_read_u8(bus, address);
-        self.registers.write_gpr_delayed(parse_rt(opcode), byte as i8 as u32);
+
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr_delayed(rt, byte as i8 as u32);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr_delayed(rt, PreciseVertex::INVALID);
+        }
     }
 
     // LBU: Load byte unsigned
@@ -301,7 +296,13 @@ impl R3000 {
         let base_addr = self.registers.gpr[parse_rs(opcode) as usize];
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.bus_read_u8(bus, address);
-        self.registers.write_gpr_delayed(parse_rt(opcode), byte & 0xFF);
+
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr_delayed(rt, byte & 0xFF);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr_delayed(rt, PreciseVertex::INVALID);
+        }
     }
 
     // LH: Load halfword
@@ -313,7 +314,16 @@ impl R3000 {
         }
 
         let halfword = self.bus_read_u16(bus, address);
-        self.registers.write_gpr_delayed(parse_rt(opcode), halfword as i16 as u32);
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr_delayed(rt, halfword as i16 as u32);
+
+        if self.pgxp_config.enabled {
+            let memory_vertex = bus.read_pgxp(address);
+            let x = if !address.bit(1) { memory_vertex.x } else { memory_vertex.y };
+            let register_vertex =
+                PreciseVertex { x, y: if x < 0.0 { -1.0 } else { 0.0 }, z: memory_vertex.z };
+            self.pgxp.write_gpr_delayed(rt, register_vertex);
+        }
 
         Ok(())
     }
@@ -327,7 +337,15 @@ impl R3000 {
         }
 
         let halfword = self.bus_read_u16(bus, address);
-        self.registers.write_gpr_delayed(parse_rt(opcode), halfword & 0xFFFF);
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr_delayed(rt, halfword & 0xFFFF);
+
+        if self.pgxp_config.enabled {
+            let memory_vertex = bus.read_pgxp(address);
+            let x = if !address.bit(1) { memory_vertex.x } else { memory_vertex.y };
+            let register_vertex = PreciseVertex { x, y: 0.0, z: memory_vertex.z };
+            self.pgxp.write_gpr_delayed(rt, register_vertex);
+        }
 
         Ok(())
     }
@@ -336,6 +354,10 @@ impl R3000 {
     fn lui(&mut self, opcode: u32) {
         let register = (opcode >> 16) & 0x1F;
         self.registers.write_gpr(register, opcode << 16);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(register, PreciseVertex::INVALID);
+        }
     }
 
     // LW: Load word
@@ -373,6 +395,10 @@ impl R3000 {
 
         let new_value = (existing_value & !mask) | (memory_word << shift);
         self.registers.write_gpr_delayed(rt, new_value);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr_delayed(rt, PreciseVertex::INVALID);
+        }
     }
 
     // LWR: Load word right
@@ -389,16 +415,30 @@ impl R3000 {
 
         let new_value = (existing_value & !mask) | (memory_word >> shift);
         self.registers.write_gpr_delayed(rt, new_value);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr_delayed(rt, PreciseVertex::INVALID);
+        }
     }
 
     // MFHI: Move from HI
     fn mfhi(&mut self, opcode: u32) {
-        self.registers.write_gpr(parse_rd(opcode), self.registers.hi);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, self.registers.hi);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // MFLO: Move from LO
     fn mflo(&mut self, opcode: u32) {
-        self.registers.write_gpr(parse_rd(opcode), self.registers.lo);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, self.registers.lo);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // MTHI: Move to HI
@@ -460,6 +500,10 @@ impl R3000 {
         let address = base_addr.wrapping_add(parse_signed_immediate(opcode) as u32);
         let byte = self.registers.gpr[parse_rt(opcode) as usize];
         self.bus_write_u8(bus, address, byte);
+
+        if self.pgxp_config.enabled {
+            bus.write_pgxp(address & !3, PreciseVertex::INVALID);
+        }
     }
 
     // SH: Store halfword
@@ -470,8 +514,20 @@ impl R3000 {
             return Err(Exception::AddressErrorStore(address));
         }
 
-        let halfword = self.registers.gpr[parse_rt(opcode) as usize];
+        let rt = parse_rt(opcode) as usize;
+        let halfword = self.registers.gpr[rt];
         self.bus_write_u16(bus, address, halfword);
+
+        if self.pgxp_config.enabled {
+            let mut vertex = bus.read_pgxp(address & !3);
+            let coordinate = self.pgxp.gpr[rt].x;
+            if !address.bit(1) {
+                vertex.x = coordinate;
+            } else {
+                vertex.y = coordinate;
+            }
+            bus.write_pgxp(address, vertex);
+        }
 
         Ok(())
     }
