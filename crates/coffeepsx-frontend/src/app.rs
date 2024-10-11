@@ -5,6 +5,7 @@ use crate::config::input::SingleInput;
 use crate::config::{
     AppConfig, AspectRatio, FilterMode, FiltersConfig, Rasterizer, VSyncMode, WgpuBackend,
 };
+use crate::emustate::EmulatorState;
 use crate::{OpenFileType, UserEvent, config};
 use egui::{
     Align, Button, CentralPanel, Color32, ComboBox, Context, Grid, Key, KeyboardShortcut, Layout,
@@ -12,12 +13,14 @@ use egui::{
 };
 use egui_extras::{Column, TableBuilder};
 use ps1_core::input::ControllerType;
+use regex::Regex;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use winit::event_loop::EventLoopProxy;
 use winit::keyboard::KeyCode;
 
@@ -66,6 +69,8 @@ struct AppState {
     selected_input_set: InputSet,
     waiting_for_input: Option<(ControllerNumber, InputSet, ConfigurableInput)>,
     file_list: Rc<[FileMetadata]>,
+    change_disc_list: Rc<[ChangeDiscEntry]>,
+    last_opened_disc_path: Option<PathBuf>,
     last_serialized_config: AppConfig,
     filter_by_title: String,
     filter_by_title_lower: String,
@@ -95,6 +100,8 @@ impl AppState {
             selected_input_set: InputSet::One,
             waiting_for_input: None,
             file_list: file_list.into(),
+            change_disc_list: Rc::default(),
+            last_opened_disc_path: None,
             last_serialized_config: config.clone(),
             filter_by_title: String::new(),
             filter_by_title_lower: String::new(),
@@ -136,6 +143,10 @@ impl App {
             UserEvent::FileOpened(OpenFileType::BiosPath, Some(path)) => {
                 self.config.paths.bios = Some(path.clone());
             }
+            UserEvent::FileOpened(OpenFileType::Open | OpenFileType::DiscChange, Some(path)) => {
+                self.refresh_change_disc_list(path);
+                self.state.last_opened_disc_path = Some(path.clone());
+            }
             UserEvent::FileOpened(OpenFileType::SearchDir, Some(path)) => {
                 self.config.paths.search.push(path.clone());
             }
@@ -167,8 +178,13 @@ impl App {
     }
 
     #[allow(clippy::missing_panics_doc)]
-    pub fn render(&mut self, ctx: &Context, proxy: &EventLoopProxy<UserEvent>) {
-        self.render_menu(ctx, proxy);
+    pub fn render(
+        &mut self,
+        ctx: &Context,
+        emu_state: &EmulatorState,
+        proxy: &EventLoopProxy<UserEvent>,
+    ) {
+        self.render_menu(ctx, emu_state, proxy);
         self.render_central_panel(ctx, proxy);
 
         if self.state.video_window_open {
@@ -223,7 +239,44 @@ impl App {
         .into();
     }
 
-    fn render_menu(&mut self, ctx: &Context, proxy: &EventLoopProxy<UserEvent>) {
+    fn refresh_change_disc_list(&mut self, path: &Path) {
+        static DISC_REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r" \(Disc ([1-9])\)").unwrap());
+
+        let Some(path_str) = path.to_str() else {
+            self.state.change_disc_list = Rc::default();
+            return;
+        };
+
+        if DISC_REGEX.find(path_str).is_none() {
+            self.state.change_disc_list = Rc::default();
+            return;
+        }
+
+        // This could be more efficient, but it doesn't really matter since this executes very infrequently
+        let mut change_disc_list = Vec::new();
+        for disc_number in 1..=9 {
+            let new_path = DISC_REGEX.replace_all(path_str, format!(" (Disc {disc_number})"));
+            for metadata in &*self.state.file_list {
+                let Some(metadata_path_str) = metadata.full_path.to_str() else { continue };
+                if metadata_path_str == new_path {
+                    change_disc_list.push(ChangeDiscEntry {
+                        label: format!("Disc {disc_number}"),
+                        file: metadata.clone(),
+                    });
+                }
+            }
+        }
+
+        self.state.change_disc_list = change_disc_list.into();
+    }
+
+    fn render_menu(
+        &mut self,
+        ctx: &Context,
+        emu_state: &EmulatorState,
+        proxy: &EventLoopProxy<UserEvent>,
+    ) {
         let open_shortcut = KeyboardShortcut::new(Modifiers::CTRL, Key::O);
         if ctx.input_mut(|input| input.consume_shortcut(&open_shortcut)) {
             proxy
@@ -299,26 +352,50 @@ impl App {
                 });
 
                 ui.menu_button("Emulation", |ui| {
-                    ui.menu_button("Change Disc", |ui| {
-                        if ui.button("Select file...").clicked() {
-                            // TODO initialize to current disc path dir?
-                            proxy
-                                .send_event(UserEvent::OpenFileDialog {
-                                    file_type: OpenFileType::DiscChange,
-                                    initial_dir: None,
-                                })
-                                .unwrap();
+                    ui.add_enabled_ui(emu_state.is_emulator_running(), |ui| {
+                        ui.menu_button("Change Disc", |ui| {
+                            self.render_change_disc_submenu(proxy, ui);
+                        });
+
+                        if ui.button("Remove Disc").clicked() {
+                            proxy.send_event(UserEvent::RemoveDisc).unwrap();
                             ui.close_menu();
                         }
                     });
-
-                    if ui.button("Remove Disc").clicked() {
-                        proxy.send_event(UserEvent::RemoveDisc).unwrap();
-                        ui.close_menu();
-                    }
                 });
             });
         });
+    }
+
+    fn render_change_disc_submenu(&mut self, proxy: &EventLoopProxy<UserEvent>, ui: &mut Ui) {
+        for change_disc_entry in &*self.state.change_disc_list {
+            if ui.button(&change_disc_entry.label).clicked() {
+                proxy
+                    .send_event(UserEvent::FileOpened(
+                        OpenFileType::DiscChange,
+                        Some(change_disc_entry.file.full_path.clone()),
+                    ))
+                    .unwrap();
+                ui.close_menu();
+            }
+        }
+
+        if ui.button("Select file...").clicked() {
+            let initial_dir = self
+                .state
+                .last_opened_disc_path
+                .as_ref()
+                .and_then(|disc_path| disc_path.parent())
+                .map(PathBuf::from);
+
+            proxy
+                .send_event(UserEvent::OpenFileDialog {
+                    file_type: OpenFileType::DiscChange,
+                    initial_dir,
+                })
+                .unwrap();
+            ui.close_menu();
+        }
     }
 
     fn render_video_window(&mut self, ctx: &Context) {
@@ -955,4 +1032,10 @@ fn do_file_search_inner(
             }
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ChangeDiscEntry {
+    label: String,
+    file: FileMetadata,
 }

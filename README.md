@@ -2,7 +2,7 @@
 
 Work-in-progress attempt at a PlayStation emulator.
 
-Some games are fully playable, but some do not boot or have major issues, and the emulator is missing some essential features like proper handling of multi-disc games and memory card management.
+Some games are fully playable, but some do not boot or have major issues, and the emulator is missing some essential features like memory card management.
 
 ## Status
 

@@ -65,7 +65,7 @@ fn main() -> anyhow::Result<()> {
             log::error!("Emulator error: {err}");
         }
 
-        gui_state.handle_event(&event, elwt, &event_loop_proxy);
+        gui_state.handle_event(&event, elwt, &emu_state, &event_loop_proxy);
 
         throttle_if_necessary(&event, elwt);
     })?;

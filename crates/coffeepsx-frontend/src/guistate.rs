@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::config::AppConfig;
+use crate::emustate::EmulatorState;
 use crate::{OpenFileType, UserEvent};
 use anyhow::anyhow;
 use egui::ViewportId;
@@ -146,12 +147,13 @@ impl GuiState {
         &mut self,
         event: &Event<UserEvent>,
         elwt: &ActiveEventLoop,
+        emu_state: &EmulatorState,
         proxy: &EventLoopProxy<UserEvent>,
     ) {
         if let Event::UserEvent(user_event) = event {
             let response = self.app.handle_event(user_event);
             if response.repaint {
-                self.repaint(proxy);
+                self.repaint(emu_state, proxy);
             }
         }
 
@@ -205,7 +207,7 @@ impl GuiState {
                     return;
                 }
 
-                self.repaint(proxy);
+                self.repaint(emu_state, proxy);
 
                 self.egui_event_repaint = false;
 
@@ -228,7 +230,7 @@ impl GuiState {
         }
     }
 
-    fn repaint(&mut self, proxy: &EventLoopProxy<UserEvent>) {
+    fn repaint(&mut self, emu_state: &EmulatorState, proxy: &EventLoopProxy<UserEvent>) {
         let viewport_id = self.egui_state.egui_input().viewport_id;
         let egui_ctx = self.egui_state.egui_ctx().clone();
         if let Some(viewport_info) =
@@ -240,7 +242,7 @@ impl GuiState {
         let egui_input = self.egui_state.take_egui_input(&self.window);
 
         let full_output = egui_ctx.run(egui_input, |ctx| {
-            self.app.render(ctx, proxy);
+            self.app.render(ctx, emu_state, proxy);
         });
 
         self.egui_state.handle_platform_output(&self.window, full_output.platform_output);
