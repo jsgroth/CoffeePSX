@@ -6,25 +6,27 @@ Some games are fully playable, but some do not boot or have major issues, and th
 
 ## Status
 
-Implemented:
+### Implemented
+
 * CPU
   * Currently implemented using a pure interpreter; performance could be a lot better
-* GTE
+* GTE (3D math coprocessor)
 * GPU, with both software and hardware rasterizers
   * Hardware rasterizer uses [wgpu](https://wgpu.rs/) with native extensions; should work on Vulkan, DirectX 12, and Metal (has not been tested on MacOS/Metal)
   * Hardware rasterizer supports higher resolutions up to 16x native as well as 24bpp high color rendering
   * Supports basic PGXP (Parallel/Precision Geometry Transform Pipeline), which reduces model wobble and texture warping in many 3D games
     * "CPU mode" is not yet implemented so the PGXP implementation is not compatible with some games (e.g. Spyro series, Metal Gear Solid, Resident Evil 3, Tony Hawk's Pro Skater series)
-* SPU
+* SPU (sound processor)
 * Most of the CD-ROM controller
 * Support for loading CUE/BIN disc images, CHD disc images, and PS1 EXE files
-* MDEC
+* MDEC (hardware image decompressor)
 * Hardware timers
 * NTSC/60Hz and PAL/50Hz support
 * Digital and DualShock controllers, P1 only (gamepad required for analog controls)
 * Memory card, port 1 only
 
-Not yet implemented:
+### Not Yet Implemented
+
 * Configurable inputs and P2 inputs
 * DualShock rumble support
 * More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
@@ -40,7 +42,7 @@ Not yet implemented:
 
 ## Software Rasterizer AVX2 Dependency
 
-The software rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (4th gen i3/i5/i7) and AMD CPUs since Bulldozer (FX-41xx/61xx/81xx). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
+The software rasterizer makes very heavy use of x86_64 [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) instructions. These have been supported in Intel CPUs since Haswell (Q2 2013) and AMD CPUs since Excavator (Q2 2015). There is a fallback rasterizer that does not use any x86_64 intrinsics but it is extremely slow and will probably not run 3D games at full speed.
 
 The hardware rasterizer has no such dependency.
 
