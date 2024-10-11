@@ -457,6 +457,7 @@ impl Spu {
         (16..24).map(|i| u32::from(f(&self.voices[i])) << (i - 16)).reduce(|a, b| a | b).unwrap()
     }
 
+    #[allow(clippy::match_same_arms)]
     pub fn write_register(&mut self, address: u32, value: u32, size: OpSize) {
         log::trace!("SPU register write: {address:08X} {value:08X} {size:?}");
 
@@ -504,6 +505,9 @@ impl Spu {
             0x1D9E => {
                 log::warn!("ENDX write (voices 16-23): {value:04X}");
             }
+            0x1DA0 => {
+                // Read-only register with unknown functionality
+            }
             0x1DA2 => self.reverb.write_buffer_start_address(value),
             0x1DA4 => self.sound_ram.write_irq_address(value),
             0x1DA6 => self.data_port.write_transfer_address(value),
@@ -525,13 +529,21 @@ impl Spu {
                 // Sound RAM data transfer control register; writing any value other than $0004
                 // would be highly unexpected
                 if value & 0xFFFF != 0x0004 {
-                    todo!("Unexpected sound RAM data transfer control write: {value:04X}");
+                    log::error!("Unexpected sound RAM data transfer control write: {value:04X}");
                 }
+            }
+            0x1DAE => {
+                // SPUSTAT - not writable
             }
             0x1DB0 => self.volume.write_cd_l(value),
             0x1DB2 => self.volume.write_cd_r(value),
             0x1DB4 => log::debug!("Unimplemented external audio volume L write: {value:04X}"),
             0x1DB6 => log::debug!("Unimplemented external audio volume R write: {value:04X}"),
+            0x1DB8..=0x1DBF => {
+                log::warn!(
+                    "Unimplemented write to internal volume register: {address:08X} {value:04X}"
+                );
+            }
             0x1DC0..=0x1DFF => self.reverb.write_register(address, value),
             _ => todo!("SPU write {address:08X} {value:08X}"),
         }

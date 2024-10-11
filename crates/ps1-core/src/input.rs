@@ -45,6 +45,8 @@ pub struct AnalogJoypadState {
     pub left_y: u8,
     pub right_x: u8,
     pub right_y: u8,
+    pub l3: bool,
+    pub r3: bool,
 }
 
 impl Default for AnalogJoypadState {
@@ -56,6 +58,8 @@ impl Default for AnalogJoypadState {
             left_y: 0x80,
             right_x: 0x80,
             right_y: 0x80,
+            l3: false,
+            r3: false,
         }
     }
 }

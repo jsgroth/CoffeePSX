@@ -1,3 +1,6 @@
+mod audio;
+mod renderer;
+
 use crate::Never;
 use crate::config::{AppConfig, GraphicsConfig};
 use crate::emuthread::audio::{AudioQueue, QueueAudioCallback, QueueAudioOutput};
@@ -24,9 +27,6 @@ use std::time::Duration;
 use std::{fs, io, thread};
 use winit::dpi::PhysicalSize;
 
-mod audio;
-mod renderer;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ps1Button {
     Up,
@@ -44,6 +44,8 @@ pub enum Ps1Button {
     Start,
     Select,
     Analog,
+    L3,
+    R3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,6 +435,8 @@ macro_rules! impl_update_digital_inputs {
                 Ps1Button::$button => $inputs.digital.$setter($pressed),
             )*
             Ps1Button::Analog => $inputs.analog.analog_button = $pressed,
+            Ps1Button::L3 => $inputs.analog.l3 = $pressed,
+            Ps1Button::R3 => $inputs.analog.r3 = $pressed,
         }
     }
 }

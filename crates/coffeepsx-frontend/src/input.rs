@@ -49,7 +49,8 @@ impl InputMapper {
                 (Ps1Button::Start, set.start),
                 (Ps1Button::Select, set.select),
                 (Ps1Button::Analog, set.analog),
-                // TODO L3/R3
+                (Ps1Button::L3, set.l3),
+                (Ps1Button::R3, set.r3),
             ] {
                 let Some(field) = field else { continue };
                 digital_inputs.entry(field).or_default().push(DigitalValue {

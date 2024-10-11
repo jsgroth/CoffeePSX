@@ -248,10 +248,16 @@ impl DualShock {
                 })
             }
             SioState::SendingDigitalInputsLow { entering_config } => {
-                rx.push(!u16::from(self.digital) as u8);
-
                 let send_analog =
                     state.mode == DualShockMode::Config || state.analog_mode == AnalogMode::Analog;
+
+                let mut digital_low = u16::from(self.digital) as u8;
+                if send_analog {
+                    // L3 and R3 are only sent in analog mode (or if entering config mode)
+                    digital_low |=
+                        (u8::from(self.analog.l3) << 1) | (u8::from(self.analog.r3) << 2);
+                }
+                rx.push(!digital_low);
 
                 if entering_config && tx == 0x01 {
                     state.mode = DualShockMode::Config;
