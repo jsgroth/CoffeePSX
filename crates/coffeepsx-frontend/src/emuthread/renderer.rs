@@ -5,6 +5,7 @@ use ps1_core::api::Renderer;
 use std::iter;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 use wgpu::PipelineCompilationOptions;
 use winit::dpi::PhysicalSize;
 
@@ -57,6 +58,15 @@ impl Renderer for SwapChainRenderer {
                 "Skipping frame because {} renders are already in progress",
                 emuthread::SWAP_CHAIN_LEN
             );
+
+            // Wait until at least one of the in-progress frames is complete
+            while self.in_progress_renders.load(Ordering::Relaxed)
+                >= emuthread::SWAP_CHAIN_LEN as u32
+            {
+                self.device.poll(wgpu::Maintain::Poll);
+                emuthread::sleep(Duration::from_micros(250));
+            }
+
             self.queue.submit(command_buffers);
             return Ok(());
         }
