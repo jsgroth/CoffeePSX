@@ -297,6 +297,26 @@ impl App {
                         ui.close_menu();
                     }
                 });
+
+                ui.menu_button("Emulation", |ui| {
+                    ui.menu_button("Change Disc", |ui| {
+                        if ui.button("Select file...").clicked() {
+                            // TODO initialize to current disc path dir?
+                            proxy
+                                .send_event(UserEvent::OpenFileDialog {
+                                    file_type: OpenFileType::DiscChange,
+                                    initial_dir: None,
+                                })
+                                .unwrap();
+                            ui.close_menu();
+                        }
+                    });
+
+                    if ui.button("Remove Disc").clicked() {
+                        proxy.send_event(UserEvent::RemoveDisc).unwrap();
+                        ui.close_menu();
+                    }
+                });
             });
         });
     }

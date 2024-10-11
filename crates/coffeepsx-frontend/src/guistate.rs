@@ -315,6 +315,7 @@ fn async_open_file_dialog(
 ) {
     let (name, extensions): (_, &[_]) = match file_type {
         OpenFileType::Open => ("PS1", &["cue", "chd", "exe"]),
+        OpenFileType::DiscChange => ("PS1", &["cue", "chd"]),
         OpenFileType::BiosPath => ("BIOS", &["bin", "BIN"]),
         OpenFileType::SearchDir => {
             let proxy = proxy.clone();
@@ -328,7 +329,8 @@ fn async_open_file_dialog(
         }
     };
 
-    let mut file_dialog = FileDialog::new().add_filter(name, extensions);
+    let mut file_dialog =
+        FileDialog::new().add_filter(name, extensions).add_filter("All Files", &["*"]);
     if let Some(initial_dir) = initial_dir {
         file_dialog = file_dialog.set_directory(initial_dir);
     }

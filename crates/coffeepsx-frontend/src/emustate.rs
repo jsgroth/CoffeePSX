@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::Arc;
-use wgpu::PresentMode;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, Event, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
@@ -38,12 +37,7 @@ impl EmulatorWindow {
         config: &AppConfig,
     ) -> anyhow::Result<Self> {
         let window_title = match file_path {
-            Some(file_path) => file_path
-                .with_extension("")
-                .file_name()
-                .and_then(OsStr::to_str)
-                .unwrap_or("PS1")
-                .to_string(),
+            Some(file_path) => determine_window_title(file_path),
             None => "(BIOS)".into(),
         };
         let window_size = LogicalSize::new(config.video.window_width, config.video.window_height);
@@ -160,14 +154,11 @@ impl EmulatorWindow {
     }
 
     fn reconfigure_surface(&mut self) {
-        const VSYNC_DISABLED: PresentMode = PresentMode::Immediate;
-
-        self.surface_config.present_mode =
-            if self.fast_forwarding && self.supported_present_modes.contains(&VSYNC_DISABLED) {
-                VSYNC_DISABLED
-            } else {
-                self.vsync_mode.to_present_mode()
-            };
+        self.surface_config.present_mode = if self.fast_forwarding {
+            wgpu::PresentMode::AutoNoVsync
+        } else {
+            self.vsync_mode.to_present_mode()
+        };
         self.surface.configure(&self.device, &self.surface_config);
     }
 
@@ -178,6 +169,13 @@ impl EmulatorWindow {
         };
         self.window.set_fullscreen(new_fullscreen);
     }
+}
+
+fn determine_window_title(path: &Path) -> String {
+    path.with_extension("")
+        .file_name()
+        .and_then(OsStr::to_str)
+        .map_or_else(|| "PS1".into(), String::from)
 }
 
 struct RunningState {
@@ -290,6 +288,17 @@ impl EmulatorState {
                     input,
                     value,
                 });
+            }
+            Event::UserEvent(UserEvent::FileOpened(OpenFileType::DiscChange, Some(disc_path))) => {
+                log::info!("Changing disc to '{}'", disc_path.display());
+                emu_thread.send_command(EmulatorThreadCommand::ChangeDisc {
+                    disc_path: disc_path.clone(),
+                });
+                window.window.set_title(&determine_window_title(disc_path));
+            }
+            Event::UserEvent(UserEvent::RemoveDisc) => {
+                log::info!("Removing disc");
+                emu_thread.send_command(EmulatorThreadCommand::RemoveDisc);
             }
             Event::WindowEvent { event: win_event, window_id }
                 if *window_id == window.window.id() =>

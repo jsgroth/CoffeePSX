@@ -506,6 +506,10 @@ impl Ps1Emulator {
         Ok(tick_effect)
     }
 
+    pub fn change_disc(&mut self, disc: Option<CdRom>) {
+        self.cd_controller.change_disc(disc);
+    }
+
     pub fn update_config(&mut self, config: Ps1EmulatorConfig) {
         self.cpu.update_pgxp_config(config.pgxp);
         self.dma_controller.update_pgxp_config(config.pgxp);

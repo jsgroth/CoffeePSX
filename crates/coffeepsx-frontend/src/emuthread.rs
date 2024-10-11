@@ -67,6 +67,8 @@ pub enum EmulatorThreadCommand {
     Stop,
     DigitalInput { player: Player, button: Ps1Button, pressed: bool },
     AnalogInput { player: Player, input: Ps1AnalogInput, value: i16 },
+    ChangeDisc { disc_path: PathBuf },
+    RemoveDisc,
     UpdateConfig(Box<AppConfig>),
     SaveState,
     LoadState,
@@ -365,6 +367,12 @@ fn spawn_emu_thread(mut runner: EmulatorRunner) {
                     EmulatorThreadCommand::AnalogInput { player, input, value } => {
                         update_analog_inputs(&mut runner.inputs, player, input, value);
                     }
+                    EmulatorThreadCommand::ChangeDisc { disc_path } => {
+                        try_change_disc(&mut runner.emulator, disc_path);
+                    }
+                    EmulatorThreadCommand::RemoveDisc => {
+                        runner.emulator.change_disc(None);
+                    }
                     EmulatorThreadCommand::UpdateConfig(config) => {
                         runner.emulator.update_config(config.to_emulator_config());
                         runner.audio_sync_threshold = config.audio.sync_threshold;
@@ -487,6 +495,32 @@ fn update_analog_inputs(inputs: &mut Ps1Inputs, player: Player, input: Ps1Analog
     }
 }
 
+fn try_change_disc(emulator: &mut Ps1Emulator, disc_path: PathBuf) {
+    let Some(extension) = disc_path.extension().and_then(OsStr::to_str) else {
+        log::error!("Unable to determine file extension of disc path '{}'", disc_path.display());
+        return;
+    };
+
+    let format = match extension.to_ascii_lowercase().as_str() {
+        "chd" => CdRomFileFormat::Chd,
+        "cue" => CdRomFileFormat::CueBin,
+        _ => {
+            log::error!("Unsupported disc file extension '{extension}'");
+            return;
+        }
+    };
+
+    let disc = match CdRom::open(&disc_path, format) {
+        Ok(disc) => disc,
+        Err(err) => {
+            log::error!("Error opening disc at '{}': {err}", disc_path.display());
+            return;
+        }
+    };
+
+    emulator.change_disc(Some(disc));
+}
+
 macro_rules! bincode_config {
     () => {
         bincode::config::standard()
@@ -537,18 +571,7 @@ struct FsSaveWriter {
 
 impl FsSaveWriter {
     fn from_path(path: &Path) -> anyhow::Result<Self> {
-        static DISC_REV_REGEX: OnceLock<Regex> = OnceLock::new();
-
-        let path_no_ext = path.with_extension("");
-        let file_name_no_ext =
-            path_no_ext.file_name().and_then(OsStr::to_str).ok_or_else(|| {
-                anyhow!("Unable to determine file extension for path: {}", path.display())
-            })?;
-
-        let disc_rev_regex = DISC_REV_REGEX
-            .get_or_init(|| Regex::new(r"( \(Disc [1-9]\))?( \(Rev [1-9]\))?$").unwrap());
-
-        let file_name_no_disc = disc_rev_regex.replace(file_name_no_ext, "");
+        let file_name_no_disc = file_name_without_disc_or_revision(path)?;
         let card_1_file_name = format!("{file_name_no_disc}_1.mcd");
         let card_1_path = PathBuf::from(MEMORY_CARDS_DIRECTORY).join(card_1_file_name);
 
@@ -556,6 +579,20 @@ impl FsSaveWriter {
 
         Ok(Self { card_1_path })
     }
+}
+
+fn file_name_without_disc_or_revision(path: &Path) -> anyhow::Result<String> {
+    static DISC_REV_REGEX: OnceLock<Regex> = OnceLock::new();
+
+    let path_no_ext = path.with_extension("");
+    let file_name_no_ext = path_no_ext.file_name().and_then(OsStr::to_str).ok_or_else(|| {
+        anyhow!("Unable to determine file extension for path: {}", path.display())
+    })?;
+
+    let disc_rev_regex =
+        DISC_REV_REGEX.get_or_init(|| Regex::new(r"( \(Disc [1-9]\))?( \(Rev [1-9]\))?$").unwrap());
+
+    Ok(disc_rev_regex.replace(file_name_no_ext, "").into())
 }
 
 fn ensure_parent_dir_exists(path: &Path) -> anyhow::Result<()> {

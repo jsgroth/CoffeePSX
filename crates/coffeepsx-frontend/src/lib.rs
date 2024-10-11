@@ -13,6 +13,7 @@ pub enum OpenFileType {
     Open,
     BiosPath,
     SearchDir,
+    DiscChange,
 }
 
 #[derive(Debug)]
@@ -24,6 +25,7 @@ pub enum UserEvent {
     Close,
     ControllerButton { player: Player, button: Ps1Button, pressed: bool },
     ControllerAnalog { player: Player, input: Ps1AnalogInput, value: i16 },
+    RemoveDisc,
     SdlButtonPress { which: u32, button: sdl2::controller::Button },
     SdlAxisMotion { which: u32, axis: sdl2::controller::Axis, value: i16 },
 }

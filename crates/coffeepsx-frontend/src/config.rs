@@ -19,7 +19,7 @@ pub enum VSyncMode {
 
 impl VSyncMode {
     #[must_use]
-    pub fn to_present_mode(self) -> wgpu::PresentMode {
+    pub const fn to_present_mode(self) -> wgpu::PresentMode {
         match self {
             Self::Enabled => wgpu::PresentMode::Fifo,
             Self::Disabled => wgpu::PresentMode::Immediate,

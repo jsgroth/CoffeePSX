@@ -12,6 +12,7 @@ pub const INVALID_PARAMETER: u8 = 0x10;
 pub const WRONG_NUM_PARAMETERS: u8 = 0x20;
 pub const INVALID_COMMAND: u8 = 0x40;
 pub const CANNOT_RESPOND_YET: u8 = 0x80;
+pub const SHELL_OPENED: u8 = 0x08;
 
 // Roughly 18,944 CPU cycles
 pub const GET_ID_SECOND_CYCLES: u32 = 24;
@@ -24,8 +25,6 @@ pub struct ErrorFlags(u8);
 impl ErrorFlags {
     pub const NONE: Self = Self(0);
     pub const ERROR: Self = Self(1);
-    // pub const SEEK_ERROR: Self = Self(1 << 2);
-    // pub const ID_ERROR: Self = Self(1 << 3);
 }
 
 impl BitOr for ErrorFlags {
@@ -49,9 +48,11 @@ impl CdController {
             DriveState::PreparingToPlay { .. } | DriveState::Playing { .. }
         );
 
-        // TODO Bit 4 (shell open)
-        errors.0
+        let error = errors.0 | u8::from(self.shell_opened);
+
+        error
             | (u8::from(motor_on) << 1)
+            | (u8::from(self.shell_opened) << 4)
             | (u8::from(reading) << 5)
             | (u8::from(seeking) << 6)
             | (u8::from(playing) << 7)
@@ -61,6 +62,11 @@ impl CdController {
     // Simply returns current status code
     pub(super) fn execute_get_stat(&mut self) -> CommandState {
         self.int3(&[stat!(self)]);
+
+        // Executing GetStat clears the shell opened bit
+        // TODO does there need to be a delay before closing the shell on disc change?
+        self.shell_opened = false;
+
         CommandState::Idle
     }
 
@@ -186,7 +192,8 @@ impl CdController {
     // Returns position data from Subchannel Q
     pub(super) fn execute_get_loc_p(&mut self) -> CommandState {
         let Some(disc) = &self.disc else {
-            todo!("GetLocP executed with no disc in the drive");
+            self.int5(&[stat!(self), CANNOT_RESPOND_YET]);
+            return CommandState::Idle;
         };
 
         // TODO better handle if this is executed while seeking

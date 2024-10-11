@@ -2,7 +2,7 @@
 
 Work-in-progress attempt at a PlayStation emulator.
 
-Some games are fully playable, but some do not boot or have major issues, and the emulator is missing some essential features like input configuration, proper handling of multi-disc games, and memory card management.
+Some games are fully playable, but some do not boot or have major issues, and the emulator is missing some essential features like proper handling of multi-disc games and memory card management.
 
 ## Status
 
@@ -33,7 +33,7 @@ Some games are fully playable, but some do not boot or have major issues, and th
 * Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering)
 * More efficient CPU emulation (cached interpreter, recompiler)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work, but timings are quite inaccurate right now
-* Some CD-ROM functionality including disc change, infrequently used commands, and 8-bit CD-XA audio
+* Some CD-ROM functionality including infrequently used commands and 8-bit CD-XA audio
   * There are possibly no games that use 8-bit CD-XA audio samples?
 * Various emulator enhancements like increased disc drive speed, CPU overclocking, rewind, save state slots
 * Accurate timing for memory writes (i.e. emulating the CPU write queue)

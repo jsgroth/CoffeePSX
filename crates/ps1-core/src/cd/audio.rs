@@ -3,7 +3,7 @@
 use crate::cd;
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{CdController, CommandState, DriveState, SeekNextState, seek};
+use crate::cd::{CdController, CommandState, DriveState, SeekNextState, seek, status};
 use bincode::{Decode, Encode};
 use cdrom::CdRomResult;
 use cdrom::cdtime::CdTime;
@@ -72,6 +72,11 @@ impl CdController {
     // If track parameter is zero or not present, begins playback from the last SetLoc location, or
     // the current time if there is no unprocessed SetLoc location.
     pub(super) fn execute_play(&mut self) -> CommandState {
+        if self.disc.is_none() {
+            self.int5(&[stat!(self), status::CANNOT_RESPOND_YET]);
+            return CommandState::Idle;
+        }
+
         self.int3(&[stat!(self)]);
 
         let Some(disc) = &self.disc else {
@@ -110,8 +115,8 @@ impl CdController {
         first_sector: bool,
     ) -> CdRomResult<DriveState> {
         let Some(disc) = &self.disc else {
-            // TODO generate error INT
-            panic!("Reading audio sector with no disc in the drive");
+            self.int5(&[stat!(self), status::CANNOT_RESPOND_YET]);
+            return Ok(DriveState::Stopped);
         };
 
         let num_tracks = disc.cue().last_track().number;

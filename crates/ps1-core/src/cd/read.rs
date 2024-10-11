@@ -2,7 +2,7 @@
 
 #[allow(clippy::wildcard_imports)]
 use crate::cd::macros::*;
-use crate::cd::{CdController, CommandState, DriveState, SeekNextState, seek};
+use crate::cd::{CdController, CommandState, DriveState, SeekNextState, seek, status};
 use crate::num::U8Ext;
 use bincode::{Decode, Encode};
 use cdrom::CdRomResult;
@@ -24,6 +24,11 @@ impl CdController {
     // commands it to pause or stop.
     // ReadN reads with retry while ReadS reads without retry. These are emulated the same way.
     pub(super) fn execute_read(&mut self) -> CommandState {
+        if self.disc.is_none() {
+            self.int5(&[stat!(self), status::CANNOT_RESPOND_YET]);
+            return CommandState::Idle;
+        }
+
         self.int3(&[stat!(self)]);
 
         let seek_location = self.seek_location.take().unwrap_or(self.drive_state.current_time());
@@ -79,6 +84,11 @@ impl CdController {
     }
 
     pub(super) fn read_data_sector(&mut self, time: CdTime) -> CdRomResult<DriveState> {
+        if self.disc.is_none() {
+            self.int5(&[stat!(self), status::CANNOT_RESPOND_YET]);
+            return Ok(DriveState::Stopped);
+        }
+
         self.read_sector_atime(time)?;
 
         log::debug!(

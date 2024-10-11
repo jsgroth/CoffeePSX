@@ -218,6 +218,7 @@ pub struct CdController {
     seek_location: Option<CdTime>,
     scex_read: bool,
     audio_muted: bool,
+    shell_opened: bool,
     current_audio_sample: (i16, i16),
     cd_to_spu_volume: [[u8; 2]; 2],
     next_cd_to_spu_volume: [[u8; 2]; 2],
@@ -243,6 +244,7 @@ impl CdController {
             seek_location: None,
             scex_read,
             audio_muted: false,
+            shell_opened: false,
             current_audio_sample: (0, 0),
             cd_to_spu_volume: [[0; 2]; 2],
             next_cd_to_spu_volume: [[0; 2]; 2],
@@ -265,6 +267,7 @@ impl CdController {
             seek_location: state.seek_location,
             scex_read: state.scex_read,
             audio_muted: state.audio_muted,
+            shell_opened: state.shell_opened,
             current_audio_sample: state.current_audio_sample,
             cd_to_spu_volume: state.cd_to_spu_volume,
             next_cd_to_spu_volume: state.next_cd_to_spu_volume,
@@ -678,10 +681,8 @@ impl CdController {
     }
 
     fn read_sector_atime(&mut self, time: CdTime) -> CdRomResult<()> {
-        let Some(disc) = &mut self.disc else {
-            // TODO separate state for no disc?
-            todo!("Read sector with no disc in the drive");
-        };
+        let disc =
+            self.disc.as_mut().expect("read_sector_atime() called with no disc in the drive");
 
         let Some(track) = disc.cue().find_track_by_time(time) else {
             // TODO INT4+pause at disc end
@@ -708,6 +709,14 @@ impl CdController {
 
     pub fn take_disc(&mut self) -> Option<CdRom> {
         self.disc.take()
+    }
+
+    pub fn change_disc(&mut self, disc: Option<CdRom>) {
+        self.disc = disc;
+        self.shell_opened = true;
+        self.drive_state = DriveState::Stopped;
+
+        self.int5(&[stat!(self), status::SHELL_OPENED]);
     }
 }
 
