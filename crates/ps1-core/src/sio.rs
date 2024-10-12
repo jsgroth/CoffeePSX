@@ -130,9 +130,8 @@ pub trait SerialDevices {
 pub struct Sio0Devices {
     p1_joypad_state: ControllerState,
     p2_joypad_state: ControllerState,
-    last_p1_analog_button: bool,
-    last_p1_controller_type: ControllerType,
     p1_dualshock_state: DualShockControllerState,
+    p2_dualshock_state: DualShockControllerState,
     memory_card_1: MemoryCard,
 }
 
@@ -140,10 +139,9 @@ impl Sio0Devices {
     fn new(memory_card_1: Option<Vec<u8>>) -> Self {
         Self {
             p1_joypad_state: ControllerState::default_p1(),
-            p1_dualshock_state: DualShockControllerState::default(),
-            last_p1_analog_button: false,
-            last_p1_controller_type: ControllerState::default_p1().controller_type,
             p2_joypad_state: ControllerState::default_p2(),
+            p1_dualshock_state: DualShockControllerState::default(),
+            p2_dualshock_state: DualShockControllerState::default(),
             memory_card_1: MemoryCard::new(memory_card_1),
         }
     }
@@ -164,8 +162,12 @@ impl SerialDevices for Sio0Devices {
 
     fn connect(&self, tx: u8, port: Port) -> Option<Self::Device> {
         match (tx, port) {
-            (CONTROLLER_ADDRESS, Port::One) => initial_controller_state(self.p1_joypad_state),
-            (CONTROLLER_ADDRESS, Port::Two) => initial_controller_state(self.p2_joypad_state),
+            (CONTROLLER_ADDRESS, Port::One) => {
+                initial_controller_state(Port::One, self.p1_joypad_state)
+            }
+            (CONTROLLER_ADDRESS, Port::Two) => {
+                initial_controller_state(Port::Two, self.p2_joypad_state)
+            }
             (MEMORY_CARD_ADDRESS, Port::One) => {
                 Some(Sio0Device::MemoryCard(ConnectedMemoryCard::initial()))
             }
@@ -184,7 +186,11 @@ impl SerialDevices for Sio0Devices {
                 controller.process(tx, rx).map(Sio0Device::DigitalController)
             }
             Sio0Device::DualShock(dual_shock) => {
-                dual_shock.process(tx, rx, &mut self.p1_dualshock_state).map(Sio0Device::DualShock)
+                let dualshock_state = match dual_shock.port {
+                    Port::One => &mut self.p1_dualshock_state,
+                    Port::Two => &mut self.p2_dualshock_state,
+                };
+                dual_shock.process(tx, rx, dualshock_state).map(Sio0Device::DualShock)
             }
             Sio0Device::MemoryCard(connected_memory_card) => connected_memory_card
                 .process(tx, rx, &mut self.memory_card_1)
@@ -193,14 +199,14 @@ impl SerialDevices for Sio0Devices {
     }
 }
 
-fn initial_controller_state(state: ControllerState) -> Option<Sio0Device> {
+fn initial_controller_state(port: Port, state: ControllerState) -> Option<Sio0Device> {
     match state.controller_type {
         ControllerType::None => None,
         ControllerType::Digital => {
             Some(Sio0Device::DigitalController(DigitalController::initial(state.digital)))
         }
         ControllerType::DualShock => {
-            Some(Sio0Device::DualShock(DualShock::initial(state.digital, state.analog)))
+            Some(Sio0Device::DualShock(DualShock::initial(port, state.digital, state.analog)))
         }
     }
 }
@@ -262,25 +268,40 @@ impl SerialPort0 {
     }
 
     pub fn set_inputs(&mut self, inputs: Ps1Inputs) {
+        update_dualshock_state(
+            self.devices.p1_joypad_state,
+            inputs.p1,
+            &mut self.devices.p1_dualshock_state,
+        );
+        update_dualshock_state(
+            self.devices.p2_joypad_state,
+            inputs.p2,
+            &mut self.devices.p2_dualshock_state,
+        );
+
         self.devices.p1_joypad_state = inputs.p1;
         self.devices.p2_joypad_state = inputs.p2;
-
-        if self.devices.last_p1_controller_type != inputs.p1.controller_type {
-            self.devices.p1_dualshock_state = DualShockControllerState::default();
-        }
-        self.devices.last_p1_controller_type = inputs.p1.controller_type;
-
-        if !self.devices.last_p1_analog_button
-            && inputs.p1.analog.analog_button
-            && inputs.p1.controller_type == ControllerType::DualShock
-        {
-            self.devices.p1_dualshock_state.toggle_analog_mode();
-        }
-        self.devices.last_p1_analog_button = inputs.p1.analog.analog_button;
     }
 
     pub fn memory_card_1(&mut self) -> &mut MemoryCard {
         &mut self.devices.memory_card_1
+    }
+}
+
+fn update_dualshock_state(
+    previous_inputs: ControllerState,
+    inputs: ControllerState,
+    dualshock_state: &mut DualShockControllerState,
+) {
+    if inputs.controller_type != previous_inputs.controller_type {
+        *dualshock_state = DualShockControllerState::default();
+    }
+
+    if !previous_inputs.analog.analog_button
+        && inputs.analog.analog_button
+        && inputs.controller_type == ControllerType::DualShock
+    {
+        dualshock_state.toggle_analog_mode();
     }
 }
 

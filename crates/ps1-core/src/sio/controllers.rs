@@ -1,6 +1,7 @@
 //! SIO0 controller code
 
 use crate::input::{AnalogJoypadState, AnalogMode, DigitalJoypadState};
+use crate::sio::Port;
 use crate::sio::rxfifo::RxFifo;
 use bincode::{Decode, Encode};
 
@@ -145,14 +146,15 @@ pub enum DualShockSioState {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct DualShock {
+    pub port: Port,
     state: DualShockSioState,
     digital: DigitalJoypadState,
     analog: AnalogJoypadState,
 }
 
 impl DualShock {
-    pub fn initial(digital: DigitalJoypadState, analog: AnalogJoypadState) -> Self {
-        Self { state: DualShockSioState::SendingIdLow, digital, analog }
+    pub fn initial(port: Port, digital: DigitalJoypadState, analog: AnalogJoypadState) -> Self {
+        Self { port, state: DualShockSioState::SendingIdLow, digital, analog }
     }
 
     pub fn process(
