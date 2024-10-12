@@ -11,7 +11,6 @@ use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::mdec::MacroblockDecoder;
 use crate::memory::{Memory, MemoryControl};
 use crate::scheduler::{Scheduler, SchedulerEvent, SchedulerEventType};
-use crate::sio::memcard::MemoryCard;
 use crate::sio::{SerialPort0, SerialPort1};
 use crate::spu::Spu;
 use crate::timers::Timers;
@@ -26,6 +25,7 @@ use thiserror::Error;
 
 pub use crate::gpu::DisplayConfig;
 pub use crate::pgxp::PgxpConfig;
+use crate::sio::memcard::MemoryCard;
 
 pub const DEFAULT_AUDIO_BUFFER_SIZE: u32 = 64;
 
@@ -74,13 +74,20 @@ pub trait AudioOutput {
     fn queue_samples(&mut self, samples: &[(i16, i16)]) -> Result<(), Self::Err>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryCardSlot {
+    One = 1,
+    Two = 2,
+}
+
 pub trait SaveWriter {
     type Err;
 
     /// # Errors
     ///
     /// Should propagate any error encountered while persisting the memory card.
-    fn save_memory_card_1(&mut self, card_data: &[u8]) -> Result<(), Self::Err>;
+    fn save_memory_card(&mut self, slot: MemoryCardSlot, card_data: &[u8])
+    -> Result<(), Self::Err>;
 }
 
 #[derive(Debug, Error)]
@@ -124,12 +131,31 @@ impl Default for Ps1EmulatorConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemoryCardsEnabled {
+    pub slot_1: bool,
+    pub slot_2: bool,
+}
+
+impl Default for MemoryCardsEnabled {
+    fn default() -> Self {
+        Self { slot_1: true, slot_2: false }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LoadedMemoryCards {
+    pub slot_1: Option<Vec<u8>>,
+    pub slot_2: Option<Vec<u8>>,
+}
+
 pub struct UnserializedFields {
     disc: Option<CdRom>,
-    memory_card_1: MemoryCard,
+    memory_cards: LoadedMemoryCards,
     wgpu_device: Arc<wgpu::Device>,
     wgpu_queue: Arc<wgpu::Queue>,
     config: Ps1EmulatorConfig,
+    memory_cards_enabled: MemoryCardsEnabled,
 }
 
 #[derive(SaveState)]
@@ -162,8 +188,9 @@ pub struct Ps1EmulatorBuilder {
     wgpu_device: Arc<wgpu::Device>,
     wgpu_queue: Arc<wgpu::Queue>,
     config: Ps1EmulatorConfig,
+    memory_cards_enabled: MemoryCardsEnabled,
+    loaded_memory_cards: Option<LoadedMemoryCards>,
     disc: Option<CdRom>,
-    memory_card_1: Option<Vec<u8>>,
 }
 
 impl Ps1EmulatorBuilder {
@@ -178,8 +205,9 @@ impl Ps1EmulatorBuilder {
             wgpu_device,
             wgpu_queue,
             config: Ps1EmulatorConfig::default(),
+            memory_cards_enabled: MemoryCardsEnabled::default(),
+            loaded_memory_cards: None,
             disc: None,
-            memory_card_1: None,
         }
     }
 
@@ -190,8 +218,14 @@ impl Ps1EmulatorBuilder {
     }
 
     #[must_use]
-    pub fn with_memory_card_1(mut self, memory_card_1: Vec<u8>) -> Self {
-        self.memory_card_1 = Some(memory_card_1);
+    pub fn with_memory_cards_enabled(mut self, memory_cards_enabled: MemoryCardsEnabled) -> Self {
+        self.memory_cards_enabled = memory_cards_enabled;
+        self
+    }
+
+    #[must_use]
+    pub fn with_memory_cards(mut self, loaded_memory_cards: LoadedMemoryCards) -> Self {
+        self.loaded_memory_cards = Some(loaded_memory_cards);
         self
     }
 
@@ -210,8 +244,9 @@ impl Ps1EmulatorBuilder {
             self.wgpu_device,
             self.wgpu_queue,
             self.config,
+            self.memory_cards_enabled,
+            self.loaded_memory_cards.unwrap_or(LoadedMemoryCards { slot_1: None, slot_2: None }),
             self.disc,
-            self.memory_card_1,
         )
     }
 }
@@ -268,8 +303,9 @@ impl Ps1Emulator {
         wgpu_device: Arc<wgpu::Device>,
         wgpu_queue: Arc<wgpu::Queue>,
         config: Ps1EmulatorConfig,
+        memory_cards_enabled: MemoryCardsEnabled,
+        loaded_memory_cards: LoadedMemoryCards,
         disc: Option<CdRom>,
-        memory_card_1: Option<Vec<u8>>,
     ) -> Ps1Result<Self> {
         let memory = Memory::new(bios_rom)?;
 
@@ -284,7 +320,7 @@ impl Ps1Emulator {
             memory_control: MemoryControl::new(),
             dma_controller: DmaController::new(config.pgxp),
             interrupt_registers: InterruptRegisters::new(),
-            sio0: SerialPort0::new_sio0(memory_card_1),
+            sio0: SerialPort0::new_sio0(memory_cards_enabled, loaded_memory_cards),
             sio1: SerialPort1::new_sio1(),
             timers: Timers::new(),
             scheduler: Scheduler::new(),
@@ -307,8 +343,9 @@ impl Ps1Emulator {
             unserialized.wgpu_device,
             unserialized.wgpu_queue,
             self.config,
+            unserialized.memory_cards_enabled,
+            unserialized.memory_cards,
             unserialized.disc,
-            Some(unserialized.memory_card_1.data().to_vec()),
         )
         .expect("Emulator creation during reset should never fail");
     }
@@ -438,10 +475,11 @@ impl Ps1Emulator {
 
         self.drain_audio_samples(audio_output).map_err(TickError::Audio)?;
 
-        let memory_card_1 = self.sio0.memory_card_1();
-        if memory_card_1.get_and_clear_dirty() {
-            save_writer.save_memory_card_1(memory_card_1.data()).map_err(TickError::SaveWrite)?;
-        }
+        let (memory_card_1, memory_card_2) = self.sio0.memory_cards();
+        save_memory_card(MemoryCardSlot::One, memory_card_1, save_writer)
+            .map_err(TickError::SaveWrite)?;
+        save_memory_card(MemoryCardSlot::Two, memory_card_2, save_writer)
+            .map_err(TickError::SaveWrite)?;
 
         Ok(())
     }
@@ -533,25 +571,30 @@ impl Ps1Emulator {
         self.config = config;
     }
 
+    pub fn update_memory_cards(&mut self, enabled: MemoryCardsEnabled, loaded: LoadedMemoryCards) {
+        self.sio0.update_memory_cards(enabled, loaded);
+    }
+
     #[must_use]
     pub fn take_unserialized_fields(&mut self) -> UnserializedFields {
         let (wgpu_device, wgpu_queue) = self.gpu.get_wgpu_resources();
+        let (memory_cards_enabled, memory_cards) = self.sio0.clone_unserialized_fields();
 
         UnserializedFields {
             disc: self.cd_controller.take_disc(),
-            memory_card_1: self.sio0.memory_card_1().clone(),
+            memory_cards,
             wgpu_device,
             wgpu_queue,
             config: self.config,
+            memory_cards_enabled,
         }
     }
 
     pub fn from_state(mut state: Ps1EmulatorState, unserialized: UnserializedFields) -> Self {
         // Don't load memory cards from save states
-        *state.sio0.memory_card_1() = unserialized.memory_card_1;
-
-        // Important to make the game re-read the memory card header after loading state
-        state.sio0.memory_card_1().clear_written_since_load();
+        state
+            .sio0
+            .update_memory_cards(unserialized.memory_cards_enabled, unserialized.memory_cards);
 
         let mut emulator = Self {
             cpu: state.cpu,
@@ -582,6 +625,21 @@ impl Ps1Emulator {
 
         emulator
     }
+}
+
+fn save_memory_card<S: SaveWriter>(
+    slot: MemoryCardSlot,
+    card: Option<&mut MemoryCard>,
+    save_writer: &mut S,
+) -> Result<(), S::Err> {
+    let Some(card) = card else { return Ok(()) };
+
+    if !card.get_and_clear_dirty() {
+        // Data has not changed since last save write
+        return Ok(());
+    }
+
+    save_writer.save_memory_card(slot, card.data())
 }
 
 fn check_for_putchar_call(cpu: &R3000, tty_buffer: &mut String) {
@@ -630,7 +688,11 @@ impl AudioOutput for NullOutput {
 impl SaveWriter for NullOutput {
     type Err = String;
 
-    fn save_memory_card_1(&mut self, _card_data: &[u8]) -> Result<(), Self::Err> {
+    fn save_memory_card(
+        &mut self,
+        _slot: MemoryCardSlot,
+        _card_data: &[u8],
+    ) -> Result<(), Self::Err> {
         Ok(())
     }
 }

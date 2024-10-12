@@ -8,6 +8,7 @@ mod controllers;
 pub mod memcard;
 mod rxfifo;
 
+use crate::api::{LoadedMemoryCards, MemoryCardsEnabled};
 use crate::input::{ControllerState, ControllerType, Ps1Inputs};
 use crate::interrupts::{InterruptRegisters, InterruptType};
 use crate::num::U32Ext;
@@ -132,17 +133,26 @@ pub struct Sio0Devices {
     p2_joypad_state: ControllerState,
     p1_dualshock_state: DualShockControllerState,
     p2_dualshock_state: DualShockControllerState,
-    memory_card_1: MemoryCard,
+    memory_card_1: Option<MemoryCard>,
+    memory_card_2: Option<MemoryCard>,
 }
 
 impl Sio0Devices {
-    fn new(memory_card_1: Option<Vec<u8>>) -> Self {
+    fn new(
+        memory_cards_enabled: MemoryCardsEnabled,
+        loaded_memory_cards: LoadedMemoryCards,
+    ) -> Self {
         Self {
             p1_joypad_state: ControllerState::default_p1(),
             p2_joypad_state: ControllerState::default_p2(),
             p1_dualshock_state: DualShockControllerState::default(),
             p2_dualshock_state: DualShockControllerState::default(),
-            memory_card_1: MemoryCard::new(memory_card_1),
+            memory_card_1: memory_cards_enabled
+                .slot_1
+                .then(|| MemoryCard::new(loaded_memory_cards.slot_1)),
+            memory_card_2: memory_cards_enabled
+                .slot_2
+                .then(|| MemoryCard::new(loaded_memory_cards.slot_2)),
         }
     }
 }
@@ -168,8 +178,11 @@ impl SerialDevices for Sio0Devices {
             (CONTROLLER_ADDRESS, Port::Two) => {
                 initial_controller_state(Port::Two, self.p2_joypad_state)
             }
-            (MEMORY_CARD_ADDRESS, Port::One) => {
-                Some(Sio0Device::MemoryCard(ConnectedMemoryCard::initial()))
+            (MEMORY_CARD_ADDRESS, Port::One) if self.memory_card_1.is_some() => {
+                Some(Sio0Device::MemoryCard(ConnectedMemoryCard::initial(Port::One)))
+            }
+            (MEMORY_CARD_ADDRESS, Port::Two) if self.memory_card_2.is_some() => {
+                Some(Sio0Device::MemoryCard(ConnectedMemoryCard::initial(Port::Two)))
             }
             _ => None,
         }
@@ -192,9 +205,16 @@ impl SerialDevices for Sio0Devices {
                 };
                 dual_shock.process(tx, rx, dualshock_state).map(Sio0Device::DualShock)
             }
-            Sio0Device::MemoryCard(connected_memory_card) => connected_memory_card
-                .process(tx, rx, &mut self.memory_card_1)
-                .map(Sio0Device::MemoryCard),
+            Sio0Device::MemoryCard(connected_memory_card) => {
+                let memory_card = match connected_memory_card.port {
+                    Port::One => self.memory_card_1.as_mut(),
+                    Port::Two => self.memory_card_2.as_mut(),
+                };
+
+                memory_card
+                    .and_then(|memory_card| connected_memory_card.process(tx, rx, memory_card))
+                    .map(Sio0Device::MemoryCard)
+            }
         }
     }
 }
@@ -259,9 +279,12 @@ pub type SerialPort0 = SerialPort<Sio0Devices>;
 pub type SerialPort1 = SerialPort<Sio1Devices>;
 
 impl SerialPort0 {
-    pub fn new_sio0(memory_card_1: Option<Vec<u8>>) -> Self {
+    pub fn new_sio0(
+        memory_cards_enabled: MemoryCardsEnabled,
+        loaded_memory_cards: LoadedMemoryCards,
+    ) -> Self {
         Self::new(
-            Sio0Devices::new(memory_card_1),
+            Sio0Devices::new(memory_cards_enabled, loaded_memory_cards),
             SchedulerEventType::Sio0Irq,
             SchedulerEventType::Sio0Tx,
         )
@@ -283,8 +306,27 @@ impl SerialPort0 {
         self.devices.p2_joypad_state = inputs.p2;
     }
 
-    pub fn memory_card_1(&mut self) -> &mut MemoryCard {
-        &mut self.devices.memory_card_1
+    pub fn memory_cards(&mut self) -> (Option<&mut MemoryCard>, Option<&mut MemoryCard>) {
+        (self.devices.memory_card_1.as_mut(), self.devices.memory_card_2.as_mut())
+    }
+
+    pub fn update_memory_cards(&mut self, enabled: MemoryCardsEnabled, loaded: LoadedMemoryCards) {
+        self.devices.memory_card_1 = enabled.slot_1.then(|| MemoryCard::new(loaded.slot_1));
+        self.devices.memory_card_2 = enabled.slot_2.then(|| MemoryCard::new(loaded.slot_2));
+    }
+
+    pub fn clone_unserialized_fields(&self) -> (MemoryCardsEnabled, LoadedMemoryCards) {
+        let enabled = MemoryCardsEnabled {
+            slot_1: self.devices.memory_card_1.is_some(),
+            slot_2: self.devices.memory_card_2.is_some(),
+        };
+
+        let loaded = LoadedMemoryCards {
+            slot_1: self.devices.memory_card_1.as_ref().map(|card| card.data().to_vec()),
+            slot_2: self.devices.memory_card_2.as_ref().map(|card| card.data().to_vec()),
+        };
+
+        (enabled, loaded)
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::sio::Port;
 use crate::sio::rxfifo::RxFifo;
 use bincode::{Decode, Encode};
 
@@ -37,10 +38,6 @@ impl MemoryCard {
         let dirty = self.dirty;
         self.dirty = false;
         dirty
-    }
-
-    pub fn clear_written_since_load(&mut self) {
-        self.written_since_load = false;
     }
 
     pub fn data(&self) -> &MemoryCardData {
@@ -87,6 +84,7 @@ enum MemoryCardState {
 
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct ConnectedMemoryCard {
+    pub port: Port,
     state: MemoryCardState,
     sector: u16,
     checksum: u8,
@@ -94,8 +92,8 @@ pub struct ConnectedMemoryCard {
 }
 
 impl ConnectedMemoryCard {
-    pub fn initial() -> Self {
-        Self { state: MemoryCardState::AwaitingCommand, sector: 0, checksum: 0, last_tx: 0 }
+    pub fn initial(port: Port) -> Self {
+        Self { port, state: MemoryCardState::AwaitingCommand, sector: 0, checksum: 0, last_tx: 0 }
     }
 
     pub fn process(mut self, tx: u8, rx: &mut RxFifo, card: &mut MemoryCard) -> Option<Self> {

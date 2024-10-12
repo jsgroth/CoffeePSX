@@ -3,13 +3,14 @@ mod input;
 use crate::app::input::{ConfigurableInput, ControllerNumber, InputSet};
 use crate::config::input::SingleInput;
 use crate::config::{
-    AppConfig, AspectRatio, FilterMode, FiltersConfig, Rasterizer, VSyncMode, WgpuBackend,
+    AppConfig, AspectRatio, FilterMode, FiltersConfig, MemoryCardMode, Rasterizer, VSyncMode,
+    WgpuBackend,
 };
 use crate::emustate::EmulatorState;
 use crate::{OpenFileType, UserEvent, config};
 use egui::{
     Align, Button, CentralPanel, Color32, ComboBox, Context, Grid, Key, KeyboardShortcut, Layout,
-    Modifiers, TextEdit, TopBottomPanel, Ui, Vec2, Window,
+    Modifiers, Response, TextEdit, TopBottomPanel, Ui, Vec2, Widget, Window,
 };
 use egui_extras::{Column, TableBuilder};
 use ps1_core::input::ControllerType;
@@ -61,6 +62,7 @@ struct AppState {
     audio_window_open: bool,
     input_window_open: bool,
     paths_window_open: bool,
+    memcards_window_open: bool,
     debug_window_open: bool,
     audio_sync_threshold: NumericText,
     audio_device_queue_size: NumericText,
@@ -92,6 +94,7 @@ impl AppState {
             audio_window_open: false,
             input_window_open: false,
             paths_window_open: false,
+            memcards_window_open: false,
             debug_window_open: false,
             audio_sync_threshold: NumericText::new(config.audio.sync_threshold),
             audio_device_queue_size: NumericText::new(config.audio.device_queue_size),
@@ -205,6 +208,10 @@ impl App {
 
         if self.state.paths_window_open {
             self.render_paths_window(ctx, proxy);
+        }
+
+        if self.state.memcards_window_open {
+            self.render_memcards_window(ctx);
         }
 
         if self.state.debug_window_open {
@@ -342,6 +349,11 @@ impl App {
 
                     if ui.button("Paths").clicked() {
                         self.state.paths_window_open = true;
+                        ui.close_menu();
+                    }
+
+                    if ui.button("Memory Cards").clicked() {
+                        self.state.memcards_window_open = true;
                         ui.close_menu();
                     }
 
@@ -792,9 +804,34 @@ impl App {
                             })
                             .unwrap();
                     }
-                });
 
-                ui.checkbox(&mut self.config.paths.search_recursively, "Search recursively");
+                    ui.checkbox(&mut self.config.paths.search_recursively, "Search recursively");
+                });
+            });
+    }
+
+    fn render_memcards_window(&mut self, ctx: &Context) {
+        Window::new("Memory Card Settings")
+            .open(&mut self.state.memcards_window_open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.checkbox(
+                    &mut self.config.memory_cards.slot_1_enabled,
+                    "Memory card enabled in slot 1",
+                );
+                ui.checkbox(
+                    &mut self.config.memory_cards.slot_2_enabled,
+                    "Memory card enabled in slot 2",
+                );
+
+                ui.add(MemoryCardModeWidget::new(
+                    "Memory card slot 1 mode",
+                    &mut self.config.memory_cards.slot_1_mode,
+                ));
+                ui.add(MemoryCardModeWidget::new(
+                    "Memory card slot 2 mode",
+                    &mut self.config.memory_cards.slot_2_mode,
+                ));
             });
     }
 
@@ -937,6 +974,33 @@ impl App {
     #[must_use]
     pub fn config_mut(&mut self) -> &mut AppConfig {
         &mut self.config
+    }
+}
+
+struct MemoryCardModeWidget<'a> {
+    label: &'a str,
+    current_value: &'a mut MemoryCardMode,
+}
+
+impl<'a> MemoryCardModeWidget<'a> {
+    fn new(label: &'a str, current_value: &'a mut MemoryCardMode) -> Self {
+        Self { label, current_value }
+    }
+}
+
+impl<'a> Widget for MemoryCardModeWidget<'a> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        ui.group(|ui| {
+            ui.label(self.label);
+
+            ui.radio_value(
+                self.current_value,
+                MemoryCardMode::PerGame,
+                "Per-game memory card files",
+            );
+            ui.radio_value(self.current_value, MemoryCardMode::Shared, "Shared memory card file");
+        })
+        .response
     }
 }
 

@@ -1,13 +1,19 @@
 pub mod input;
 
 use crate::config::input::ControllerConfig;
+use anyhow::anyhow;
 use cfg_if::cfg_if;
 use ps1_core::RasterizerType;
-use ps1_core::api::{DisplayConfig, PgxpConfig, Ps1EmulatorConfig};
+use ps1_core::api::{
+    DisplayConfig, MemoryCardSlot, MemoryCardsEnabled, PgxpConfig, Ps1EmulatorConfig,
+};
 use ps1_core::input::ControllerType;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::ffi::OsStr;
 use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VSyncMode {
@@ -218,6 +224,103 @@ impl Default for PathsConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MemoryCardMode {
+    #[default]
+    PerGame,
+    Shared,
+}
+
+pub const MEMORY_CARDS_DIRECTORY: &str = "memcards";
+pub const SHARED_CARD_1_FILE_NAME: &str = "shared_1.mcd";
+pub const SHARED_CARD_2_FILE_NAME: &str = "shared_2.mcd";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryCardConfig {
+    #[serde(default = "true_fn")]
+    pub slot_1_enabled: bool,
+    #[serde(default)]
+    pub slot_2_enabled: bool,
+    #[serde(default)]
+    pub slot_1_mode: MemoryCardMode,
+    #[serde(default)]
+    pub slot_2_mode: MemoryCardMode,
+}
+
+impl Default for MemoryCardConfig {
+    fn default() -> Self {
+        toml::from_str("").unwrap()
+    }
+}
+
+impl MemoryCardConfig {
+    pub(crate) fn cards_enabled(&self) -> MemoryCardsEnabled {
+        MemoryCardsEnabled { slot_1: self.slot_1_enabled, slot_2: self.slot_2_enabled }
+    }
+
+    pub(crate) fn slot_1_path<P: AsRef<Path>>(&self, disc_path: Option<P>) -> PathBuf {
+        slot_path(self.slot_1_mode, disc_path, MemoryCardSlot::One)
+    }
+
+    pub(crate) fn slot_2_path<P: AsRef<Path>>(&self, disc_path: Option<P>) -> PathBuf {
+        slot_path(self.slot_2_mode, disc_path, MemoryCardSlot::Two)
+    }
+}
+
+fn slot_path<P: AsRef<Path>>(
+    mode: MemoryCardMode,
+    disc_path: Option<P>,
+    slot: MemoryCardSlot,
+) -> PathBuf {
+    let shared_file_name = match slot {
+        MemoryCardSlot::One => SHARED_CARD_1_FILE_NAME,
+        MemoryCardSlot::Two => SHARED_CARD_2_FILE_NAME,
+    };
+
+    match (mode, disc_path) {
+        (MemoryCardMode::PerGame, Some(disc_path)) => {
+            let disc_path = disc_path.as_ref();
+            let file_name_no_ext = match file_name_without_disc_or_revision(disc_path) {
+                Ok(value) => value,
+                Err(err) => {
+                    log::error!(
+                        "Unable to remove extension/Disc/Rev from file path '{}', using shared memory card for slot {}: {err}",
+                        disc_path.display(),
+                        slot as u8
+                    );
+                    return shared_path(shared_file_name);
+                }
+            };
+
+            let memory_card_file_name_no_ext = format!("{file_name_no_ext}_{}", slot as u8);
+            let memory_card_file_name =
+                Path::new(&memory_card_file_name_no_ext).with_extension("mcd");
+            Path::new(MEMORY_CARDS_DIRECTORY).join(memory_card_file_name)
+        }
+        (MemoryCardMode::PerGame, None) | (MemoryCardMode::Shared, _) => {
+            shared_path(shared_file_name)
+        }
+    }
+}
+
+fn file_name_without_disc_or_revision(path: &Path) -> anyhow::Result<String> {
+    static DISC_REV_REGEX: OnceLock<Regex> = OnceLock::new();
+
+    let path_no_ext = path.with_extension("");
+    let file_name_no_ext = path_no_ext.file_name().and_then(OsStr::to_str).ok_or_else(|| {
+        anyhow!("Unable to determine file extension for path: {}", path.display())
+    })?;
+
+    let disc_rev_regex =
+        DISC_REV_REGEX.get_or_init(|| Regex::new(r"( \(Disc [1-9]\))?( \(Rev [1-9]\))?$").unwrap());
+
+    Ok(disc_rev_regex.replace(file_name_no_ext, "").into())
+}
+
+fn shared_path(shared_file_name: &str) -> PathBuf {
+    Path::new(MEMORY_CARDS_DIRECTORY).join(shared_file_name)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FiltersConfig {
     #[serde(default = "true_fn")]
@@ -300,6 +403,8 @@ pub struct AppConfig {
     pub audio: AudioConfig,
     #[serde(default)]
     pub paths: PathsConfig,
+    #[serde(default)]
+    pub memory_cards: MemoryCardConfig,
     #[serde(default)]
     pub filters: FiltersConfig,
     #[serde(default)]

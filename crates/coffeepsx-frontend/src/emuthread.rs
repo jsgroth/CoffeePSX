@@ -2,17 +2,17 @@ mod audio;
 mod renderer;
 
 use crate::Never;
-use crate::config::{AppConfig, GraphicsConfig};
+use crate::config::{AppConfig, GraphicsConfig, MemoryCardConfig};
 use crate::emuthread::audio::{AudioQueue, QueueAudioCallback, QueueAudioOutput};
 use crate::emuthread::renderer::{SurfaceRenderer, SwapChainRenderer};
 use anyhow::{Context, anyhow};
 use cdrom::reader::{CdRom, CdRomFileFormat};
 use cfg_if::cfg_if;
 use ps1_core::api::{
-    Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState, SaveWriter, TickEffect, TickError,
+    LoadedMemoryCards, MemoryCardSlot, Ps1Emulator, Ps1EmulatorBuilder, Ps1EmulatorState,
+    SaveWriter, TickEffect, TickError,
 };
 use ps1_core::input::{AnalogJoypadState, DigitalJoypadState, Ps1Inputs};
-use regex::Regex;
 use sdl2::audio::AudioDevice;
 use sdl2::{AudioSubsystem, Sdl};
 use std::collections::VecDeque;
@@ -22,7 +22,7 @@ use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 use std::{fs, io, thread};
 use winit::dpi::PhysicalSize;
@@ -163,14 +163,13 @@ impl EmulationThreadHandle {
 
         let emulator_config = config.to_emulator_config();
 
-        let save_writer = FsSaveWriter::from_path(file_path.unwrap_or(&PathBuf::from("global")))?;
+        let save_writer = FsSaveWriter::new(file_path, &config.memory_cards)?;
+        let memory_cards = load_memory_cards(&save_writer);
 
-        let mut builder = Ps1EmulatorBuilder::new(bios, Arc::clone(&device), Arc::clone(&queue))
-            .with_config(emulator_config);
-
-        if let Ok(card_data) = fs::read(&save_writer.card_1_path) {
-            builder = builder.with_memory_card_1(card_data);
-        }
+        let builder = Ps1EmulatorBuilder::new(bios, Arc::clone(&device), Arc::clone(&queue))
+            .with_config(emulator_config)
+            .with_memory_cards_enabled(config.memory_cards.cards_enabled())
+            .with_memory_cards(memory_cards);
 
         let emulator = match file_path {
             Some(file_path) => match file_path.extension().and_then(OsStr::to_str) {
@@ -232,13 +231,16 @@ impl EmulationThreadHandle {
         let mut inputs = Ps1Inputs::default();
         update_input_config(config, &mut inputs);
 
-        spawn_emu_thread(EmulatorRunner {
+        log::info!("Launching emulator with config:\n{config:#?}");
+
+        spawn_emu_thread(&config.memory_cards, EmulatorRunner {
             emulator,
             renderer: swap_chain_renderer,
             audio_output,
             audio_sync_threshold: config.audio.sync_threshold,
             save_writer,
             inputs,
+            disc_path: file_path.map(PathBuf::from),
             save_state_path,
             command_receiver,
         });
@@ -307,6 +309,13 @@ impl EmulationThreadHandle {
     }
 }
 
+fn load_memory_cards(save_writer: &FsSaveWriter) -> LoadedMemoryCards {
+    let slot_1 = fs::read(&save_writer.card_1_path).ok();
+    let slot_2 = fs::read(&save_writer.card_2_path).ok();
+
+    LoadedMemoryCards { slot_1, slot_2 }
+}
+
 struct EmulatorRunner {
     emulator: Ps1Emulator,
     renderer: SwapChainRenderer,
@@ -314,6 +323,7 @@ struct EmulatorRunner {
     audio_sync_threshold: u32,
     save_writer: FsSaveWriter,
     inputs: Ps1Inputs,
+    disc_path: Option<PathBuf>,
     save_state_path: PathBuf,
     command_receiver: Receiver<EmulatorThreadCommand>,
 }
@@ -332,11 +342,15 @@ impl EmulatorRunner {
     }
 }
 
-fn spawn_emu_thread(mut runner: EmulatorRunner) {
+fn spawn_emu_thread(memory_card_config: &MemoryCardConfig, mut runner: EmulatorRunner) {
+    let memory_card_config = memory_card_config.clone();
+
     thread::spawn(move || {
         let mut paused = false;
         let mut step_frame = false;
         let mut fast_forward = false;
+
+        let mut memory_card_config = memory_card_config;
 
         loop {
             if (!paused || step_frame)
@@ -372,15 +386,26 @@ fn spawn_emu_thread(mut runner: EmulatorRunner) {
                         update_analog_inputs(&mut runner.inputs, player, input, value);
                     }
                     EmulatorThreadCommand::ChangeDisc { disc_path } => {
-                        try_change_disc(&mut runner.emulator, disc_path);
+                        try_change_disc(&mut runner.emulator, &disc_path);
+                        runner.disc_path = Some(disc_path);
+
+                        update_memcard_config(&memory_card_config, &mut runner);
                     }
                     EmulatorThreadCommand::RemoveDisc => {
                         runner.emulator.change_disc(None);
+                        runner.disc_path = None;
+
+                        update_memcard_config(&memory_card_config, &mut runner);
                     }
                     EmulatorThreadCommand::UpdateConfig(config) => {
                         runner.emulator.update_config(config.to_emulator_config());
                         runner.audio_sync_threshold = config.audio.sync_threshold;
                         update_input_config(&config, &mut runner.inputs);
+
+                        if memory_card_config != config.memory_cards {
+                            update_memcard_config(&config.memory_cards, &mut runner);
+                            memory_card_config = config.memory_cards;
+                        }
                     }
                     EmulatorThreadCommand::SaveState => {
                         match save_state(&mut runner.emulator, &runner.save_state_path) {
@@ -446,6 +471,19 @@ fn update_input_config(config: &AppConfig, inputs: &mut Ps1Inputs) {
     inputs.p2.analog = AnalogJoypadState::default();
 }
 
+fn update_memcard_config(config: &MemoryCardConfig, runner: &mut EmulatorRunner) {
+    if let Err(err) = runner.save_writer.update_config(runner.disc_path.as_ref(), config) {
+        log::error!("Error updating memory card config: {err}");
+        return;
+    }
+
+    log::info!("Memcard 1 enabled: {}", config.slot_1_enabled);
+    log::info!("Memcard 2 enabled: {}", config.slot_2_enabled);
+
+    let memory_cards = load_memory_cards(&runner.save_writer);
+    runner.emulator.update_memory_cards(config.cards_enabled(), memory_cards);
+}
+
 macro_rules! impl_update_digital_inputs {
     ($inputs:expr, $input_button:expr, $pressed:expr, [$($button:ident => $setter:ident),* $(,)?]) => {
         match $input_button {
@@ -499,7 +537,7 @@ fn update_analog_inputs(inputs: &mut Ps1Inputs, player: Player, input: Ps1Analog
     }
 }
 
-fn try_change_disc(emulator: &mut Ps1Emulator, disc_path: PathBuf) {
+fn try_change_disc(emulator: &mut Ps1Emulator, disc_path: &Path) {
     let Some(extension) = disc_path.extension().and_then(OsStr::to_str) else {
         log::error!("Unable to determine file extension of disc path '{}'", disc_path.display());
         return;
@@ -514,7 +552,7 @@ fn try_change_disc(emulator: &mut Ps1Emulator, disc_path: PathBuf) {
         }
     };
 
-    let disc = match CdRom::open(&disc_path, format) {
+    let disc = match CdRom::open(disc_path, format) {
         Ok(disc) => disc,
         Err(err) => {
             log::error!("Error opening disc at '{}': {err}", disc_path.display());
@@ -566,37 +604,43 @@ fn sleep(duration: Duration) {
     }
 }
 
-const MEMORY_CARDS_DIRECTORY: &str = "memcards";
 const SAVE_STATES_DIRECTORY: &str = "states";
 
 struct FsSaveWriter {
     card_1_path: PathBuf,
+    card_2_path: PathBuf,
 }
 
 impl FsSaveWriter {
-    fn from_path(path: &Path) -> anyhow::Result<Self> {
-        let file_name_no_disc = file_name_without_disc_or_revision(path)?;
-        let card_1_file_name = format!("{file_name_no_disc}_1.mcd");
-        let card_1_path = PathBuf::from(MEMORY_CARDS_DIRECTORY).join(card_1_file_name);
+    fn new(disc_path: Option<&Path>, config: &MemoryCardConfig) -> anyhow::Result<Self> {
+        let card_1_path = config.slot_1_path(disc_path);
+        let card_2_path = config.slot_2_path(disc_path);
 
         ensure_parent_dir_exists(&card_1_path)?;
+        ensure_parent_dir_exists(&card_2_path)?;
 
-        Ok(Self { card_1_path })
+        log::info!("Memcard 1 path set to '{}'", card_1_path.display());
+        log::info!("Memcard 2 path set to '{}'", card_2_path.display());
+
+        Ok(Self { card_1_path, card_2_path })
     }
-}
 
-fn file_name_without_disc_or_revision(path: &Path) -> anyhow::Result<String> {
-    static DISC_REV_REGEX: OnceLock<Regex> = OnceLock::new();
+    fn update_config<P: AsRef<Path> + Copy>(
+        &mut self,
+        disc_path: Option<P>,
+        config: &MemoryCardConfig,
+    ) -> anyhow::Result<()> {
+        self.card_1_path = config.slot_1_path(disc_path);
+        self.card_2_path = config.slot_2_path(disc_path);
 
-    let path_no_ext = path.with_extension("");
-    let file_name_no_ext = path_no_ext.file_name().and_then(OsStr::to_str).ok_or_else(|| {
-        anyhow!("Unable to determine file extension for path: {}", path.display())
-    })?;
+        ensure_parent_dir_exists(&self.card_1_path)?;
+        ensure_parent_dir_exists(&self.card_2_path)?;
 
-    let disc_rev_regex =
-        DISC_REV_REGEX.get_or_init(|| Regex::new(r"( \(Disc [1-9]\))?( \(Rev [1-9]\))?$").unwrap());
+        log::info!("Changed memcard 1 path to '{}'", self.card_1_path.display());
+        log::info!("Changed memcard 2 path to '{}'", self.card_2_path.display());
 
-    Ok(disc_rev_regex.replace(file_name_no_ext, "").into())
+        Ok(())
+    }
 }
 
 fn ensure_parent_dir_exists(path: &Path) -> anyhow::Result<()> {
@@ -612,9 +656,22 @@ fn ensure_parent_dir_exists(path: &Path) -> anyhow::Result<()> {
 impl SaveWriter for FsSaveWriter {
     type Err = io::Error;
 
-    fn save_memory_card_1(&mut self, card_data: &[u8]) -> Result<(), Self::Err> {
-        fs::write(&self.card_1_path, card_data)?;
-        log::debug!("Saved memory card 1 to {}", self.card_1_path.display());
+    fn save_memory_card(
+        &mut self,
+        slot: MemoryCardSlot,
+        card_data: &[u8],
+    ) -> Result<(), Self::Err> {
+        let path = match slot {
+            MemoryCardSlot::One => &self.card_1_path,
+            MemoryCardSlot::Two => &self.card_2_path,
+        };
+
+        let temp_path = path.with_extension("mcdtmp");
+        fs::write(&temp_path, card_data)?;
+        fs::rename(temp_path, path)?;
+
+        log::debug!("Saved memory card 1 to {}", path.display());
+
         Ok(())
     }
 }

@@ -2,7 +2,7 @@
 
 Work-in-progress attempt at a PlayStation emulator.
 
-Some games are fully playable, but some do not boot or have major issues, and the emulator is missing some essential features like memory card management.
+Some games are fully playable, but some do not boot or have major issues.
 
 ## Status
 
@@ -22,14 +22,14 @@ Some games are fully playable, but some do not boot or have major issues, and th
 * MDEC (hardware image decompressor)
 * Hardware timers
 * NTSC/60Hz and PAL/50Hz support
-* Digital and analog controller emulation
-* Memory card, port 1 only
+* Digital and analog controllers
+* Memory cards
 
 ### Not Yet Implemented
 
+* Hotkey configuration
 * DualShock rumble support
-* More flexible memory card implementation (e.g. an option for whether to share across games or give each game its own emulated card)
-  * Also a memory card manager
+* Some sort of memory card management UI
 * Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering)
 * More efficient CPU emulation (cached interpreter, recompiler)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work, but timings are quite inaccurate right now
