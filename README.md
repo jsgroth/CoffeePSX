@@ -9,7 +9,7 @@ Some games are fully playable, but some do not boot or have major issues.
 ### Implemented
 
 * CPU
-  * Currently implemented using a pure interpreter; performance could be a lot better
+  * Currently implemented using a plain interpreter; performance could be a lot better
 * GTE (3D math coprocessor)
 * GPU, with both software and hardware rasterizers
   * Hardware rasterizer uses [wgpu](https://wgpu.rs/) with native extensions; should work on Vulkan, DirectX 12, and Metal (has not been tested on MacOS/Metal)
@@ -30,7 +30,7 @@ Some games are fully playable, but some do not boot or have major issues.
 * Hotkey configuration
 * DualShock rumble support
 * Some sort of memory card management UI
-* Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering)
+* Additional graphical enhancements for the hardware rasterizer (e.g. PGXP CPU mode, texture filtering, downsampling)
 * More efficient CPU emulation (cached interpreter, recompiler)
 * More accurate timings for DMA/GPU/MDEC; some games that depend on DMA timing work, but timings are quite inaccurate right now
 * Some CD-ROM functionality including infrequently used commands and 8-bit CD-XA audio
@@ -66,7 +66,7 @@ brew install sdl2
 ```
 
 Windows:
-* https://github.com/libsdl-org/SDL/releases
+* https://github.com/libsdl-org/SDL/releases (use a 2.x version)
 
 ## Build & Run
 
@@ -83,37 +83,25 @@ cargo run --release -- --headless -f /path/to/file.cue
 To build with fat LTOs (link time optimizations), which slightly improves performance and decreases binary size but increases compile time:
 ```shell
 cargo build --profile release-lto
-# Binaries located in target/release-lto/
+# Executable located in target/release-lto/
 ```
 
-## Key Bindings
-
-Controller buttons:
-* D-Pad: Arrow keys
-* X: X key
-* O: S key
-* Square: Z key
-* Triangle: A key
-* L1: W key
-* L2: Q key
-* R1: E key
-* R2: R key
-* Start: Enter key
-* Select: Right Shift key
-
-Hotkeys:
+## Hotkey Bindings
 * Save state: F5 key
 * Load state: F6 key
 * Fast forward: Tab key
 * Pause: P key
 * Step to next frame: N key
-* Select to hardware rasterizer: 0 key
+* Select hardware rasterizer: 0 key
 * Select software rasterizer: - key (Minus)
 * Decrease resolution scale: [ key (Left square bracket)
 * Increase resolution scale: ] key (Right square bracket)
 * Toggle VRAM view: ' key (Quote)
 * Exit: Esc key
 
-## Screenshot
+## Screenshots
 
-![Screenshot from 2024-03-30 01-09-14](https://github.com/jsgroth/ps1-emu/assets/1137683/99c35745-31b0-4a1b-8733-321bc8a4a372)
+![ff9](https://github.com/user-attachments/assets/106b97eb-7198-48c1-a233-20e619d5c791)
+![mmx4](https://github.com/user-attachments/assets/dc56666e-fc70-4f9b-b605-8138753df6f6)
+![crash2](https://github.com/user-attachments/assets/4cce3bfa-50c7-41b9-b21e-92902ff8c0be)
+![valkyrie-profile](https://github.com/user-attachments/assets/58f18208-833e-4876-b7d5-19b4007da50e)
