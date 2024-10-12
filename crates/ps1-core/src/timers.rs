@@ -808,6 +808,8 @@ impl Timers {
                 // In HBlank (right border), skip to start of next line
                 let gpu_clocks =
                     cmp::min(self.gpu.cycles_in_line() - self.gpu.line_cycle, gpu_elapsed);
+                gpu_elapsed -= gpu_clocks;
+
                 let new_line_cycle = self.gpu.line_cycle + gpu_clocks;
                 let reached_end_of_line = new_line_cycle == self.gpu.cycles_in_line();
 
