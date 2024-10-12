@@ -925,38 +925,38 @@ impl App {
                     // Blank column to make stripes extend to the right
                     row.col(|_ui| {});
                 })
-                .body(|mut body| {
+                .body(|body| {
                     let file_list = Rc::clone(&self.state.filtered_file_list);
-                    for metadata in file_list.as_ref() {
-                        body.row(30.0, |mut row| {
-                            row.col(|ui| {
-                                if ui
-                                    .add(
-                                        Button::new(&metadata.file_name_no_ext)
-                                            .min_size(Vec2::new(500.0, 25.0))
-                                            .wrap(),
-                                    )
-                                    .clicked()
-                                {
-                                    proxy
-                                        .send_event(UserEvent::FileOpened(
-                                            OpenFileType::Open,
-                                            Some(metadata.full_path.clone()),
-                                        ))
-                                        .unwrap();
-                                }
-                            });
+                    body.rows(30.0, file_list.len(), |mut row| {
+                        let metadata = &file_list[row.index()];
 
-                            row.col(|ui| {
-                                ui.centered_and_justified(|ui| {
-                                    ui.label(metadata.extension.as_str());
-                                });
-                            });
-
-                            // Blank column to make stripes extend to the right
-                            row.col(|_ui| {});
+                        row.col(|ui| {
+                            if ui
+                                .add(
+                                    Button::new(&metadata.file_name_no_ext)
+                                        .min_size(Vec2::new(500.0, 25.0))
+                                        .wrap(),
+                                )
+                                .clicked()
+                            {
+                                proxy
+                                    .send_event(UserEvent::FileOpened(
+                                        OpenFileType::Open,
+                                        Some(metadata.full_path.clone()),
+                                    ))
+                                    .unwrap();
+                            }
                         });
-                    }
+
+                        row.col(|ui| {
+                            ui.centered_and_justified(|ui| {
+                                ui.label(metadata.extension.as_str());
+                            });
+                        });
+
+                        // Blank column to make stripes extend to the right
+                        row.col(|_ui| {});
+                    });
                 });
         });
     }
