@@ -70,7 +70,8 @@ struct AppState {
     selected_controller: ControllerNumber,
     selected_input_set: InputSet,
     waiting_for_input: Option<(ControllerNumber, InputSet, ConfigurableInput)>,
-    file_list: Rc<[FileMetadata]>,
+    unfiltered_file_list: Rc<[FileMetadata]>,
+    filtered_file_list: Rc<[FileMetadata]>,
     change_disc_list: Rc<[ChangeDiscEntry]>,
     last_opened_disc_path: Option<PathBuf>,
     last_serialized_config: AppConfig,
@@ -81,12 +82,9 @@ struct AppState {
 
 impl AppState {
     fn new(config: &AppConfig) -> Self {
-        let file_list = do_file_search(
-            &config.paths.search,
-            config.paths.search_recursively,
-            "",
-            &config.filters,
-        );
+        let unfiltered_file_list =
+            do_file_search(&config.paths.search, config.paths.search_recursively);
+        let filtered_file_list = filter_file_list(&unfiltered_file_list, "", &config.filters);
 
         Self {
             video_window_open: false,
@@ -102,7 +100,8 @@ impl AppState {
             selected_controller: ControllerNumber::One,
             selected_input_set: InputSet::One,
             waiting_for_input: None,
-            file_list: file_list.into(),
+            unfiltered_file_list: unfiltered_file_list.into(),
+            filtered_file_list: filtered_file_list.into(),
             change_disc_list: Rc::default(),
             last_opened_disc_path: None,
             last_serialized_config: config.clone(),
@@ -147,8 +146,8 @@ impl App {
                 self.config.paths.bios = Some(path.clone());
             }
             UserEvent::FileOpened(OpenFileType::Open | OpenFileType::DiscChange, Some(path)) => {
-                self.refresh_change_disc_list(path);
                 self.state.last_opened_disc_path = Some(path.clone());
+                self.refresh_change_disc_list(path);
             }
             UserEvent::FileOpened(OpenFileType::SearchDir, Some(path)) => {
                 self.config.paths.search.push(path.clone());
@@ -237,13 +236,18 @@ impl App {
     }
 
     fn refresh_file_list(&mut self) {
-        self.state.file_list = do_file_search(
-            &self.config.paths.search,
-            self.config.paths.search_recursively,
+        self.state.unfiltered_file_list =
+            do_file_search(&self.config.paths.search, self.config.paths.search_recursively).into();
+        self.state.filtered_file_list = filter_file_list(
+            &self.state.unfiltered_file_list,
             &self.state.filter_by_title_lower,
             &self.config.filters,
         )
         .into();
+
+        if let Some(path) = &self.state.last_opened_disc_path {
+            self.refresh_change_disc_list(&path.clone());
+        }
     }
 
     fn refresh_change_disc_list(&mut self, path: &Path) {
@@ -264,7 +268,7 @@ impl App {
         let mut change_disc_list = Vec::new();
         for disc_number in 1..=9 {
             let new_path = DISC_REGEX.replace_all(path_str, format!(" (Disc {disc_number})"));
-            for metadata in &*self.state.file_list {
+            for metadata in &*self.state.unfiltered_file_list {
                 let Some(metadata_path_str) = metadata.full_path.to_str() else { continue };
                 if metadata_path_str == new_path {
                     change_disc_list.push(ChangeDiscEntry {
@@ -922,7 +926,7 @@ impl App {
                     row.col(|_ui| {});
                 })
                 .body(|mut body| {
-                    let file_list = Rc::clone(&self.state.file_list);
+                    let file_list = Rc::clone(&self.state.filtered_file_list);
                     for metadata in file_list.as_ref() {
                         body.row(30.0, |mut row| {
                             row.col(|ui| {
@@ -1037,22 +1041,30 @@ struct FileMetadata {
     full_path: PathBuf,
 }
 
-fn do_file_search(
-    search_dirs: &[PathBuf],
-    recursive: bool,
-    filter_by_title: &str,
-    file_filters: &FiltersConfig,
-) -> Vec<FileMetadata> {
+fn do_file_search(search_dirs: &[PathBuf], recursive: bool) -> Vec<FileMetadata> {
     let mut visited_dirs = HashSet::new();
     let mut files = Vec::new();
     for search_dir in search_dirs {
-        do_file_search_inner(search_dir, recursive, filter_by_title, &mut visited_dirs, &mut files);
+        do_file_search_inner(search_dir, recursive, &mut visited_dirs, &mut files);
     }
 
+    files
+}
+
+fn filter_file_list(
+    files: &[FileMetadata],
+    filter_by_title_lower: &str,
+    file_filters: &FiltersConfig,
+) -> Vec<FileMetadata> {
+    let mut files = files.to_vec();
+
     files.retain(|metadata| {
-        (metadata.extension == FileExtension::Exe && file_filters.exe)
+        let name_match = metadata.file_name_no_ext.to_lowercase().contains(filter_by_title_lower);
+        let extension_match = (metadata.extension == FileExtension::Exe && file_filters.exe)
             || (metadata.extension == FileExtension::Cue && file_filters.cue)
-            || (metadata.extension == FileExtension::Chd && file_filters.chd)
+            || (metadata.extension == FileExtension::Chd && file_filters.chd);
+
+        name_match && extension_match
     });
 
     files.sort_by(|a, b| a.file_name_no_ext.cmp(&b.file_name_no_ext));
@@ -1063,7 +1075,6 @@ fn do_file_search(
 fn do_file_search_inner(
     dir: &Path,
     recursive: bool,
-    filter_by_title: &str,
     visited_dirs: &mut HashSet<PathBuf>,
     out: &mut Vec<FileMetadata>,
 ) {
@@ -1083,14 +1094,8 @@ fn do_file_search_inner(
         };
 
         if file_type.is_dir() && recursive {
-            do_file_search_inner(&entry_path, true, filter_by_title, visited_dirs, out);
+            do_file_search_inner(&entry_path, true, visited_dirs, out);
         } else if file_type.is_file() {
-            if !filter_by_title.is_empty()
-                && !file_name_no_ext.to_lowercase().contains(filter_by_title)
-            {
-                continue;
-            }
-
             let Some(extension) = entry_path.extension().and_then(OsStr::to_str) else { continue };
             let ext_lower = extension.to_lowercase();
             if matches!(ext_lower.as_str(), "exe" | "cue" | "chd") {
