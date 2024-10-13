@@ -5,7 +5,8 @@ use anyhow::anyhow;
 use cfg_if::cfg_if;
 use ps1_core::RasterizerType;
 use ps1_core::api::{
-    DisplayConfig, MemoryCardSlot, MemoryCardsEnabled, PgxpConfig, Ps1EmulatorConfig,
+    AdpcmInterpolation, DisplayConfig, MemoryCardSlot, MemoryCardsEnabled, PgxpConfig,
+    Ps1EmulatorConfig,
 };
 use ps1_core::input::ControllerType;
 use regex::Regex;
@@ -183,6 +184,8 @@ pub fn supports_avx2() -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AudioConfig {
+    #[serde(default)]
+    pub adpcm_interpolation: AdpcmInterpolation,
     #[serde(default = "default_audio_sync_threshold")]
     pub sync_threshold: u32,
     #[serde(default = "default_device_queue_size")]
@@ -445,6 +448,7 @@ impl AppConfig {
                     PgxpConfig::default()
                 }
             },
+            adpcm_interpolation: self.audio.adpcm_interpolation,
             internal_audio_buffer_size: self.audio.internal_buffer_size,
             tty_enabled: self.debug.tty_enabled,
         }

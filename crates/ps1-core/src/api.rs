@@ -112,10 +112,19 @@ pub enum TickError<RErr, AErr, SErr> {
     CdRom(#[from] CdRomError),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Encode, Decode)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum AdpcmInterpolation {
+    #[default]
+    Gaussian,
+    Hermite,
+}
+
 #[derive(Debug, Clone, Copy, Encode, Decode)]
 pub struct Ps1EmulatorConfig {
     pub display: DisplayConfig,
     pub pgxp: PgxpConfig,
+    pub adpcm_interpolation: AdpcmInterpolation,
     pub internal_audio_buffer_size: NonZeroU32,
     pub tty_enabled: bool,
 }
@@ -125,6 +134,7 @@ impl Default for Ps1EmulatorConfig {
         Self {
             display: DisplayConfig::default(),
             pgxp: PgxpConfig::default(),
+            adpcm_interpolation: AdpcmInterpolation::default(),
             internal_audio_buffer_size: NonZeroU32::new(DEFAULT_AUDIO_BUFFER_SIZE).unwrap(),
             tty_enabled: false,
         }
@@ -312,7 +322,7 @@ impl Ps1Emulator {
         let mut emulator = Self {
             cpu: R3000::new(config.pgxp),
             gpu: Gpu::new(wgpu_device, wgpu_queue, config.display, config.pgxp),
-            spu: Spu::new(),
+            spu: Spu::new(config.adpcm_interpolation),
             audio_buffer: Vec::with_capacity(1600),
             cd_controller: CdController::new(disc),
             mdec: MacroblockDecoder::new(),
@@ -568,6 +578,7 @@ impl Ps1Emulator {
         self.cpu.update_pgxp_config(config.pgxp);
         self.dma_controller.update_pgxp_config(config.pgxp);
         self.gpu.update_config(config.display, config.pgxp);
+        self.spu.update_adpcm_interpolation(config.adpcm_interpolation);
         self.config = config;
     }
 

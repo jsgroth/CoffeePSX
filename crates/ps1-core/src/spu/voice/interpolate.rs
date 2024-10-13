@@ -48,7 +48,7 @@ const TABLE: &[i16; 512] = &[
     0x5997, 0x599E, 0x59A4, 0x59A9, 0x59AD, 0x59B0, 0x59B2, 0x59B3,
 ];
 
-pub fn interpolate(samples: [i16; 4], pitch_counter: u16) -> i16 {
+pub fn gaussian(samples: [i16; 4], pitch_counter: u16) -> i16 {
     // Bits 4-11 of pitch counter are used for interpolation
     let idx = ((pitch_counter >> 4) & 0xFF) as usize;
 
@@ -58,4 +58,18 @@ pub fn interpolate(samples: [i16; 4], pitch_counter: u16) -> i16 {
     result += multiply_volume(samples[3], TABLE[idx]);
 
     result
+}
+
+// Based on https://yehar.com/blog/wp-content/uploads/2009/08/deip.pdf
+pub fn hermite(samples: [i16; 4], pitch_counter: u16) -> i16 {
+    let [y0, y1, y2, y3] = samples.map(f64::from);
+
+    // Use all 12 lowest bits of the pitch counter for more precise interpolation
+    let x = f64::from(pitch_counter & 0xFFF) / 4096.0;
+
+    let c0 = y1;
+    let c1 = 0.5 * (y2 - y0);
+    let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+    let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+    (((c3 * x + c2) * x + c1) * x + c0).round().clamp(i16::MIN.into(), i16::MAX.into()) as i16
 }

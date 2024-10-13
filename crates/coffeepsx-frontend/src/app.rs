@@ -13,6 +13,7 @@ use egui::{
     Modifiers, Response, TextEdit, TopBottomPanel, Ui, Vec2, Widget, Window,
 };
 use egui_extras::{Column, TableBuilder};
+use ps1_core::api::AdpcmInterpolation;
 use ps1_core::input::ControllerType;
 use regex::Regex;
 use std::collections::HashSet;
@@ -639,6 +640,23 @@ impl App {
             .open(&mut self.state.audio_window_open)
             .resizable(false)
             .show(ctx, |ui| {
+                ui.group(|ui| {
+                    ui.label("SPU ADPCM sample interpolation");
+
+                    ui.radio_value(
+                        &mut self.config.audio.adpcm_interpolation,
+                        AdpcmInterpolation::Gaussian,
+                        "Gaussian (Native)",
+                    );
+                    ui.radio_value(
+                        &mut self.config.audio.adpcm_interpolation,
+                        AdpcmInterpolation::Hermite,
+                        "Cubic Hermite (Sharp)",
+                    );
+                });
+
+                ui.add_space(10.0);
+
                 ui.horizontal(|ui| {
                     let hover_text =
                         "Higher values reduce audio stutters but increase audio latency";

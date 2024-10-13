@@ -8,6 +8,7 @@ mod noise;
 mod reverb;
 mod voice;
 
+use crate::api::AdpcmInterpolation;
 use crate::boxedarray::BoxedArray;
 use crate::cd::CdController;
 use crate::cpu::OpSize;
@@ -272,10 +273,10 @@ const VOICE_1_CAPTURE_BUFFER_ADDR: u32 = 0x800;
 const VOICE_3_CAPTURE_BUFFER_ADDR: u32 = 0xC00;
 
 impl Spu {
-    pub fn new() -> Self {
+    pub fn new(adpcm_interpolation: AdpcmInterpolation) -> Self {
         Self {
             sound_ram: SoundRam::new(),
-            voices: array::from_fn(Voice::new),
+            voices: array::from_fn(|i| Voice::new(i, adpcm_interpolation)),
             control: ControlRegisters::new(),
             volume: VolumeControl::new(),
             data_port: DataPort::new(),
@@ -749,6 +750,12 @@ impl Spu {
 
         for voice in 16..24 {
             self.voices[voice].noise_enabled = value.bit((voice - 16) as u8);
+        }
+    }
+
+    pub fn update_adpcm_interpolation(&mut self, adpcm_interpolation: AdpcmInterpolation) {
+        for voice in &mut self.voices {
+            voice.adpcm_interpolation = adpcm_interpolation;
         }
     }
 }

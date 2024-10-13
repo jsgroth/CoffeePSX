@@ -1,5 +1,6 @@
-mod gaussian;
+mod interpolate;
 
+use crate::api::AdpcmInterpolation;
 use crate::spu;
 use crate::spu::adpcm::{AdpcmHeader, SpuAdpcmBuffer};
 use crate::spu::envelope::{AdsrEnvelope, AdsrPhase, SweepEnvelope};
@@ -10,6 +11,7 @@ use std::cmp;
 #[derive(Debug, Clone, Encode, Decode)]
 pub struct Voice {
     voice_number: usize,
+    pub adpcm_interpolation: AdpcmInterpolation,
     pub volume_l: SweepEnvelope,
     pub volume_r: SweepEnvelope,
     pub sample_rate: u16,
@@ -33,9 +35,10 @@ pub struct Voice {
 }
 
 impl Voice {
-    pub fn new(voice_number: usize) -> Self {
+    pub fn new(voice_number: usize, adpcm_interpolation: AdpcmInterpolation) -> Self {
         Self {
             voice_number,
+            adpcm_interpolation,
             volume_l: SweepEnvelope::new(),
             volume_r: SweepEnvelope::new(),
             sample_rate: 0,
@@ -121,7 +124,11 @@ impl Voice {
 
     fn sample(&mut self, noise_output: i16) {
         let raw_sample = if !self.noise_enabled {
-            gaussian::interpolate(self.adpcm_buffer.four_most_recent_samples(), self.pitch_counter)
+            let samples = self.adpcm_buffer.four_most_recent_samples();
+            match self.adpcm_interpolation {
+                AdpcmInterpolation::Gaussian => interpolate::gaussian(samples, self.pitch_counter),
+                AdpcmInterpolation::Hermite => interpolate::hermite(samples, self.pitch_counter),
+            }
         } else {
             noise_output
         };
