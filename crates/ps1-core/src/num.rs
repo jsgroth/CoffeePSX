@@ -1,35 +1,28 @@
-pub trait U8Ext {
-    fn bit(self, i: u8) -> bool;
+macro_rules! impl_ext_trait {
+    ($name:ident, $t:ty $(, $sign_bit:ident)?) => {
+        pub trait $name {
+            fn bit(self, i: u8) -> bool;
+
+            $(fn $sign_bit(self) -> bool;)?
+        }
+
+        impl $name for $t {
+            #[inline(always)]
+            fn bit(self, i: u8) -> bool {
+                self & (1 << i) != 0
+            }
+
+            $(
+                #[inline(always)]
+                fn $sign_bit(self) -> bool {
+                    self.bit((<$t>::BITS - 1) as u8)
+                }
+            )?
+        }
+    };
 }
 
-impl U8Ext for u8 {
-    fn bit(self, i: u8) -> bool {
-        self & (1 << i) != 0
-    }
-}
-
-pub trait I16Ext {
-    fn bit(self, i: u8) -> bool;
-}
-
-impl I16Ext for i16 {
-    fn bit(self, i: u8) -> bool {
-        self & (1 << i) != 0
-    }
-}
-
-pub trait U32Ext {
-    fn bit(self, i: u8) -> bool;
-
-    fn sign_bit(self) -> bool;
-}
-
-impl U32Ext for u32 {
-    fn bit(self, i: u8) -> bool {
-        self & (1 << i) != 0
-    }
-
-    fn sign_bit(self) -> bool {
-        self.bit(31)
-    }
-}
+impl_ext_trait!(U8Ext, u8);
+impl_ext_trait!(U16Ext, u16);
+impl_ext_trait!(U32Ext, u32, sign_bit);
+impl_ext_trait!(I16Ext, i16);
