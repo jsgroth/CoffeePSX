@@ -81,6 +81,10 @@ impl PreciseVertex {
         (fx == vertex.x || fx.wrapping_sub(1) == vertex.x)
             && (fy == vertex.y || fy.wrapping_sub(1) == vertex.y)
     }
+
+    pub fn is_valid(&self) -> bool {
+        self.x.is_finite() && self.y.is_finite()
+    }
 }
 
 impl Default for PreciseVertex {
@@ -178,8 +182,18 @@ impl PgxpGteRegisters {
         self.sxy[2] = vertex;
     }
 
-    pub fn all_valid(&self) -> bool {
-        self.sxy.into_iter().all(|v| !v.x.is_infinite())
+    pub fn all_valid(
+        &self,
+        (sx0, sy0): (i64, i64),
+        (sx1, sy1): (i64, i64),
+        (sx2, sy2): (i64, i64),
+    ) -> bool {
+        self.sxy[0].is_valid()
+            && self.sxy[0].matches(Vertex { x: sx0 as i32, y: sy0 as i32 })
+            && self.sxy[1].is_valid()
+            && self.sxy[1].matches(Vertex { x: sx1 as i32, y: sy1 as i32 })
+            && self.sxy[2].is_valid()
+            && self.sxy[2].matches(Vertex { x: sx2 as i32, y: sy2 as i32 })
     }
 }
 

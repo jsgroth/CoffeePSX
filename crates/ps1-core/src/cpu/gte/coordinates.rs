@@ -72,8 +72,16 @@ impl GeometryTransformationEngine {
     pub(super) fn nclip(&mut self) -> u32 {
         log::trace!("GTE NCLIP");
 
+        let (sx0, sy0) = self.read_screen_xy(Register::SXY0);
+        let (sx1, sy1) = self.read_screen_xy(Register::SXY1);
+        let (sx2, sy2) = self.read_screen_xy(Register::SXY2);
+
         if self.pgxp_config.precise_nclip() {
-            if self.pgxp.all_valid() {
+            if self.pgxp.all_valid(
+                (sx0.into(), sy0.into()),
+                (sx1.into(), sy1.into()),
+                (sx2.into(), sy2.into()),
+            ) {
                 self.nclip_pgxp();
                 return 7;
             }
