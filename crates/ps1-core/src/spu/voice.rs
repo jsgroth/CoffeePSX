@@ -204,7 +204,8 @@ impl Voice {
 
         self.adsr.key_on();
 
-        self.current_address = self.start_address;
+        // The SPU can seemingly only read ADPCM blocks from 16-byte boundaries; Valkyrie Profile depends on this
+        self.current_address = self.start_address & !0xF;
 
         // Immediately decode first ADPCM block and reset ADPCM state
         self.adpcm_buffer.reset();
@@ -213,7 +214,6 @@ impl Voice {
     }
 
     fn decode_adpcm_block(&mut self, sound_ram: &SoundRam) {
-        // TODO this can wrap since address is in 8-byte units
         let block = &sound_ram[self.current_address as usize..(self.current_address + 16) as usize];
         adpcm::decode_spu_block(block, &mut self.adpcm_buffer);
 
@@ -223,7 +223,8 @@ impl Voice {
         }
 
         if loop_end {
-            self.current_address = self.repeat_address;
+            // The SPU can seemingly only read ADPCM blocks from 16-byte boundaries; Valkyrie Profile depends on this
+            self.current_address = self.repeat_address & !0xF;
             if !loop_repeat {
                 self.adsr.phase = AdsrPhase::Release;
                 self.adsr.level = 0;
