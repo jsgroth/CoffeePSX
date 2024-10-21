@@ -12,9 +12,8 @@ use crate::gpu::rasterizer::{
 };
 use crate::gpu::registers::Registers;
 use crate::gpu::{Color, Vertex, Vram, VramArray, WgpuResources};
-use std::alloc::Layout;
+use std::cmp;
 use std::ops::{Deref, DerefMut};
-use std::{alloc, cmp};
 
 // AVX2 loads/stores must be aligned to a 32-byte boundary
 #[repr(align(32), C)]
@@ -23,20 +22,12 @@ struct AlignedVram(VramArray);
 
 impl AlignedVram {
     fn new_on_heap() -> Box<Self> {
-        // SAFETY: The pointer is allocated using Layout of Self (which is not a zero-sized type)
-        // and then dereferenced only as a *mut Self. The struct's only field is zerofilled before
-        // returning the pointer inside a Box.
-        // TODO use Box functions when Box::new_uninit() is stabilized
+        let mut vram = Box::<Self>::new_uninit();
+
+        // SAFETY: AlignedVram's only field is zerofilled before assuming initialized
         unsafe {
-            let layout = Layout::new::<Self>();
-            let memory = alloc::alloc(layout).cast::<Self>();
-            if memory.is_null() {
-                alloc::handle_alloc_error(layout);
-            }
-
-            (*memory).0.fill(0);
-
-            Box::from_raw(memory)
+            (*vram.as_mut_ptr()).0.fill(0);
+            vram.assume_init()
         }
     }
 }
