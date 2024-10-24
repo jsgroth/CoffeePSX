@@ -4,6 +4,18 @@ Work-in-progress attempt at a PlayStation emulator.
 
 Some games are fully playable, but some do not boot or have major issues.
 
+## Why?
+
+Why write a PS1 emulator at all? For fun and learning, of course!
+
+For a more interesting question, why is this a standalone emulator instead of a backend core in [jgenesis](https://github.com/jsgroth/jgenesis/)?
+
+Short version is that I wanted more freedom to experiment with the interface between the backend (the actual console emulator) and the frontend (the thing that displays frames / plays audio / etc). jgenesis has an interface that is designed around consoles like Genesis/SNES where from an emulation perspective it's massively preferable to render frames on the host CPU rather than the GPU. For later consoles like PS1/Saturn/N64/etc., there's a lot of benefit to rendering frames on the host GPU instead of the host CPU, and I wanted the interface freedom to make it possible to take advantage of that.
+
+I'm also trying out some alternative forms of video/audio synchronization, which is a lot easier to do when there's only 1 backend core.
+
+I may merge the two projects in the future - there are definitely ways to create a single API that will work for both 2D consoles and PS1 - but for the time being this is its own thing.
+
 ## Status
 
 ### Implemented
