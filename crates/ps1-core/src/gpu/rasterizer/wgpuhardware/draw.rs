@@ -968,11 +968,14 @@ fn add_triangle_to_batch(
     let precise_positions = args.pgxp_vertices.map_or_else(
         || array::from_fn(|i| [positions[i][0] as f32, positions[i][1] as f32, 0.0]),
         |pgxp_vertices| {
+            let all_z_valid = pgxp_vertices.iter().all(|v| v.z.is_some());
+
             pgxp_vertices.map(|v| {
+                let z = if all_z_valid { v.z.unwrap_or(0) } else { 0 };
                 [
-                    v.x as f32 + draw_settings.draw_offset.x as f32,
-                    v.y as f32 + draw_settings.draw_offset.y as f32,
-                    v.z.into(),
+                    (v.x + f64::from(draw_settings.draw_offset.x)) as f32,
+                    (v.y + f64::from(draw_settings.draw_offset.y)) as f32,
+                    z.into(),
                 ]
             })
         },

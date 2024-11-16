@@ -16,7 +16,7 @@ use crate::mdec::MacroblockDecoder;
 use crate::memory;
 use crate::memory::Memory;
 use crate::num::{U8Ext, U32Ext};
-use crate::pgxp::PgxpConfig;
+use crate::pgxp::{PgxpConfig, PreciseVertex};
 use crate::scheduler::{Scheduler, SchedulerEvent};
 use crate::spu::Spu;
 use bincode::{Decode, Encode};
@@ -453,8 +453,13 @@ impl DmaController {
                         config.start_address
                     );
 
-                    let cpu_wait_cycles =
-                        progress_mdec_out_dma(config, mdec, memory, scheduler.cpu_cycle_counter());
+                    let cpu_wait_cycles = progress_mdec_out_dma(
+                        config,
+                        self.pgxp_config,
+                        mdec,
+                        memory,
+                        scheduler.cpu_cycle_counter(),
+                    );
                     self.cpu_wait_cycles = cpu_wait_cycles;
 
                     if !config.transfer_active {
@@ -480,9 +485,9 @@ impl DmaController {
                     );
                     let cpu_wait_cycles = progress_gpu_dma(
                         config,
+                        self.pgxp_config,
                         gpu,
                         memory,
-                        self.pgxp_config.enabled,
                         scheduler.cpu_cycle_counter(),
                     );
                     self.cpu_wait_cycles = cpu_wait_cycles;
@@ -505,7 +510,7 @@ impl DmaController {
                     self.cpu_wait_cycles = 24 * config.block_size;
 
                     log::debug!("Running CD-ROM DMA of size {}", config.block_size);
-                    run_cdrom_dma(config, memory, cd_controller);
+                    run_cdrom_dma(config, self.pgxp_config, memory, cd_controller);
 
                     config.transfer_active = false;
                     self.maybe_flag_dma_interrupt(CD_ROM, interrupt_registers);
@@ -524,8 +529,13 @@ impl DmaController {
                         config.num_blocks,
                         config.block_size
                     );
-                    self.cpu_wait_cycles =
-                        progress_spu_dma(config, memory, spu, scheduler.cpu_cycle_counter());
+                    self.cpu_wait_cycles = progress_spu_dma(
+                        config,
+                        self.pgxp_config,
+                        memory,
+                        spu,
+                        scheduler.cpu_cycle_counter(),
+                    );
 
                     if !config.transfer_active {
                         log::debug!("SPU DMA complete");
@@ -543,7 +553,7 @@ impl DmaController {
                     self.cpu_wait_cycles = config.block_size * 17 / 16;
 
                     log::debug!("Running OTC DMA of size {}", config.block_size);
-                    run_otc_dma(config, memory);
+                    run_otc_dma(config, self.pgxp_config, memory);
 
                     config.transfer_active = false;
                     self.maybe_flag_dma_interrupt(OTC, interrupt_registers);
@@ -627,6 +637,7 @@ fn transfer_block_from_ram(
 
 fn transfer_block_to_ram(
     config: &mut ChannelConfig,
+    pgxp_config: PgxpConfig,
     memory: &mut Memory,
     mut read_fn: impl FnMut() -> u32,
 ) {
@@ -634,6 +645,10 @@ fn transfer_block_to_ram(
     for _ in 0..config.block_size {
         let word = read_fn();
         memory.write_main_ram_u32(address, word);
+
+        if pgxp_config.enabled {
+            memory.write_main_ram_pgxp(address, PreciseVertex::INVALID);
+        }
 
         address = config.step.apply(address);
     }
@@ -665,6 +680,7 @@ fn progress_mdec_in_dma(
 // TODO reorder 8x8 blocks if MDEC is in 15bpp or 24bpp mode instead of assuming the MDEC code will do it
 fn progress_mdec_out_dma(
     config: &mut ChannelConfig,
+    pgxp_config: PgxpConfig,
     mdec: &mut MacroblockDecoder,
     memory: &mut Memory,
     cpu_cycle_counter: u64,
@@ -674,7 +690,7 @@ fn progress_mdec_out_dma(
         return 0;
     }
 
-    transfer_block_to_ram(config, memory, || mdec.read_data());
+    transfer_block_to_ram(config, pgxp_config, memory, || mdec.read_data());
 
     // TODO actual MDEC decompression time
     let cpu_wait_cycles = config.block_size * 17 / 16;
@@ -685,22 +701,29 @@ fn progress_mdec_out_dma(
 
 fn progress_gpu_dma(
     config: &mut ChannelConfig,
+    pgxp_config: PgxpConfig,
     gpu: &mut Gpu,
     memory: &mut Memory,
-    pgxp_enabled: bool,
     cpu_cycle_counter: u64,
 ) -> u32 {
     match config.transfer_mode {
-        TransferMode::Block => progress_gpu_block_dma(config, gpu, memory, cpu_cycle_counter),
-        TransferMode::LinkedList => {
-            progress_gpu_linked_list_dma(config, gpu, memory, pgxp_enabled, cpu_cycle_counter)
+        TransferMode::Block => {
+            progress_gpu_block_dma(config, pgxp_config, gpu, memory, cpu_cycle_counter)
         }
+        TransferMode::LinkedList => progress_gpu_linked_list_dma(
+            config,
+            gpu,
+            memory,
+            pgxp_config.enabled,
+            cpu_cycle_counter,
+        ),
         TransferMode::Burst => panic!("GPU DMA executed in Burst mode: {config:?}"),
     }
 }
 
 fn progress_gpu_block_dma(
     config: &mut ChannelConfig,
+    pgxp_config: PgxpConfig,
     gpu: &mut Gpu,
     memory: &mut Memory,
     cpu_cycle_counter: u64,
@@ -715,7 +738,7 @@ fn progress_gpu_block_dma(
             transfer_block_from_ram(config, memory, |word| gpu.write_gp0_command(word));
         }
         DmaDirection::ToRam => {
-            transfer_block_to_ram(config, memory, || gpu.read_port());
+            transfer_block_to_ram(config, pgxp_config, memory, || gpu.read_port());
         }
     }
 
@@ -779,7 +802,12 @@ fn progress_gpu_linked_list_dma(
 
 // CD-ROM DMA
 // Copies data from the CD controller's data FIFO to main RAM
-fn run_cdrom_dma(config: &ChannelConfig, memory: &mut Memory, cd_controller: &mut CdController) {
+fn run_cdrom_dma(
+    config: &ChannelConfig,
+    pgxp_config: PgxpConfig,
+    memory: &mut Memory,
+    cd_controller: &mut CdController,
+) {
     let mut address = config.start_address & !3;
     let mut bytes = [0; 4];
     for _ in 0..config.block_size {
@@ -788,6 +816,11 @@ fn run_cdrom_dma(config: &ChannelConfig, memory: &mut Memory, cd_controller: &mu
         }
 
         memory.write_main_ram_u32(address, u32::from_le_bytes(bytes));
+
+        if pgxp_config.enabled {
+            memory.write_main_ram_pgxp(address, PreciseVertex::INVALID);
+        }
+
         address = address.wrapping_add(4);
     }
 }
@@ -796,6 +829,7 @@ fn run_cdrom_dma(config: &ChannelConfig, memory: &mut Memory, cd_controller: &mu
 // Copies data between main RAM and SPU sound RAM
 fn progress_spu_dma(
     config: &mut ChannelConfig,
+    pgxp_config: PgxpConfig,
     memory: &mut Memory,
     spu: &mut Spu,
     cpu_cycle_counter: u64,
@@ -813,7 +847,7 @@ fn progress_spu_dma(
             });
         }
         DmaDirection::ToRam => {
-            transfer_block_to_ram(config, memory, || {
+            transfer_block_to_ram(config, pgxp_config, memory, || {
                 let low_halfword = spu.read_data_port();
                 let high_halfword = spu.read_data_port();
                 u32::from(low_halfword) | (u32::from(high_halfword) << 16)
@@ -829,7 +863,7 @@ fn progress_spu_dma(
 // OTC (ordering table clear) DMA
 // Prepares a section of main RAM for a GPU linked list DMA by creating a linked list where every
 // entry points to the entry at the previous word address
-fn run_otc_dma(config: &ChannelConfig, memory: &mut Memory) {
+fn run_otc_dma(config: &ChannelConfig, pgxp_config: PgxpConfig, memory: &mut Memory) {
     let mut address = config.start_address & !3;
     for i in 0..config.block_size {
         let next_addr = if i == config.block_size - 1 {
@@ -840,6 +874,10 @@ fn run_otc_dma(config: &ChannelConfig, memory: &mut Memory) {
         };
 
         memory.write_main_ram_u32(address, next_addr);
+
+        if pgxp_config.enabled {
+            memory.write_main_ram_pgxp(address, PreciseVertex::INVALID);
+        }
 
         address = next_addr;
     }

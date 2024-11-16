@@ -66,13 +66,13 @@ impl PgxpConfig {
 pub struct PreciseVertex {
     pub x: f64,
     pub y: f64,
-    pub z: u16,
+    pub z: Option<u16>,
 }
 
 impl PreciseVertex {
-    pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: 0 };
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: None };
 
-    pub const INVALID: Self = Self { x: f64::INFINITY, y: f64::INFINITY, z: 0 };
+    pub const INVALID: Self = Self { x: f64::INFINITY, y: f64::INFINITY, z: None };
 
     pub fn matches(&self, vertex: Vertex) -> bool {
         let fx = self.x as i32;
@@ -95,7 +95,7 @@ impl Default for PreciseVertex {
 
 impl From<Vertex> for PreciseVertex {
     fn from(value: Vertex) -> Self {
-        Self { x: value.x.into(), y: value.y.into(), z: 0 }
+        Self { x: value.x.into(), y: value.y.into(), z: None }
     }
 }
 
@@ -173,7 +173,7 @@ impl PgxpGteRegisters {
         let sx = ((sx_decimal as f64) / 65536.0).clamp(-1024.0, 1024.0);
         let sy = ((sy_decimal as f64) / 65536.0).clamp(-1024.0, 1024.0);
 
-        self.push_fifo(PreciseVertex { x: sx, y: sy, z: sz });
+        self.push_fifo(PreciseVertex { x: sx, y: sy, z: Some(sz) });
     }
 
     pub fn push_fifo(&mut self, vertex: PreciseVertex) {

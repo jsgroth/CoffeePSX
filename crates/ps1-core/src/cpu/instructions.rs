@@ -22,6 +22,10 @@ macro_rules! impl_branch {
             $(
                 if $link {
                     self.registers.write_gpr(31, self.registers.pc.wrapping_add(4));
+
+                    if self.pgxp_config.enabled {
+                        self.pgxp.write_gpr(31, PreciseVertex::INVALID);
+                    }
                 }
             )?
         }
@@ -143,7 +147,12 @@ impl R3000 {
             return Err(Exception::ArithmeticOverflow);
         }
 
-        self.registers.write_gpr(parse_rd(opcode), sum as u32);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, sum as u32);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
 
         Ok(())
     }
@@ -157,6 +166,10 @@ impl R3000 {
         let operand_l = self.registers.gpr[rs];
         let operand_r = self.registers.gpr[rt];
         self.registers.write_gpr(rd, operand_l.wrapping_add(operand_r));
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // ADDI: Add immediate word
@@ -168,7 +181,12 @@ impl R3000 {
             return Err(Exception::ArithmeticOverflow);
         }
 
-        self.registers.write_gpr(parse_rt(opcode), sum as u32);
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr(rt, sum as u32);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
 
         Ok(())
     }
@@ -177,21 +195,36 @@ impl R3000 {
     fn addiu(&mut self, opcode: u32) {
         let operand_l = self.registers.gpr[parse_rs(opcode) as usize];
         let operand_r = parse_signed_immediate(opcode) as u32;
-        self.registers.write_gpr(parse_rt(opcode), operand_l.wrapping_add(operand_r));
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr(rt, operand_l.wrapping_add(operand_r));
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
     }
 
     // AND: And
     fn and(&mut self, opcode: u32) {
         let operand_l = self.registers.gpr[parse_rs(opcode) as usize];
         let operand_r = self.registers.gpr[parse_rt(opcode) as usize];
-        self.registers.write_gpr(parse_rd(opcode), operand_l & operand_r);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, operand_l & operand_r);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // ANDI: And immediate
     fn andi(&mut self, opcode: u32) {
         let operand_l = self.registers.gpr[parse_rs(opcode) as usize];
         let operand_r = parse_unsigned_immediate(opcode);
-        self.registers.write_gpr(parse_rt(opcode), operand_l & operand_r);
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr(rt, operand_l & operand_r);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
     }
 
     // BEQ: Branch on equal
@@ -268,13 +301,23 @@ impl R3000 {
         self.registers.next_pc = compute_jump_address(self.registers.pc, opcode);
         self.registers.in_delay_slot = true;
         self.registers.write_gpr(31, self.registers.pc.wrapping_add(4));
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(31, PreciseVertex::INVALID);
+        }
     }
 
     // JALR: Jump and link register
     fn jalr(&mut self, opcode: u32) {
         self.registers.next_pc = self.registers.gpr[parse_rs(opcode) as usize];
         self.registers.in_delay_slot = true;
-        self.registers.write_gpr(parse_rd(opcode), self.registers.pc.wrapping_add(4));
+
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, self.registers.pc.wrapping_add(4));
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // LB: Load byte
@@ -477,21 +520,36 @@ impl R3000 {
     fn nor(&mut self, opcode: u32) {
         let operand_a = self.registers.gpr[parse_rs(opcode) as usize];
         let operand_b = self.registers.gpr[parse_rt(opcode) as usize];
-        self.registers.write_gpr(parse_rd(opcode), !(operand_a | operand_b));
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, !(operand_a | operand_b));
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // OR: Or
     fn or(&mut self, opcode: u32) {
         let operand_a = self.registers.gpr[parse_rs(opcode) as usize];
         let operand_b = self.registers.gpr[parse_rt(opcode) as usize];
-        self.registers.write_gpr(parse_rd(opcode), operand_a | operand_b);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, operand_a | operand_b);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // ORI: Or immediate
     fn ori(&mut self, opcode: u32) {
         let operand_a = self.registers.gpr[parse_rs(opcode) as usize];
         let operand_b = parse_unsigned_immediate(opcode);
-        self.registers.write_gpr(parse_rt(opcode), operand_a | operand_b);
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr(rt, operand_a | operand_b);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
     }
 
     // SB: Store byte
@@ -565,6 +623,10 @@ impl R3000 {
 
         let new_value = (existing_word & !mask) | (register_word >> shift);
         self.bus_write_u32(bus, address & !3, new_value);
+
+        if self.pgxp_config.enabled {
+            bus.write_pgxp(address & !3, PreciseVertex::INVALID);
+        }
     }
 
     // SWR: Store word right
@@ -580,74 +642,130 @@ impl R3000 {
 
         let new_value = (existing_word & !mask) | (register_word << shift);
         self.bus_write_u32(bus, address & !3, new_value);
+
+        if self.pgxp_config.enabled {
+            bus.write_pgxp(address & !3, PreciseVertex::INVALID);
+        }
     }
 
     // SLL: Shift word left logical
     fn sll(&mut self, opcode: u32) {
         let value = self.registers.gpr[parse_rt(opcode) as usize] << parse_sa(opcode);
-        self.registers.write_gpr(parse_rd(opcode), value);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, value);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SLLV: Shift word left logical variable
     fn sllv(&mut self, opcode: u32) {
         let shift_amount = self.registers.gpr[parse_rs(opcode) as usize] & 0x1F;
         let value = self.registers.gpr[parse_rt(opcode) as usize] << shift_amount;
-        self.registers.write_gpr(parse_rd(opcode), value);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, value);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SRA: Shift word right arithmetic
     fn sra(&mut self, opcode: u32) {
         let shift_amount = parse_sa(opcode);
         let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
-        self.registers.write_gpr(parse_rd(opcode), (rt >> shift_amount) as u32);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, (rt >> shift_amount) as u32);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SRAV: Shift word right arithmetic variable
     fn srav(&mut self, opcode: u32) {
         let shift_amount = self.registers.gpr[parse_rs(opcode) as usize] & 0x1F;
         let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
-        self.registers.write_gpr(parse_rd(opcode), (rt >> shift_amount) as u32);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, (rt >> shift_amount) as u32);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SRL: Shift word right logical
     fn srl(&mut self, opcode: u32) {
         let value = self.registers.gpr[parse_rt(opcode) as usize] >> parse_sa(opcode);
-        self.registers.write_gpr(parse_rd(opcode), value);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, value);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SRLV: Shift word right logical variable
     fn srlv(&mut self, opcode: u32) {
         let shift_amount = self.registers.gpr[parse_rs(opcode) as usize] & 0x1F;
         let value = self.registers.gpr[parse_rt(opcode) as usize] >> shift_amount;
-        self.registers.write_gpr(parse_rd(opcode), value);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, value);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SLT: Set on less than
     fn slt(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize] as i32;
         let rt = self.registers.gpr[parse_rt(opcode) as usize] as i32;
-        self.registers.write_gpr(parse_rd(opcode), (rs < rt).into());
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, (rs < rt).into());
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SLTU: Set on less than unsigned
     fn sltu(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize];
         let rt = self.registers.gpr[parse_rt(opcode) as usize];
-        self.registers.write_gpr(parse_rd(opcode), (rs < rt).into());
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, (rs < rt).into());
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // SLTI: Set on less than immediate
     fn slti(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize] as i32;
         let immediate = parse_signed_immediate(opcode);
-        self.registers.write_gpr(parse_rt(opcode), (rs < immediate).into());
+
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr(rt, (rs < immediate).into());
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
     }
 
     // SLTIU: Set on less than immediate unsigned
     fn sltiu(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize];
         let immediate = parse_signed_immediate(opcode) as u32;
-        self.registers.write_gpr(parse_rt(opcode), (rs < immediate).into());
+
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr(rt, (rs < immediate).into());
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
     }
 
     // SUB: Subtract word
@@ -659,7 +777,12 @@ impl R3000 {
             return Err(Exception::ArithmeticOverflow);
         }
 
-        self.registers.write_gpr(parse_rd(opcode), difference as u32);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, difference as u32);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
 
         Ok(())
     }
@@ -668,21 +791,37 @@ impl R3000 {
     fn subu(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize];
         let rt = self.registers.gpr[parse_rt(opcode) as usize];
-        self.registers.write_gpr(parse_rd(opcode), rs.wrapping_sub(rt));
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, rs.wrapping_sub(rt));
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // XOR: Exclusive or
     fn xor(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize];
         let rt = self.registers.gpr[parse_rt(opcode) as usize];
-        self.registers.write_gpr(parse_rd(opcode), rs ^ rt);
+        let rd = parse_rd(opcode);
+        self.registers.write_gpr(rd, rs ^ rt);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rd, PreciseVertex::INVALID);
+        }
     }
 
     // XORI: Exclusive or immediate
     fn xori(&mut self, opcode: u32) {
         let rs = self.registers.gpr[parse_rs(opcode) as usize];
         let immediate = parse_unsigned_immediate(opcode);
-        self.registers.write_gpr(parse_rt(opcode), rs ^ immediate);
+
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr(rt, rs ^ immediate);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
     }
 
     // MFCz: Move from coprocessor
@@ -732,7 +871,12 @@ impl R3000 {
             cp => todo!("CFC{cp} {register} {opcode:08X}"),
         };
 
-        self.registers.write_gpr_delayed(parse_rt(opcode), value);
+        let rt = parse_rt(opcode);
+        self.registers.write_gpr_delayed(rt, value);
+
+        if self.pgxp_config.enabled {
+            self.pgxp.write_gpr(rt, PreciseVertex::INVALID);
+        }
     }
 
     // CTCz: Move control to coprocessor

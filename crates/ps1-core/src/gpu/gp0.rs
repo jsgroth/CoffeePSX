@@ -851,7 +851,7 @@ fn parse_draw_polygon_parameters(
         vertices[vertex_idx as usize] = vertex;
         pgxp_vertices[vertex_idx as usize] = pgxp_vertex;
 
-        pgxp_match &= pgxp_vertex.matches(vertex);
+        pgxp_match &= pgxp_vertex.is_valid() && pgxp_vertex.matches(vertex);
 
         if command_parameters.textured {
             match vertex_idx {
